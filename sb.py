@@ -678,7 +678,7 @@ def handle_match_resolution(winner, loser, winning_color, match_id):
             w_roster = "/".join(TEAM_ROSTERS.get(winner, ["P1", "P2"]))
             l_roster = "/".join(TEAM_ROSTERS.get(loser, ["P3", "P4"]))
             messagebox.showinfo("Final Round!", 
-                                f"{w_roster} has defeated the undefeated team ({l_roster}) - play it again Sam!")
+                                f"{w_roster} have defeated the previously undefeated team {l_roster}! So for the marbles...")
             
             TOURNAMENT_STATE['active_match_id'] = reset_game_id
             
@@ -1343,7 +1343,7 @@ def start_tournament():
                 dialog_root.destroy()
                 return
             if num_players % 2 != 0:
-                messagebox.showerror("Error", "The total number of players must be even for 2v2 teams.")
+                messagebox.showerror("Error", "The total number of players must be even!")
                 num_players = None # Loop again
                 continue
             break
