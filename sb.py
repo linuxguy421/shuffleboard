@@ -1280,44 +1280,139 @@ def generate_dynamic_bracket(teams, config=None):
     TOURNAMENT_STATE['active_match_id'] = initial_active_match
 
 def get_multi_line_input(parent, title, prompt, num_required):
-# ... (function body remains unchanged) ...
-    """Custom function for multi-line player input using a Toplevel dialog."""
+    """
+    Custom function for multi-line player input using a Toplevel dialog.
+    MODIFIED: Adds Auto/Manual draw toggle and handles manual draw number input.
+    """
     dialog = tk.Toplevel(parent)
     dialog.title(title)
-    dialog.geometry("350x450")
+    dialog.geometry("500x500") # Increased size to accommodate extra fields
     dialog.grab_set() 
     
-    result = None
-    
+    # result will be a tuple: (is_manual_draw, list_of_player_data)
+    # player_data is (draw_num, player_name) for manual, or (None, player_name) for auto
+    result = None 
+    is_manual_draw = tk.BooleanVar(value=False)
+
     tk.Label(dialog, text=prompt, pady=5, justify=tk.LEFT).pack(padx=10)
     tk.Label(dialog, text=f"({num_required} names required, one per line)", font=('Arial', 8, 'italic')).pack(padx=10)
     
+    # --- Auto/Manual Draw Control Frame ---
+    control_frame = tk.Frame(dialog)
+    control_frame.pack(padx=10, pady=5, fill='x')
+    
+    # Checkbox for Manual Draw
+    check_manual = tk.Checkbutton(control_frame, text="Manual Draw (Assign Draw #)", variable=is_manual_draw, command=lambda: toggle_manual_draw(text_area, num_required, instruction_label, draw_header))
+    check_manual.pack(side='left', padx=(0, 20))
+    
+    # Dynamic Label for instructions
+    instruction_label = tk.Label(control_frame, text="Enter Name per line:", fg='blue')
+    instruction_label.pack(side='left')
+    
+    # --- Text Area for Input ---
     text_area_frame = tk.Frame(dialog)
     text_area_frame.pack(padx=10, pady=5, fill='both', expand=True)
     
     scrollbar = tk.Scrollbar(text_area_frame)
-    text_area = tk.Text(text_area_frame, height=15, width=30, yscrollcommand=scrollbar.set)
+    # Use a bigger text area initially, but keep it a single widget
+    text_area = tk.Text(text_area_frame, height=15, width=50, yscrollcommand=scrollbar.set)
     scrollbar.config(command=text_area.yview)
     
     scrollbar.pack(side='right', fill='y')
-    text_area.pack(side='left', fill='both', expand=True)
+    
+    # Create the Draw Number column header (initially hidden)
+    draw_header = tk.Label(text_area_frame, text="Draw # | Player Name", font=('Courier', 10, 'bold'), anchor='w')
+    
+    def toggle_manual_draw(text_widget, req, instruction_lbl, header_lbl):
+        """Switches the UI and instruction text based on the checkbox state."""
+        manual = is_manual_draw.get()
+        if manual:
+            instruction_lbl.config(text=f"Enter Draw # (1-{req}), then player Name (e.g. '5 | John Smith'):", fg='darkred')
+            text_widget.pack_forget()
+            header_lbl.pack(fill='x')
+            text_widget.pack(side='left', fill='both', expand=True)
+            text_widget.delete("1.0", tk.END)
+            # Add a visual hint for manual entry
+            text_widget.insert(tk.END, "1 | Player A\n2 | Player B\n")
+        else:
+            instruction_lbl.config(text="Enter Name per line:", fg='blue')
+            header_lbl.pack_forget()
+            text_widget.pack_forget()
+            text_widget.pack(side='left', fill='both', expand=True)
+            text_widget.delete("1.0", tk.END)
+
+    text_area.pack(side='left', fill='both', expand=True) # Initial packing for Auto mode
     
     def on_ok():
         nonlocal result
         content = text_area.get("1.0", tk.END).strip()
-        raw_names = [name.strip() for name in content.split('\n')]
-        names = [name for name in raw_names if name]
         
-        if len(names) != num_required:
-            messagebox.showerror("Input Error", f"You entered {len(names)} names, but {num_required} are required. Please enter one name per line.")
+        # Split and filter lines
+        raw_lines = [line.strip() for line in content.split('\n')]
+        
+        is_manual = is_manual_draw.get()
+        player_data_list = []
+        lines_to_process = []
+        
+        if is_manual:
+             # For manual mode, lines should contain a '|' and may have the example format.
+             # Filter out blank lines and the specific example lines if the user didn't delete them.
+             lines_to_process = [line for line in raw_lines if line and not line.strip() in ["1 | Player A", "2 | Player B"]]
         else:
-            result = names
-            dialog.destroy()
+             # For auto mode, lines are just names. Filter out blank lines.
+             lines_to_process = [line for line in raw_lines if line]
+        
+        if len(lines_to_process) != num_required:
+            messagebox.showerror("Input Error", f"You entered {len(lines_to_process)} names/entries, but {num_required} are required. Please enter one valid entry per line.")
+            return
+
+        if is_manual:
+            assigned_draws = set()
+            for line in lines_to_process:
+                # Use a more robust regex to handle whitespace variations
+                match = re.match(r'(\d+)\s*\|\s*(.+)', line)
+                if not match:
+                    messagebox.showerror("Input Error", f"Manual Draw Error: Line '{line}' is not in the required format 'Draw # | Player Name'.")
+                    return
+                try:
+                    draw_num = int(match.group(1))
+                    player_name = match.group(2).strip()
+                except ValueError:
+                    messagebox.showerror("Input Error", f"Manual Draw Error: Draw number is not a valid integer in line '{line}'.")
+                    return
+                
+                if draw_num < 1 or draw_num > num_required:
+                    messagebox.showerror("Input Error", f"Manual Draw Error: Draw number {draw_num} is out of the required range (1-{num_required}).")
+                    return
+                if draw_num in assigned_draws:
+                    messagebox.showerror("Input Error", f"Manual Draw Error: Draw number {draw_num} is assigned multiple times.")
+                    return
+                    
+                if not player_name:
+                    messagebox.showerror("Input Error", f"Manual Draw Error: Player name is missing for draw number {draw_num}.")
+                    return
+                    
+                assigned_draws.add(draw_num)
+                player_data_list.append((draw_num, player_name))
+                
+            # Check if all required draw numbers were assigned
+            if len(assigned_draws) != num_required:
+                missing_draws = [i for i in range(1, num_required + 1) if i not in assigned_draws]
+                messagebox.showerror("Input Error", f"Manual Draw Error: The following draw numbers are missing: {', '.join(map(str, missing_draws))}")
+                return
+
+        else: # Auto Draw
+            for line in lines_to_process:
+                 # Player name is just the line content, draw_num is None
+                player_data_list.append((None, line)) 
+                
+        result = (is_manual, player_data_list)
+        dialog.destroy()
 
     def on_cancel():
         dialog.destroy()
 
-    ok_button = tk.Button(dialog, text="OK", command=on_ok)
+    ok_button = tk.Button(dialog, text="OK", command=on_ok, bg='#4CAF50', fg='white', font=('Arial', 10, 'bold'))
     ok_button.pack(side='left', padx=10, pady=10)
     
     cancel_button = tk.Button(dialog, text="Cancel", command=on_cancel)
@@ -1327,7 +1422,7 @@ def get_multi_line_input(parent, title, prompt, num_required):
     return result
 
 def start_tournament():
-    """Prompts for players, sets up teams, generates the bracket, and launches the GUI. MODIFIED for file-driven prizes."""
+    """Prompts for players, sets up teams, generates the bracket, and launches the GUI. MODIFIED for file-driven prizes and new draw logic."""
     
     # Use a temporary root window for dialogs
     dialog_root = tk.Tk()
@@ -1350,33 +1445,41 @@ def start_tournament():
         except Exception:
             pass
 
-    # --- MODIFIED: Multiline input for all player names ---
-    player_names = None
-    while player_names is None:
-        player_names = get_multi_line_input(dialog_root, "Player Names Input", 
-                                            f"Enter the names of all {num_players} players, one per line:",
+    # --- MODIFIED: Use the new return format from get_multi_line_input ---
+    player_input_result = None
+    while player_input_result is None:
+        player_input_result = get_multi_line_input(dialog_root, "Player Names & Draw Input", 
+                                            f"Enter the names and choose the draw method for {num_players} players:",
                                             num_players)
-        if player_names is None:
+        if player_input_result is None:
             dialog_root.destroy()
             return
         
     dialog_root.destroy() # Close the temporary dialog root
 
-    # --- 1. Perform Draw and Team Setup ---
-    
-    player_draws = []
-    draw_numbers = list(range(1, num_players + 1))
-    random.shuffle(draw_numbers)
-    
-    for player_name in player_names:
-        draw_num = draw_numbers.pop()
-        player_draws.append((draw_num, player_name))
-    
-    player_draws.sort(key=lambda x: x[0]) 
+    is_manual_draw, player_data_list = player_input_result
+
+    # --- 1. Process Draw and Team Setup ---
     
     global TEAMS, TEAM_ROSTERS
     TEAMS.clear()
     TEAM_ROSTERS.clear()
+    
+    if is_manual_draw:
+        # Player data is already (draw_num, player_name), just sort by draw number
+        player_draws = sorted(player_data_list, key=lambda x: x[0]) 
+    else:
+        # Player data is (None, player_name), assign random draw numbers
+        player_names = [data[1] for data in player_data_list]
+        draw_numbers = list(range(1, num_players + 1))
+        random.shuffle(draw_numbers)
+        
+        player_draws = []
+        for player_name in player_names:
+            draw_num = draw_numbers.pop()
+            player_draws.append((draw_num, player_name))
+        
+        player_draws.sort(key=lambda x: x[0]) 
     
     num_teams = num_players // 2
     for i in range(num_teams):
@@ -1387,7 +1490,7 @@ def start_tournament():
         TEAMS.append(team_name)
         TEAM_ROSTERS[team_name] = [player1, player2]
         
-    # --- 2. Load Bracket Config and Prizes (MODIFIED: Load config and use file prizes) ---
+    # --- 2. Load Bracket Config and Prizes (Unchanged) ---
     
     try:
         # Load config and get the file prizes
@@ -1407,10 +1510,10 @@ def start_tournament():
     # Calculate Total Pool by summing the prizes read from the file
     total_pool = prizes['1st'] + prizes['2st'] + prizes['3rd']
         
-    # --- 3. Show Draw Summary ---
+    # --- 3. Show Draw Summary (Unchanged) ---
     show_draw_summary(player_draws, TEAMS, TEAM_ROSTERS, num_teams, total_pool, prizes)
     
-    # --- 4. Generate Bracket and Launch Main Game (Pass the loaded config) ---
+    # --- 4. Generate Bracket and Launch Main Game (Unchanged) ---
     generate_dynamic_bracket(TEAMS, config)
     
     if not TOURNAMENT_STATE:
