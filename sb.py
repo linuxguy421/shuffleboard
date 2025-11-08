@@ -1047,7 +1047,7 @@ def display_final_rankings(champion):
         
     final_control_frame_ref.pack(fill='x', pady=10)
     
-    quit_btn = tk.Button(final_control_frame_ref, text="QUIT SCRIPT", command=lambda: on_close(main_root), 
+    quit_btn = tk.Button(final_control_frame_ref, text="QUIT", command=lambda: on_close(main_root), 
                          bg='#D32F2F', fg='white', font=('Arial', 12, 'bold'), height=2)
     quit_btn.pack(padx=10, pady=10, fill='x')
 
