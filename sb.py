@@ -153,10 +153,11 @@ def _parse_config_file_content(content):
     current_match_id = None
     prizes = {}  # Dictionary to store prizes
     
-    content = re.sub(r'\\s*', '', content)
-    lines = content.split('\n')
-    
     is_parsing_prizes = False # State flag for prize parsing
+    
+    # Pre-clean the content to handle varying whitespace before processing
+    content = re.sub(r'\r', '', content) # Remove carriage returns
+    lines = [line.strip() for line in content.split('\n')]
     
     for line in lines:
         line = line.strip()
@@ -271,7 +272,7 @@ def load_bracket_config(num_teams, elimination_type='D'):
 # --- Dynamic Coordinate Generation (RETAINED) ---
 
 def calculate_dynamic_coords(state):
-# ... (function body remains unchanged) ...
+    # ... (function body remains unchanged) ...
     coords = {}
     
     # Constants (Normalized Units)
@@ -384,7 +385,7 @@ def calculate_dynamic_coords(state):
 # --- Dynamic Line Drawing (RETAINED) ---
 
 def draw_dynamic_lines(canvas, state, coords, match_w, match_h, H_SCALE, V_SCALE, H_PAD, V_PAD):
-# ... (function body remains unchanged) ...
+    # ... (function body remains unchanged) ...
     """Draws all connection lines based on match configuration (W_next, L_next)."""
     
     LINE_COLOR = '#888888' 
@@ -451,7 +452,7 @@ def draw_dynamic_lines(canvas, state, coords, match_w, match_h, H_SCALE, V_SCALE
 # --- Draw Bracket Function (RETAINED) ---
     
 def draw_bracket(canvas):
-# ... (function body remains unchanged) ...
+    # ... (function body remains unchanged) ...
     """
     Draws the visual bracket on the Canvas using dynamically calculated proportional 
     coordinates and dynamic line drawing.
@@ -596,8 +597,8 @@ def draw_bracket(canvas):
 # --- Utility to find the Next Active Match (RETAINED) ---
 
 def find_next_active_match():
+    # ... (function body remains unchanged) ...
     """Iterates through all match keys (in chronological order) to find the next ready-to-play match."""
-# ... (function body remains unchanged) ...
     
     sorted_match_keys = sorted(
         [k for k in TOURNAMENT_STATE.keys() if k.startswith('G') or k == 'GF' or k == 'GGF'], 
@@ -620,7 +621,7 @@ def find_next_active_match():
 # --- Match Setup & Resolution (RETAINED) ---
 
 def handle_match_resolution(winner, loser, winning_color, match_id):
-# ... (function body remains unchanged) ...
+    # ... (function body remains unchanged) ...
     """
     Propagates the winner/loser of the *specific* completed match (match_id) 
     to the next games, with GF/GGF reset logic.
@@ -749,7 +750,7 @@ def handle_match_resolution(winner, loser, winning_color, match_id):
 # --- Draw Small Bracket View (RETAINED) ---
 
 def draw_small_bracket_view(canvas, state):
-# ... (function body remains unchanged) ...
+    # ... (function body remains unchanged) ...
     """Draws a simplified view of the tournament bracket, highlighting the active match."""
     canvas.delete('all')
     
@@ -828,7 +829,7 @@ def draw_small_bracket_view(canvas, state):
 # --- Helper Functions (RETAINED) ---
 
 def format_destination(dest):
-# ... (function body remains unchanged) ...
+    # ... (function body remains unchanged) ...
     """Converts the parsed destination tuple/string into a user-readable string."""
     if dest == 'CHAMPION':
         return "🏆 CHAMPION"
@@ -844,7 +845,7 @@ def format_destination(dest):
     return str(dest)
 
 def update_winner_buttons():
-# ... (function body remains unchanged) ...
+    # ... (function body remains unchanged) ...
     """Updates the text on the winner buttons to show the assigned team names."""
     global btn_red, btn_blue, current_match_teams
     
@@ -857,7 +858,7 @@ def update_winner_buttons():
 
 # ADDED: Swap function
 def swap_teams():
-# ... (function body remains unchanged) ...
+    # ... (function body remains unchanged) ...
     """Swaps the Red and Blue teams in the current match UI."""
     global current_match_teams
     
@@ -870,7 +871,7 @@ def swap_teams():
     update_scoreboard_display()
 
 def go_back_to_selection():
-# ... (function body remains unchanged) ...
+    # ... (function body remains unchanged) ...
     """Hides the confirmation frame and shows the winner selection frame."""
     global match_res_frame, match_input_frame, match_details_frame, current_match_res_buttons, switch_frame_ref
     
@@ -891,7 +892,7 @@ def go_back_to_selection():
     status_label.config(text=f"Active Match: {match_id} - {team_red} (RED) vs {team_blue} (BLUE)", fg='black')
     
 def update_scoreboard_display():
-# ... (function body remains unchanged) ...
+    # ... (function body remains unchanged) ...
     """Updates all visual elements on the scoreboard based on current_match_teams and routing."""
     global team_labels, player_labels_ref, TOURNAMENT_STATE, scoreboard_canvas_ref, status_label, current_match_teams
     global game_routing_label, team_info_labels, bracket_info_canvas_ref
@@ -955,7 +956,7 @@ def update_scoreboard_display():
         draw_small_bracket_view(bracket_info_canvas_ref, TOURNAMENT_STATE)
 
 def display_final_rankings(champion):
-# ... (function body remains unchanged) ...
+    # ... (function body remains unchanged) ...
     """
     FIXED: Manages packing of match detail frames to ensure the ranking label 
     is visible between the scoreboard and the Quit button.
@@ -1056,7 +1057,7 @@ def reset_game(update_teams=True):
         load_match_data_and_teams()
 
 def setup_scoreboard(root, team_red_placeholder, team_blue_placeholder):
-# ... (function body remains unchanged) ...
+    # ... (function body remains unchanged) ...
     """Initializes the scoreboard canvas and widgets with the new UI."""
     global scoreboard_canvas_ref, team_labels, player_labels_ref, status_label, match_input_frame, match_res_frame, btn_red, btn_blue
     global match_details_frame, game_routing_label, team_info_labels, bracket_info_canvas_ref, rankings_label_ref, btn_switch, bracket_info_frame_ref, team_info_frame_ref
@@ -1151,7 +1152,7 @@ def setup_scoreboard(root, team_red_placeholder, team_blue_placeholder):
     load_match_data_and_teams() 
 
 def setup_main_gui(root):
-# ... (function body remains unchanged) ...
+    # ... (function body remains unchanged) ...
     """Sets up the main windows and calls component initialization. MODIFIED for single window."""
     global main_root
     main_root = root
@@ -1281,130 +1282,149 @@ def generate_dynamic_bracket(teams, config=None):
 
 def get_multi_line_input(parent, title, prompt, num_required):
     """
-    Custom function for multi-line player input using a Toplevel dialog.
-    MODIFIED: Adds Auto/Manual draw toggle and handles manual draw number input.
+    Custom function for individual player input boxes using a Toplevel dialog.
+    MODIFIED: Uses a standard tk.Frame instead of a scrollable Canvas,
+    and forces layout update after initial draw to fix the bug.
     """
     dialog = tk.Toplevel(parent)
     dialog.title(title)
-    dialog.geometry("500x500") # Increased size to accommodate extra fields
+    # Increased height to accommodate max players (20) without scrollbar
+    dialog.geometry("550x850") 
     dialog.grab_set() 
     
     # result will be a tuple: (is_manual_draw, list_of_player_data)
-    # player_data is (draw_num, player_name) for manual, or (None, player_name) for auto
     result = None 
     is_manual_draw = tk.BooleanVar(value=False)
+    
+    # List to store references to the Entry widgets
+    player_entries = [] 
 
-    tk.Label(dialog, text=prompt, pady=5, justify=tk.LEFT).pack(padx=10)
-    tk.Label(dialog, text=f"({num_required} names required, one per line)", font=('Arial', 8, 'italic')).pack(padx=10)
+    tk.Label(dialog, text=prompt, pady=5, justify=tk.LEFT).pack(padx=10, anchor='w')
     
     # --- Auto/Manual Draw Control Frame ---
     control_frame = tk.Frame(dialog)
     control_frame.pack(padx=10, pady=5, fill='x')
     
+    # Forward declaration for the drawing function
+    def toggle_draw_wrapper():
+        # Redraw the widgets in the simple frame
+        draw_input_widgets(is_manual_draw.get(), num_required, input_container, player_entries)
+
     # Checkbox for Manual Draw
-    check_manual = tk.Checkbutton(control_frame, text="Manual Draw (Assign Draw #)", variable=is_manual_draw, command=lambda: toggle_manual_draw(text_area, num_required, instruction_label, draw_header))
+    check_manual = tk.Checkbutton(control_frame, text="Manual Draw (Assign Draw #)", variable=is_manual_draw, 
+                                  command=toggle_draw_wrapper)
     check_manual.pack(side='left', padx=(0, 20))
     
-    # Dynamic Label for instructions
-    instruction_label = tk.Label(control_frame, text="Enter Name per line:", fg='blue')
-    instruction_label.pack(side='left')
+    # --- Input Container (Simple Frame) ---
+    input_container = tk.Frame(dialog)
+    # Use fill='both' and expand=True to let it use the available space
+    input_container.pack(side='top', fill='both', expand=True, padx=10, pady=5)
     
-    # --- Text Area for Input ---
-    text_area_frame = tk.Frame(dialog)
-    text_area_frame.pack(padx=10, pady=5, fill='both', expand=True)
-    
-    scrollbar = tk.Scrollbar(text_area_frame)
-    # Use a bigger text area initially, but keep it a single widget
-    text_area = tk.Text(text_area_frame, height=15, width=50, yscrollcommand=scrollbar.set)
-    scrollbar.config(command=text_area.yview)
-    
-    scrollbar.pack(side='right', fill='y')
-    
-    # Create the Draw Number column header (initially hidden)
-    draw_header = tk.Label(text_area_frame, text="Draw # | Player Name", font=('Courier', 10, 'bold'), anchor='w')
-    
-    def toggle_manual_draw(text_widget, req, instruction_lbl, header_lbl):
-        """Switches the UI and instruction text based on the checkbox state."""
-        manual = is_manual_draw.get()
-        if manual:
-            instruction_lbl.config(text=f"Enter Draw # (1-{req}), then player Name (e.g. '5 | John Smith'):", fg='darkred')
-            text_widget.pack_forget()
-            header_lbl.pack(fill='x')
-            text_widget.pack(side='left', fill='both', expand=True)
-            text_widget.delete("1.0", tk.END)
-            # Add a visual hint for manual entry
-            text_widget.insert(tk.END, "1 | Player A\n2 | Player B\n")
-        else:
-            instruction_lbl.config(text="Enter Name per line:", fg='blue')
-            header_lbl.pack_forget()
-            text_widget.pack_forget()
-            text_widget.pack(side='left', fill='both', expand=True)
-            text_widget.delete("1.0", tk.END)
+    # --- Internal function to draw/redraw the widgets ---
+    def draw_input_widgets(manual_mode, req, container, entries_list):
+        # 1. Clear previous widgets and list
+        for widget in container.winfo_children():
+            widget.destroy()
+        entries_list.clear()
 
-    text_area.pack(side='left', fill='both', expand=True) # Initial packing for Auto mode
-    
+        # Add instructions based on mode
+        if manual_mode:
+            tk.Label(container, text=f"** Draw Numbers must be unique and between 1 and {req} **", 
+                     fg='darkred', font=('Arial', 9, 'bold')).pack(pady=(5, 0), anchor='w', padx=5)
+        else:
+             tk.Label(container, text=f"** Enter Player Names. Draw numbers will be assigned automatically **", 
+                     fg='blue', font=('Arial', 9, 'bold')).pack(pady=(5, 0), anchor='w', padx=5)
+            
+        # 2. Draw new widgets
+        for i in range(req):
+            frame = tk.Frame(container)
+            frame.pack(fill='x', padx=5, pady=2)
+            
+            player_num = i + 1
+            
+            # Common Label
+            tk.Label(frame, text=f"Player {player_num} Name:", width=15, anchor='w').pack(side='left')
+
+            if manual_mode:
+                # Manual: Draw Entry + Name Entry
+                
+                # Draw Number Entry (Width 5 for 3-4 digits/chars + padding)
+                draw_entry = tk.Entry(frame, width=5, justify='center', font=('Arial', 10, 'bold')) 
+                draw_entry.pack(side='left', padx=(0, 5))
+                
+                tk.Label(frame, text="|").pack(side='left', padx=(0, 5))
+                
+                # Name Entry (Shorter)
+                name_entry = tk.Entry(frame, width=30)
+                name_entry.pack(side='left', fill='x', expand=True)
+                
+                entries_list.append((draw_entry, name_entry))
+                
+                # Pre-fill example
+                draw_entry.insert(0, str(player_num))
+                name_entry.insert(0, f"Player {player_num}")
+                
+            else:
+                # Auto: Only Name Entry (Full width)
+                name_entry = tk.Entry(frame)
+                name_entry.pack(side='left', fill='x', expand=True)
+                entries_list.append((name_entry,))
+                name_entry.insert(0, f"Player {player_num}")
+        
+        # Ensure the new widgets are rendered for correct sizing
+        container.update_idletasks()
+
+    # --- ON OK Function ---
     def on_ok():
         nonlocal result
-        content = text_area.get("1.0", tk.END).strip()
-        
-        # Split and filter lines
-        raw_lines = [line.strip() for line in content.split('\n')]
-        
-        is_manual = is_manual_draw.get()
         player_data_list = []
-        lines_to_process = []
+        is_manual = is_manual_draw.get()
+        num_inputs = len(player_entries)
         
-        if is_manual:
-             # For manual mode, lines should contain a '|' and may have the example format.
-             # Filter out blank lines and the specific example lines if the user didn't delete them.
-             lines_to_process = [line for line in raw_lines if line and not line.strip() in ["1 | Player A", "2 | Player B"]]
-        else:
-             # For auto mode, lines are just names. Filter out blank lines.
-             lines_to_process = [line for line in raw_lines if line]
-        
-        if len(lines_to_process) != num_required:
-            messagebox.showerror("Input Error", f"You entered {len(lines_to_process)} names/entries, but {num_required} are required. Please enter one valid entry per line.")
-            return
-
+        if num_inputs != num_required:
+             messagebox.showerror("Internal Error", "Widget count mismatch. Cannot proceed.")
+             return
+             
         if is_manual:
             assigned_draws = set()
-            for line in lines_to_process:
-                # Use a more robust regex to handle whitespace variations
-                match = re.match(r'(\d+)\s*\|\s*(.+)', line)
-                if not match:
-                    messagebox.showerror("Input Error", f"Manual Draw Error: Line '{line}' is not in the required format 'Draw # | Player Name'.")
-                    return
+            for i, (draw_entry, name_entry) in enumerate(player_entries):
+                raw_draw_num = draw_entry.get().strip()
+                player_name = name_entry.get().strip()
+                
+                if not raw_draw_num or not player_name:
+                     messagebox.showerror("Input Error", f"Manual Draw Error (Line {i+1}): Both Draw # and Player Name must be filled.")
+                     return
+                     
                 try:
-                    draw_num = int(match.group(1))
-                    player_name = match.group(2).strip()
+                    draw_num = int(raw_draw_num)
                 except ValueError:
-                    messagebox.showerror("Input Error", f"Manual Draw Error: Draw number is not a valid integer in line '{line}'.")
+                    messagebox.showerror("Input Error", f"Manual Draw Error (Line {i+1}): Draw number '{raw_draw_num}' is not a valid integer.")
                     return
                 
                 if draw_num < 1 or draw_num > num_required:
-                    messagebox.showerror("Input Error", f"Manual Draw Error: Draw number {draw_num} is out of the required range (1-{num_required}).")
+                    messagebox.showerror("Input Error", f"Manual Draw Error (Line {i+1}): Draw number {draw_num} is out of range (1-{num_required}).")
                     return
                 if draw_num in assigned_draws:
-                    messagebox.showerror("Input Error", f"Manual Draw Error: Draw number {draw_num} is assigned multiple times.")
-                    return
-                    
-                if not player_name:
-                    messagebox.showerror("Input Error", f"Manual Draw Error: Player name is missing for draw number {draw_num}.")
+                    messagebox.showerror("Input Error", f"Manual Draw Error (Line {i+1}): Draw number {draw_num} is assigned multiple times.")
                     return
                     
                 assigned_draws.add(draw_num)
                 player_data_list.append((draw_num, player_name))
                 
-            # Check if all required draw numbers were assigned
+            # Final check for missing draws
             if len(assigned_draws) != num_required:
                 missing_draws = [i for i in range(1, num_required + 1) if i not in assigned_draws]
                 messagebox.showerror("Input Error", f"Manual Draw Error: The following draw numbers are missing: {', '.join(map(str, missing_draws))}")
                 return
 
         else: # Auto Draw
-            for line in lines_to_process:
-                 # Player name is just the line content, draw_num is None
-                player_data_list.append((None, line)) 
+            for i, (name_entry,) in enumerate(player_entries):
+                player_name = name_entry.get().strip()
+                if not player_name:
+                    messagebox.showerror("Input Error", f"Auto Draw Error (Line {i+1}): Player Name must be filled.")
+                    return
+                # Draw_num is None for auto draw
+                player_data_list.append((None, player_name)) 
                 
         result = (is_manual, player_data_list)
         dialog.destroy()
@@ -1412,11 +1432,21 @@ def get_multi_line_input(parent, title, prompt, num_required):
     def on_cancel():
         dialog.destroy()
 
-    ok_button = tk.Button(dialog, text="OK", command=on_ok, bg='#4CAF50', fg='white', font=('Arial', 10, 'bold'))
-    ok_button.pack(side='left', padx=10, pady=10)
+    # --- Initial draw and Button setup ---
+    draw_input_widgets(is_manual_draw.get(), num_required, input_container, player_entries)
+
+    # FIX: Force the dialog to update its layout properties after the initial draw.
+    # This prevents the initial incomplete rendering bug.
+    dialog.update_idletasks() 
     
-    cancel_button = tk.Button(dialog, text="Cancel", command=on_cancel)
-    cancel_button.pack(side='right', padx=10, pady=10)
+    button_frame = tk.Frame(dialog)
+    button_frame.pack(fill='x', padx=10, pady=10)
+    
+    ok_button = tk.Button(button_frame, text="OK", command=on_ok, bg='#4CAF50', fg='white', font=('Arial', 10, 'bold'))
+    ok_button.pack(side='left')
+    
+    cancel_button = tk.Button(button_frame, text="Cancel", command=on_cancel)
+    cancel_button.pack(side='right')
     
     dialog.wait_window()
     return result
@@ -1528,7 +1558,7 @@ def start_tournament():
         on_close(root)
 
 def declare_winner(color):
-# ... (function body remains unchanged) ...
+    # ... (function body remains unchanged) ...
     """Handles the conclusion of a match by declaring the winner based on button click."""
     global TOURNAMENT_STATE, match_res_frame, match_input_frame, current_match_teams, match_details_frame, switch_frame_ref
     
@@ -1565,7 +1595,7 @@ def declare_winner(color):
     current_match_res_buttons.append(go_back_btn)
 
 def confirm_match_resolution(winner, loser, winning_color, match_id):
-# ... (function body remains unchanged) ...
+    # ... (function body remains unchanged) ...
     """Processes the confirmed match result and updates the tournament state."""
     global match_res_frame, current_match_res_buttons
 
@@ -1579,7 +1609,7 @@ def confirm_match_resolution(winner, loser, winning_color, match_id):
     reset_game()
     
 def load_match_data_and_teams():
-# ... (function body remains unchanged) ...
+    # ... (function body remains unchanged) ...
     """
     Loads the match data for the current active match, assigns default colors (if new match),
     and triggers the UI update.
