@@ -1001,13 +1001,13 @@ def display_final_rankings(champion):
     
     # 1ST PLACE (Left)
     canvas.create_text(name_x_1st, 15, text=f"1ST PLACE (Team {first_team_num})", fill='gold', font=('Arial', 9, 'bold'))
-    canvas.create_text(name_x_1st, 40, text=f"{first_place}", font=('Arial', 16, 'bold'), fill='gold')
-    canvas.create_text(name_x_1st, 70, text=first_roster, font=('Arial', 9), width=200)
+    canvas.create_text(name_x_1st, 40, text=f"{first_roster}", font=('Arial', 16, 'bold'), fill='gold')
+    #canvas.create_text(name_x_1st, 70, text=f"${prizes.get('1st', 0)}", font=('Arial', 9), width=200)
 
     # 2ND PLACE (Right)
     canvas.create_text(name_x_2nd, 15, text=f"2ND PLACE (Team {second_team_num})", fill='#333333', font=('Arial', 9, 'bold'))
-    canvas.create_text(name_x_2nd, 40, text=f"{second_place}", font=('Arial', 16, 'bold'), fill='#333333')
-    canvas.create_text(name_x_2nd, 70, text=second_roster, font=('Arial', 9), width=200)
+    canvas.create_text(name_x_2nd, 40, text=f"{second_roster}", font=('Arial', 16, 'bold'), fill='#333333')
+    #canvas.create_text(name_x_2nd, 70, text=f"${prizes.get('2nd', 0)}", font=('Arial', 9), width=200)
 
     # --- 2. Display Remaining Rankings ---
     
