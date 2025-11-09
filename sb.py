@@ -8,6 +8,13 @@ import re
 import random 
 import os 
 from collections import OrderedDict
+import datetime # ADDED for logging
+
+# --- Console Logging Function ---
+def log_message(message):
+    """Prints a timestamped message to the console for debugging and tracking."""
+    timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    print(f"[{timestamp}] {message}")
 
 # --- Global & Tournament Variables ---
 TEAMS = []          
@@ -52,6 +59,7 @@ rankings_display_frame_ref = None # NEW: Frame to hold the final rankings text
 def on_close(root):
     """Handles clean exit when the window or the console is closed/interrupted."""
     global main_root
+    log_message("Application close requested.") # ADDED LOGGING
     try:
         if root:
             root.quit()
@@ -90,6 +98,7 @@ def calculate_winnings(num_teams):
     else:
         prizes['3rd'] = 0
         
+    log_message(f"Calculated prizes (fallback): Total Pool ${total_pool}, Prizes {prizes}") # ADDED LOGGING
     return total_pool, prizes
 
 # --- Bracket Sorting Utility (Retained) ---
@@ -165,6 +174,7 @@ def _parse_config_file_content(content):
         # 1. Parse PRIZES block
         if line.startswith('PRIZES:'):
             is_parsing_prizes = True
+            log_message("Parsing PRIZES block.") # ADDED LOGGING
             continue
             
         if is_parsing_prizes:
@@ -181,11 +191,13 @@ def _parse_config_file_content(content):
                     prizes['2st'] = amount
                 elif rank == '3':
                     prizes['3rd'] = amount
+                log_message(f"Parsed prize: Rank {rank}, Amount ${amount}") # ADDED LOGGING
                 continue
             
             # Stop prize parsing if a blank line or a match header is encountered
             if not line or re.match(r'(G\d+|GF|GGF)\s*\(.+\):', line):
                  is_parsing_prizes = False
+                 log_message("Finished parsing PRIZES block.") # ADDED LOGGING
                  
         if is_parsing_prizes:
             continue
@@ -196,6 +208,7 @@ def _parse_config_file_content(content):
             current_match_id = match_header.group(1)
             
             config[current_match_id] = {'config': {}}
+            log_message(f"Parsing match configuration for: {current_match_id}") # ADDED LOGGING
             continue
             
         if not current_match_id:
@@ -206,14 +219,17 @@ def _parse_config_file_content(content):
             # This extracts T1, T2, W-G1, L-G2, etc.
             teams = [t.strip().replace('(', '').replace(')', '').split(' ')[0] for t in teams_str.split(',')]
             config[current_match_id]['teams'] = teams
+            log_message(f"  Teams: {teams}") # ADDED LOGGING
             
         elif line.startswith('Winner_Advances_To:'):
             dest_str = line.split(':', 1)[1].strip()
             config[current_match_id]['config']['W_next'] = _parse_destination(dest_str)
+            log_message(f"  Winner advances to: {config[current_match_id]['config']['W_next']}") # ADDED LOGGING
             
         elif line.startswith('Loser_Drops_To:'):
             dest_str = line.split(':', 1)[1].strip()
             config[current_match_id]['config']['L_next'] = _parse_destination(dest_str)
+            log_message(f"  Loser drops to: {config[current_match_id]['config']['L_next']}") # ADDED LOGGING
 
     final_config = {}
     for match_id, data in config.items():
@@ -248,13 +264,16 @@ def load_bracket_config(num_teams, elimination_type='D'):
         if num_teams >= 7 and num_teams <= 16:
             filename = f'{num_teams}team{elimination_type}.game'
         else:
+             log_message(f"Error: No config defined for {num_teams} teams.") # ADDED LOGGING
              raise ValueError(f"No configuration file defined or available for {num_teams} teams.")
 
     filepath = filename 
+    log_message(f"Attempting to load configuration file: '{filepath}'") # ADDED LOGGING
         
     try:
         with open(filepath, 'r') as f:
             content = f.read()
+        log_message(f"Successfully loaded configuration from: '{filepath}'") # ADDED LOGGING
         return _parse_config_file_content(content) # Returns (config, prizes)
         
     except FileNotFoundError:
@@ -262,10 +281,13 @@ def load_bracket_config(num_teams, elimination_type='D'):
         try:
              with open(filepath, 'r') as f:
                  content = f.read()
+             log_message(f"Successfully loaded configuration from: '{filepath}' (data folder)") # ADDED LOGGING
              return _parse_config_file_content(content) # Returns (config, prizes)
         except FileNotFoundError:
-             raise FileNotFoundError(f"Configuration file not found. Please ensure the file '{filename}' is placed in the same folder or a sub-folder named 'data' next to 'sb.py'.")
+             log_message(f"Error: Bracket logic file '{filename}' not found.") # ADDED LOGGING
+             raise FileNotFoundError(f"Bracket logic file '{filename}' not found. Unable to continue.")
     except Exception as e:
+        log_message(f"Error reading or parsing configuration file '{filepath}': {e}") # ADDED LOGGING
         raise ValueError(f"Error reading or parsing configuration file '{filepath}': {e}")
 
 
@@ -380,6 +402,7 @@ def calculate_dynamic_coords(state):
             elif match_id == 'GGF':
                 coords[match_id] = (GGF_X_U, FINALS_Y_U)
 
+    # log_message(f"Calculated dynamic coordinates for {len(coords)} matches.") # ADDED LOGGING (Too verbose)
     return coords
 
 # --- Dynamic Line Drawing (RETAINED) ---
@@ -448,6 +471,8 @@ def draw_dynamic_lines(canvas, state, coords, match_w, match_h, H_SCALE, V_SCALE
                 else: 
                      # For Finals reset line (GF -> GGF)
                      canvas.create_line(x1_out, y1_out, x2_in, y1_out, fill=LINE_COLOR, width=LINE_WIDTH)
+    # log_message("Bracket connection lines drawn.") # ADDED LOGGING (Too verbose)
+
 
 # --- Draw Bracket Function (RETAINED) ---
     
@@ -459,6 +484,7 @@ def draw_bracket(canvas):
     """
     global TEAM_ROSTERS
     canvas.delete('all')
+    log_message("Redrawing main bracket.") # ADDED LOGGING
     
     canvas.update_idletasks()
     canvas_width = canvas.winfo_width()
@@ -609,13 +635,16 @@ def find_next_active_match():
         data = TOURNAMENT_STATE[k]
         
         if data['teams'][0] and data['teams'][1] and data['winner'] is None:
+            log_message(f"Found next active match: {k} ({data['teams'][0]} vs {data['teams'][1]})") # ADDED LOGGING
             return k
     
     if sorted_match_keys:
         last_g_id = sorted_match_keys[-1]
         if TOURNAMENT_STATE[last_g_id].get('is_reset', False) and TOURNAMENT_STATE[last_g_id].get('winner') is None:
+             log_message(f"Found next active match (Finals Reset): {last_g_id}") # ADDED LOGGING
              return last_g_id
          
+    log_message("Tournament is over (or in final state check).") # ADDED LOGGING
     return 'TOURNAMENT_OVER'
 
 # --- Match Setup & Resolution (RETAINED) ---
@@ -628,17 +657,21 @@ def handle_match_resolution(winner, loser, winning_color, match_id):
     """
     global current_match_res_buttons, TOURNAMENT_RANKINGS
     
+    log_message(f"Resolving match {match_id}: Winner={winner} ({winning_color}), Loser={loser}") # ADDED LOGGING
+    
     # Bug fix: Use the passed match_id instead of the active_match_id from global state
     if match_id == 'TOURNAMENT_OVER':
          # This should not happen with the fix, but as a safeguard:
          messagebox.showerror("Error", "Attempted to resolve 'TOURNAMENT_OVER' state.")
          TOURNAMENT_STATE['active_match_id'] = find_next_active_match()
          reset_game(update_teams=True)
+         log_message("Error: Attempted to resolve 'TOURNAMENT_OVER'. Resetting game state.") # ADDED LOGGING
          return
          
     match_data = TOURNAMENT_STATE.get(match_id)
 
     if not match_data or 'config' not in match_data:
+        log_message(f"Error: Match {match_id} configuration data is missing or invalid.") # ADDED LOGGING
         messagebox.showerror("Error", f"Match {match_id} configuration data is missing or invalid.")
         # Try to recover by resetting to the next active match
         TOURNAMENT_STATE['active_match_id'] = find_next_active_match()
@@ -648,6 +681,7 @@ def handle_match_resolution(winner, loser, winning_color, match_id):
     match_config = match_data['config']
     
     if match_data.get('winner') is not None and not match_data.get('is_reset', False):
+        log_message(f"Warning: Match {match_id} already resolved.") # ADDED LOGGING
         messagebox.showinfo("Error", f"Match {match_id} already resolved.")
         return
         
@@ -682,6 +716,7 @@ def handle_match_resolution(winner, loser, winning_color, match_id):
                                 f"{w_roster} have defeated the previously undefeated team {l_roster}! So for the marbles...")
             
             TOURNAMENT_STATE['active_match_id'] = reset_game_id
+            log_message(f"Match GF resulted in Bracket Reset. Next active match: {reset_game_id} ({winner} vs {loser})") # ADDED LOGGING
             
             # Since the bracket drawing is removed, we only need to call reset_game
             reset_game() 
@@ -693,6 +728,7 @@ def handle_match_resolution(winner, loser, winning_color, match_id):
             TOURNAMENT_RANKINGS['1ST'] = winner
             TOURNAMENT_RANKINGS['2ND'] = loser
             TOURNAMENT_STATE['active_match_id'] = 'TOURNAMENT_OVER'
+            log_message(f"Match GF: WB Winner {winner} wins Championship. 1ST={winner}, 2ND={loser}") # ADDED LOGGING
             reset_game() 
             return 
 
@@ -705,6 +741,7 @@ def handle_match_resolution(winner, loser, winning_color, match_id):
         TOURNAMENT_RANKINGS['2ND'] = gfgf_loser
         
         TOURNAMENT_STATE['active_match_id'] = 'TOURNAMENT_OVER'
+        log_message(f"Match {match_id} (Reset) completed. 1ST={winner}, 2ND={gfgf_loser}. Tournament is over.") # ADDED LOGGING
         reset_game() 
         return 
         
@@ -716,9 +753,11 @@ def handle_match_resolution(winner, loser, winning_color, match_id):
         next_match_id, slot = w_target
         if next_match_id in TOURNAMENT_STATE and TOURNAMENT_STATE[next_match_id]['teams'][slot] is None:
             TOURNAMENT_STATE[next_match_id]['teams'][slot] = winner
+            log_message(f"Propagated Winner {winner} to {next_match_id} [Slot {slot}].") # ADDED LOGGING
     elif w_target == 'CHAMPION':
          match_data['champion'] = winner
          TOURNAMENT_RANKINGS['1ST'] = winner
+         log_message(f"Match {match_id}: Winner {winner} is CHAMPION.") # ADDED LOGGING
     
     # 3. Propagate Loser and Assign Elimination Rank (MODIFIED)
     l_target = match_config.get('L_next')
@@ -727,6 +766,7 @@ def handle_match_resolution(winner, loser, winning_color, match_id):
         loser_match_id, slot = l_target
         if loser_match_id in TOURNAMENT_STATE and TOURNAMENT_STATE[loser_match_id]['teams'][slot] is None:
             TOURNAMENT_STATE[loser_match_id]['teams'][slot] = loser
+            log_message(f"Propagated Loser {loser} to {loser_match_id} [Slot {slot}].") # ADDED LOGGING
     elif l_target and l_target.startswith('ELIMINATED'):
         # Assign Elimination Rank
         # Rank is extracted from the internal format 'ELIMINATED[RANK]'
@@ -736,6 +776,7 @@ def handle_match_resolution(winner, loser, winning_color, match_id):
             # Only assign if the rank slot hasn't been filled yet
             if rank not in TOURNAMENT_RANKINGS:
                 TOURNAMENT_RANKINGS[rank] = loser
+                log_message(f"Assigned rank {rank} to eliminated team {loser}.") # ADDED LOGGING
         
     elif l_target and l_target.endswith('_CONDITIONAL'):
         # This is for GF, which is handled in the reset logic above.
@@ -743,6 +784,7 @@ def handle_match_resolution(winner, loser, winning_color, match_id):
 
     # 4. Find the next actively playable match
     TOURNAMENT_STATE['active_match_id'] = find_next_active_match()
+    log_message(f"Standard Match Resolution complete. New active match: {TOURNAMENT_STATE['active_match_id']}") # ADDED LOGGING
     
     reset_game(update_teams=False) 
 
@@ -824,6 +866,7 @@ def draw_small_bracket_view(canvas, state):
         
         text_id = match_id.replace('G', '')
         canvas.create_text(x + W_box/2, y + H_box/2, text=text_id, font=('Arial', 7, 'bold'), fill=text_color)
+    # log_message("Small bracket view redrawn.") # ADDED LOGGING (Too verbose)
 
 
 # --- Helper Functions (RETAINED) ---
@@ -855,12 +898,15 @@ def update_winner_buttons():
     if btn_red and btn_blue:
         btn_red.config(text=f"WINNERS: {team_red} (RED)")
         btn_blue.config(text=f"WINNERS: {team_blue} (BLUE)")
+    log_message(f"Updated winner buttons: Red={team_red}, Blue={team_blue}") # ADDED LOGGING
 
 # ADDED: Swap function
 def swap_teams():
     # ... (function body remains unchanged) ...
     """Swaps the Red and Blue teams in the current match UI."""
     global current_match_teams
+    
+    log_message(f"Swapping teams: {current_match_teams['red']} <-> {current_match_teams['blue']}") # ADDED LOGGING
     
     # Perform the swap
     temp = current_match_teams['red']
@@ -874,6 +920,8 @@ def go_back_to_selection():
     # ... (function body remains unchanged) ...
     """Hides the confirmation frame and shows the winner selection frame."""
     global match_res_frame, match_input_frame, match_details_frame, current_match_res_buttons, switch_frame_ref
+    
+    log_message("Going back to winner selection screen.") # ADDED LOGGING
     
     match_res_frame.pack_forget()
     
@@ -902,6 +950,8 @@ def update_scoreboard_display():
     if match_id == 'TOURNAMENT_OVER':
         # Handled by display_final_rankings
         return
+    
+    log_message(f"Updating scoreboard display for match: {match_id}") # ADDED LOGGING
 
     team_red = current_match_teams['red']
     team_blue = current_match_teams['blue']
@@ -964,6 +1014,8 @@ def display_final_rankings(champion):
     global team_labels, player_labels_ref, scoreboard_canvas_ref, match_input_frame, match_details_frame, status_label
     global TOURNAMENT_RANKINGS, main_root, rankings_label_ref, bracket_info_frame_ref, team_info_frame_ref, switch_frame_ref
     global final_control_frame_ref, rankings_display_frame_ref
+    
+    log_message(f"Displaying final rankings. Champion: {champion}") # ADDED LOGGING
     
     # Clear active match UI elements
     match_input_frame.pack_forget()
@@ -1035,6 +1087,8 @@ def display_final_rankings(champion):
             # Show the rank, Team name, and players
             rankings_text += f"{rank} Place: {team} ({roster})\n"
             
+    log_message(f"Final Rankings: {dict(TOURNAMENT_RANKINGS)}") # ADDED LOGGING
+            
     # Update the rankings label which is now inside its own frame
     if rankings_label_ref:
         rankings_label_ref.config(text=rankings_text, justify=tk.LEFT, fg='black', bg='#F0F0F0', font=('Arial', 10, 'bold'))
@@ -1053,6 +1107,7 @@ def display_final_rankings(champion):
 
 def reset_game(update_teams=True):
     """Resets the game state (only updating teams now)."""
+    log_message("Resetting game UI.") # ADDED LOGGING
     if update_teams:
         load_match_data_and_teams()
 
@@ -1062,6 +1117,8 @@ def setup_scoreboard(root, team_red_placeholder, team_blue_placeholder):
     global scoreboard_canvas_ref, team_labels, player_labels_ref, status_label, match_input_frame, match_res_frame, btn_red, btn_blue
     global match_details_frame, game_routing_label, team_info_labels, bracket_info_canvas_ref, rankings_label_ref, btn_switch, bracket_info_frame_ref, team_info_frame_ref
     global switch_frame_ref, final_control_frame_ref, rankings_display_frame_ref
+    
+    log_message("Initializing scoreboard and UI components.") # ADDED LOGGING
     
     header_frame = tk.Frame(root, bg='#333333')
     header_frame.pack(fill='x')
@@ -1166,6 +1223,8 @@ def setup_main_gui(root):
     team_A = g1_teams[0] or "Team Red"
     team_B = g1_teams[1] or "Team Blue"
     
+    log_message(f"Setting up main GUI for teams: {team_A} vs {team_B}") # ADDED LOGGING
+    
     # MODIFIED: Scoreboard setup is now for the main root window
     setup_scoreboard(root, team_A, team_B) 
 
@@ -1174,6 +1233,8 @@ def show_draw_summary(player_draws, TEAMS, TEAM_ROSTERS, num_teams, total_pool, 
     summary_root = tk.Tk()
     summary_root.title("Tournament Draw & Prize Pool")
     summary_root.protocol("WM_DELETE_WINDOW", lambda: on_close(summary_root)) 
+    
+    log_message("Displaying Draw Summary and Prize Pool.") # ADDED LOGGING
     
     # --- Draw Results ---
     draw_frame = tk.Frame(summary_root, padx=10, pady=10, bd=2, relief=tk.GROOVE)
@@ -1224,6 +1285,7 @@ def show_draw_summary(player_draws, TEAMS, TEAM_ROSTERS, num_teams, total_pool, 
     
     summary_root.mainloop() # Blocks execution until button is pressed
     summary_root.destroy()
+    log_message("Draw Summary window closed. Proceeding to main GUI.") # ADDED LOGGING
     return
 
 def generate_dynamic_bracket(teams, config=None):
@@ -1235,6 +1297,7 @@ def generate_dynamic_bracket(teams, config=None):
     TOURNAMENT_STATE.clear()
 
     num_teams = len(teams)
+    log_message(f"Generating bracket for {num_teams} teams.") # ADDED LOGGING
     
     if config is None:
         try:
@@ -1273,12 +1336,14 @@ def generate_dynamic_bracket(teams, config=None):
                     if t_num < len(teams):
                         # Assign the actual team name based on the draw/seeding
                         TOURNAMENT_STATE[match_id]['teams'][i] = teams[t_num]
+                        log_message(f"Seeded {teams[t_num]} into {match_id} [Slot {i}].") # ADDED LOGGING
                     else:
                         TOURNAMENT_STATE[match_id]['teams'][i] = None 
 
     # 3. Set initial active match
     initial_active_match = find_next_active_match()
     TOURNAMENT_STATE['active_match_id'] = initial_active_match
+    log_message(f"Bracket generation complete. Initial active match: {initial_active_match}") # ADDED LOGGING
 
 def get_multi_line_input(parent, title, prompt, num_required):
     """
@@ -1286,6 +1351,8 @@ def get_multi_line_input(parent, title, prompt, num_required):
     MODIFIED: Uses a standard tk.Frame instead of a scrollable Canvas,
     and forces layout update after initial draw to fix the bug.
     """
+    log_message(f"Opening player input dialog for {num_required} players.") # ADDED LOGGING
+    
     dialog = tk.Toplevel(parent)
     dialog.title(title)
     # Increased height to accommodate max players (20) without scrollbar
@@ -1307,6 +1374,7 @@ def get_multi_line_input(parent, title, prompt, num_required):
     
     # Forward declaration for the drawing function
     def toggle_draw_wrapper():
+        log_message(f"Toggling draw mode. Manual Draw: {is_manual_draw.get()}") # ADDED LOGGING
         # Redraw the widgets in the simple frame
         draw_input_widgets(is_manual_draw.get(), num_required, input_container, player_entries)
 
@@ -1381,6 +1449,8 @@ def get_multi_line_input(parent, title, prompt, num_required):
         is_manual = is_manual_draw.get()
         num_inputs = len(player_entries)
         
+        log_message(f"OK button pressed. Manual Draw: {is_manual}. Validating input.") # ADDED LOGGING
+        
         if num_inputs != num_required:
              messagebox.showerror("Internal Error", "Widget count mismatch. Cannot proceed.")
              return
@@ -1393,19 +1463,23 @@ def get_multi_line_input(parent, title, prompt, num_required):
                 
                 if not raw_draw_num or not player_name:
                      messagebox.showerror("Input Error", f"Manual Draw Error (Line {i+1}): Both Draw # and Player Name must be filled.")
+                     log_message(f"Input Error: Missing data on line {i+1} (Manual Draw).") # ADDED LOGGING
                      return
                      
                 try:
                     draw_num = int(raw_draw_num)
                 except ValueError:
                     messagebox.showerror("Input Error", f"Manual Draw Error (Line {i+1}): Draw number '{raw_draw_num}' is not a valid integer.")
+                    log_message(f"Input Error: Invalid draw number '{raw_draw_num}' on line {i+1}.") # ADDED LOGGING
                     return
                 
                 if draw_num < 1 or draw_num > num_required:
                     messagebox.showerror("Input Error", f"Manual Draw Error (Line {i+1}): Draw number {draw_num} is out of range (1-{num_required}).")
+                    log_message(f"Input Error: Draw number {draw_num} out of range on line {i+1}.") # ADDED LOGGING
                     return
                 if draw_num in assigned_draws:
                     messagebox.showerror("Input Error", f"Manual Draw Error (Line {i+1}): Draw number {draw_num} is assigned multiple times.")
+                    log_message(f"Input Error: Duplicate draw number {draw_num} on line {i+1}.") # ADDED LOGGING
                     return
                     
                 assigned_draws.add(draw_num)
@@ -1415,6 +1489,7 @@ def get_multi_line_input(parent, title, prompt, num_required):
             if len(assigned_draws) != num_required:
                 missing_draws = [i for i in range(1, num_required + 1) if i not in assigned_draws]
                 messagebox.showerror("Input Error", f"Manual Draw Error: The following draw numbers are missing: {', '.join(map(str, missing_draws))}")
+                log_message(f"Input Error: Missing draw numbers {missing_draws}.") # ADDED LOGGING
                 return
 
         else: # Auto Draw
@@ -1422,14 +1497,17 @@ def get_multi_line_input(parent, title, prompt, num_required):
                 player_name = name_entry.get().strip()
                 if not player_name:
                     messagebox.showerror("Input Error", f"Auto Draw Error (Line {i+1}): Player Name must be filled.")
+                    log_message(f"Input Error: Missing player name on line {i+1} (Auto Draw).") # ADDED LOGGING
                     return
                 # Draw_num is None for auto draw
                 player_data_list.append((None, player_name)) 
                 
         result = (is_manual, player_data_list)
+        log_message("Player input successfully validated.") # ADDED LOGGING
         dialog.destroy()
 
     def on_cancel():
+        log_message("Player input canceled.") # ADDED LOGGING
         dialog.destroy()
 
     # --- Initial draw and Button setup ---
@@ -1454,6 +1532,8 @@ def get_multi_line_input(parent, title, prompt, num_required):
 def start_tournament():
     """Prompts for players, sets up teams, generates the bracket, and launches the GUI. MODIFIED for file-driven prizes and new draw logic."""
     
+    log_message("Starting tournament initialization process.") # ADDED LOGGING
+    
     # Use a temporary root window for dialogs
     dialog_root = tk.Tk()
     dialog_root.withdraw() # Hide the main window
@@ -1466,14 +1546,17 @@ def start_tournament():
                                                 minvalue=MIN_PLAYERS, maxvalue=MAX_PLAYERS, parent=dialog_root)
             if num_players is None: 
                 dialog_root.destroy()
+                log_message("Tournament setup canceled at player count prompt.") # ADDED LOGGING
                 return
             if num_players % 2 != 0:
                 messagebox.showerror("Error", "The total number of players must be even!")
                 num_players = None # Loop again
+                log_message(f"Input Error: Player count {num_players} is odd.") # ADDED LOGGING
                 continue
             break
         except Exception:
             pass
+    log_message(f"Total number of players set to: {num_players}") # ADDED LOGGING
 
     # --- MODIFIED: Use the new return format from get_multi_line_input ---
     player_input_result = None
@@ -1483,11 +1566,13 @@ def start_tournament():
                                             num_players)
         if player_input_result is None:
             dialog_root.destroy()
+            log_message("Tournament setup canceled at player input stage.") # ADDED LOGGING
             return
         
     dialog_root.destroy() # Close the temporary dialog root
 
     is_manual_draw, player_data_list = player_input_result
+    log_message(f"Player data received. Manual Draw: {is_manual_draw}") # ADDED LOGGING
 
     # --- 1. Process Draw and Team Setup ---
     
@@ -1510,6 +1595,7 @@ def start_tournament():
             player_draws.append((draw_num, player_name))
         
         player_draws.sort(key=lambda x: x[0]) 
+        log_message(f"Auto-draw complete. {num_players} players drawn.") # ADDED LOGGING
     
     num_teams = num_players // 2
     for i in range(num_teams):
@@ -1519,6 +1605,7 @@ def start_tournament():
         
         TEAMS.append(team_name)
         TEAM_ROSTERS[team_name] = [player1, player2]
+        log_message(f"Created team {team_name}: {player1} / {player2} (Draws #{player_draws[i*2][0]} & #{player_draws[i*2+1][0]})") # ADDED LOGGING
         
     # --- 2. Load Bracket Config and Prizes (Unchanged) ---
     
@@ -1539,6 +1626,7 @@ def start_tournament():
     
     # Calculate Total Pool by summing the prizes read from the file
     total_pool = prizes['1st'] + prizes['2st'] + prizes['3rd']
+    log_message(f"Loaded prizes: {prizes}. Total Pool: ${total_pool}") # ADDED LOGGING
         
     # --- 3. Show Draw Summary (Unchanged) ---
     show_draw_summary(player_draws, TEAMS, TEAM_ROSTERS, num_teams, total_pool, prizes)
@@ -1547,6 +1635,7 @@ def start_tournament():
     generate_dynamic_bracket(TEAMS, config)
     
     if not TOURNAMENT_STATE:
+        log_message("Error: TOURNAMENT_STATE is empty after generation.") # ADDED LOGGING
         return
 
     root = tk.Tk()
@@ -1567,6 +1656,8 @@ def declare_winner(color):
 
     winner = current_match_teams[color]
     loser = current_match_teams['blue'] if color == 'red' else current_match_teams['red']
+    
+    log_message(f"Winner declared for {match_id_to_confirm}: {winner} ({color}). Waiting for confirmation.") # ADDED LOGGING
 
     match_input_frame.pack_forget()
     if switch_frame_ref: switch_frame_ref.pack_forget() # HIDE SWITCH BUTTON
@@ -1599,6 +1690,8 @@ def confirm_match_resolution(winner, loser, winning_color, match_id):
     """Processes the confirmed match result and updates the tournament state."""
     global match_res_frame, current_match_res_buttons
 
+    log_message(f"Confirmation received for match {match_id}. Processing result...") # ADDED LOGGING
+
     # BUG FIX: Call handle_match_resolution with the confirmed match_id
     handle_match_resolution(winner, loser, winning_color, match_id)
 
@@ -1618,6 +1711,7 @@ def load_match_data_and_teams():
     global bracket_info_frame_ref, team_info_frame_ref, rankings_label_ref, switch_frame_ref, final_control_frame_ref, rankings_display_frame_ref
     
     match_id = TOURNAMENT_STATE.get('active_match_id', 'TOURNAMENT_OVER')
+    log_message(f"Loading match data for new active match: {match_id}") # ADDED LOGGING
     
     # Hide final control frame and ranking frame if they were shown
     if final_control_frame_ref:
@@ -1637,6 +1731,7 @@ def load_match_data_and_teams():
              display_final_rankings(champion) # New function call
         else:
             status_label.config(text=f"TOURNAMENT OVER! No champion declared. (Error State)", fg='dark red')
+            log_message("Error State: TOURNAMENT_OVER with no champion declared.") # ADDED LOGGING
             
         match_input_frame.pack_forget()
         if match_details_frame: match_details_frame.pack_forget()
@@ -1667,6 +1762,7 @@ def load_match_data_and_teams():
         current_match_teams['blue'] = team_B
         
         last_assigned_match_id = match_id
+        log_message(f"New match {match_id} loaded. Red={team_A}, Blue={team_B}.") # ADDED LOGGING
     
     update_scoreboard_display()
 
@@ -1674,9 +1770,15 @@ def load_match_data_and_teams():
 # --- Main Program Entry Point (MODIFIED) ---
 
 if __name__ == '__main__':
+    
+    log_message("Script starting.") # ADDED LOGGING
+    
     # Ensure the 'data' directory exists for configuration files
     if not os.path.exists('data'):
         os.makedirs('data')
+        log_message("Created 'data' directory.") # ADDED LOGGING
         
     # start_tournament handles creating and destroying the necessary Tk instances now
     start_tournament()
+
+    log_message("Script finished execution.") # ADDED LOGGING
