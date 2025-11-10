@@ -1,0 +1,81 @@
+# MAPPING FOR 8-TEAM TOURNAMENT (G1-G15)
+
+PRIZES:
+  3: 20
+  2: 30
+  1: 60
+
+G1 (WB-R1):
+  Teams: T1, T8
+  Winner_Advances_To: G7 [Slot: 0]
+  Loser_Drops_To: G5 [Slot: 0]
+
+G2 (WB-R2):
+  Teams: T4, T5
+  Winner_Advances_To: G7 [Slot: 1]
+  Loser_Drops_To: G5 [Slot: 1]
+  
+G3 (WB-R3):
+  Teams: T3, T6
+  Winner_Advances_To: G8 [Slot: 0]
+  Loser_Drops_To: G6 [Slot: 0]
+
+G4 (WB-R4):
+  Teams: T2, T7
+  Winner_Advances_To: G8 [Slot: 1]
+  Loser_Drops_To: G6 [Slot: 1]
+
+G5 (LB-R1):
+  Teams: L-G1, L-G2
+  Winner_Advances_To: G9 [Slot: 1]
+  Loser_Drops_To: ELIMINATED[8th]
+
+G6 (LB-R2):
+  Teams: L-G3, L-G4
+  Winner_Advances_To: G10 [Slot:0]
+  Loser_Drops_To: ELIMINATED[7th]
+
+G7 (WB-R5):
+  Teams: W-G1, W-G2
+  Winner_Advances_To: G11 [Slot: 0]
+  Loser_Drops_To: G10 [Slot: 1]
+
+G8 (WB-R6):
+  Teams: W-G3, W-G4
+  Winner_Advances_To: G11 [Slot: 1]
+  Loser_Drops_To: G9 [Slot:0]
+
+G9 (LB-R3):
+  Teams: L-G8, W-G5
+  Winner_Advances_To: G12 [Slot: 0]
+  Loser_Drops_To: ELIMINATED[6th]
+
+G10 (LB-R4):
+  Teams: W-G6, L-G7
+  Winner_Advances_To: G12 [Slot: 1]
+  Loser_Drops_To: ELIMINATED[5th]
+
+G11 (WB-R7):
+  Teams: W-G7, W-G8
+  Winner_Advances_To: GF [Slot: 0]
+  Loser_Drops_To: G13 [Slot: 0]
+
+G12 (LB-R5):
+  Teams: W-G9, W-G10
+  Winner_Advances_To: G13 [Slot: 1]
+  Loser_Drops_To: ELIMINATED[4th]
+
+G13 (LB-R6):
+  Teams: L-G11, W-G12
+  Winner_Advances_To: GF [Slot: 1]
+  Loser_Drops_To: ELIMINATED[3rd]
+
+GF (Finals):
+  Teams: W-G11, W-G13
+  Winner_Advances_To: CHAMPION
+  Loser_Drops_To: GF_CONDITIONAL
+
+GGF (Grand Finals):
+  Teams: W-GF, L-GF
+  Winner_Advances_To: CHAMPION
+  Loser_Drops_To: ELIMINATED[2nd]

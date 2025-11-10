@@ -6,17 +6,17 @@ PRIZES:
   1: 30
 
 G1 (WB-R1):
-  Teams: T1, T2
+  Teams: T4, T5
   Winner_Advances_To: G3 [Slot: 1]
   Loser_Drops_To: G4 [Slot: 0]
 
 G2 (WB-R1):
-  Teams: T3, T4
+  Teams: T2, T3
   Winner_Advances_To: G5 [Slot: 0]
   Loser_Drops_To: G4 [Slot: 1]
   
 G3 (WB-R2):
-  Teams: T5, W-G1
+  Teams: W-G1, T1
   Winner_Advances_To: G5 [Slot: 1]
   Loser_Drops_To: G6 [Slot: 1]
 
