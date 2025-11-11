@@ -13,7 +13,7 @@ G1 (WB-R1):
 G2 (WB-R2):
   Teams: T3, T6
   Winner_Advances_To: G5 [Slot: 0]
-  Loser_Drops_To: G6 [Slot: 1]
+  Loser_Drops_To: G6 [Slot: 0]
 
 G3 (WB-R3):
   Teams: T2, T7
@@ -32,7 +32,12 @@ G5 (WB-R5):
 
 G6 (LB-R1):
   Teams: L-G2, L-G3
-  Winner_Advances_To: G8 [Slot:1]
+  Winner_Advances_To: G8 [Slot: 1]
+  Loser_Drops_To: ELIMINATED[7th]
+
+G6 (LB-R1):
+  Teams: L-G2, L-G3
+  Winner_Advances_To: G8 [Slot: 1]
   Loser_Drops_To: ELIMINATED[7th]
 
 G7 (LB-R2):
@@ -48,7 +53,7 @@ G8 (LB-R3):
 G9 (WB-R6):
   Teams: W-G4, W-G5
   Winner_Advances_To: GF [Slot: 0]
-  Loser_Drops_To: G11 [Slot: 1]
+  Loser_Drops_To: G11 [Slot: 0]
 
 G10 (LB-R4):
   Teams: W-G8, W-G7
