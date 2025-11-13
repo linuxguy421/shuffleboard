@@ -71,6 +71,45 @@ def on_close(root):
         pass 
     sys.exit(0) 
 
+def show_title_screen():
+    """Displays a title image and Begin button before tournament setup."""
+    import tkinter as tk
+    from PIL import Image, ImageTk
+
+    splash = tk.Tk()
+    splash.title("Moose Lodge Shuffleboard")
+    splash.geometry("500x500")
+    splash.configure(bg="black")
+
+    try:
+        img = Image.open("img/title.png")
+        img = img.resize((480, 300), Image.LANCZOS)
+        logo = ImageTk.PhotoImage(img)
+        tk.Label(splash, image=logo, bg="black").pack(pady=20)
+    except Exception as e:
+        tk.Label(splash, text="Moose Lodge Shuffleboard", fg="white", bg="black", font=("Arial", 20, "bold")).pack(pady=60)
+        print(f"[Title Screen] Could not load image: {e}")
+
+    tk.Label(
+        splash,
+        text="Ms. Ethels Moose Shuffleboard Tournament",
+        fg="white", bg="black",
+        font=("Arial", 12)
+    ).pack(pady=10)
+
+    def start_game():
+        splash.destroy()
+
+    tk.Button(
+        splash,
+        text="Begin Game Setup",
+        command=start_game,
+        bg="#4CAF50", fg="white",
+        font=("Arial", 14, "bold"),
+        height=2
+    ).pack(pady=40, fill="x", padx=50)
+
+    splash.mainloop()
 
 # --- Winnings Calculation (Retained for fallback only) ---
 
@@ -81,7 +120,7 @@ def calculate_winnings(num_teams):
     
     total_pool = num_teams * 2 * ENTRY_FEE_PER_PERSON
     
-    if num_teams == 3:
+    if num_teams == 3:	
         payouts = PAYOUT_SPLIT_3_TEAMS
     else:
         payouts = PAYOUT_SPLIT_4_PLUS
@@ -1111,10 +1150,61 @@ def reset_game(update_teams=True):
     if update_teams:
         load_match_data_and_teams()
 
+def update_roster_seeding_display():
+    """Updates the Team Roster & Seeding information box."""
+    global roster_seeding_frame_ref, TEAMS, TEAM_ROSTERS
+
+    if not roster_seeding_frame_ref or not TEAMS:
+        return
+
+    log_message("Updating Team Roster & Seeding display.")
+
+    # Clear existing widgets
+    for widget in roster_seeding_frame_ref.winfo_children():
+        widget.destroy()
+
+    # Create the roster list string
+    roster_text = "Seeding | Team Name | Players\n"
+    roster_text += "--------|-----------|---------\n"
+    for i, team_name in enumerate(TEAMS):
+        roster = TEAM_ROSTERS.get(team_name, ["N/A", "N/A"])
+        roster_text += f"T{i+1:<6}| {team_name:<9} | {roster[0]} / {roster[1]}\n"
+
+    tk.Label(roster_seeding_frame_ref, text=roster_text, justify=tk.LEFT, font=('Courier', 10), bg='#EEEEEE').pack(fill='x', padx=5, pady=(0, 5))
+
+def update_roster_seeding_display():
+    """Updates the Team Roster & Seeding information box with a horizontal, player-focused view."""
+    global roster_seeding_frame_ref, TEAMS, TEAM_ROSTERS
+
+    if not roster_seeding_frame_ref or not TEAMS:
+        return
+
+    log_message("Updating Team Roster & Seeding display (horizontal).")
+
+    # Clear existing widgets
+    for widget in roster_seeding_frame_ref.winfo_children():
+        widget.destroy()
+
+    # Inner frame to hold all team blocks and pack them horizontally (side=tk.LEFT)
+    teams_inner_frame = tk.Frame(roster_seeding_frame_ref, bg='#EEEEEE')
+    teams_inner_frame.pack(side='top', padx=5, pady=(0, 5))
+
+    for team_name in TEAMS:
+        roster = TEAM_ROSTERS.get(team_name, ["N/A", "N/A"])
+        players_str = f"{roster[0]} / {roster[1]}"
+        
+        # Team container frame, packs horizontally
+        team_container = tk.Frame(teams_inner_frame, bg='#DDDDDD', bd=1, relief=tk.RIDGE)
+        team_container.pack(side=tk.LEFT, padx=5, pady=2) 
+        
+        # Label combining team name and players, e.g., "Team Alpha: P1 / P2"
+        tk.Label(team_container, text=f"{team_name}: {players_str}", font=('Courier', 9), 
+                 bg='#DDDDDD', fg='black').pack(padx=5, pady=2)
+
 def setup_scoreboard(root, team_red_placeholder, team_blue_placeholder):
     # ... (function body remains unchanged) ...
     """Initializes the scoreboard canvas and widgets with the new UI."""
-    global scoreboard_canvas_ref, team_labels, player_labels_ref, status_label, match_input_frame, match_res_frame, btn_red, btn_blue
+    global scoreboard_canvas_ref, team_labels, player_labels_ref, status_label, match_input_frame, match_res_frame, btn_red, btn_blue, roster_seeding_frame_ref
     global match_details_frame, game_routing_label, team_info_labels, bracket_info_canvas_ref, rankings_label_ref, btn_switch, bracket_info_frame_ref, team_info_frame_ref
     global switch_frame_ref, final_control_frame_ref, rankings_display_frame_ref
     
@@ -1129,8 +1219,35 @@ def setup_scoreboard(root, team_red_placeholder, team_blue_placeholder):
     status_label = tk.Label(root, text="Tournament Initialized.", font=('Arial', 10, 'bold'), pady=5, bd=1, relief='sunken')
     status_label.pack(fill='x')
     
+    # --- Scoreboard Canvas ---
     scoreboard_canvas_ref = tk.Canvas(root, width=450, height=100, bg='white', highlightthickness=0)
-    scoreboard_canvas_ref.pack(side='top', pady=10, padx=10, fill='x')
+    scoreboard_canvas_ref.pack(fill='x', padx=10, pady=5)
+
+    # 1. Outer Frame: Holds the scrollbar and canvas
+    roster_outer_frame = tk.Frame(root, padx=10, pady=2, bd=1, relief=tk.GROOVE, bg='#EEEEEE')
+    roster_outer_frame.pack(fill='x', padx=10, pady=2) 
+
+    # 2. Scrollbar: For horizontal scrolling
+    h_scrollbar = tk.Scrollbar(roster_outer_frame, orient=tk.HORIZONTAL)
+    h_scrollbar.pack(side=tk.BOTTOM, fill=tk.X)
+
+    # 3. Canvas: Hosts the content (roster_seeding_frame_ref)
+    roster_canvas_ref = tk.Canvas(roster_outer_frame, bg='#666666', height=35, xscrollcommand=h_scrollbar.set, highlightthickness=0)
+    roster_canvas_ref.pack(side=tk.TOP, fill=tk.X, expand=True)
+
+    h_scrollbar.config(command=roster_canvas_ref.xview)
+
+    # 4. Inner Frame: This is the frame the rest of the code needs to target
+    roster_seeding_frame_ref = tk.Frame(roster_canvas_ref, bg='#EEEEEE')
+    roster_canvas_ref.create_window((0, 0), window=roster_seeding_frame_ref, anchor="nw")
+    roster_seeding_frame_ref.bind("<Configure>", lambda e: roster_canvas_ref.configure(scrollregion=roster_canvas_ref.bbox("all")))
+    
+    # Initial content update for the roster/seeding frame
+    update_roster_seeding_display()
+
+    # --- Match Details Frame (Routing/Team Info) ---
+    match_details_frame = tk.Frame(root, padx=10, pady=5, bd=1, relief=tk.SUNKEN)
+    match_details_frame.pack(fill='x', padx=10, pady=5)
     
     center_x = 225
     name_x_red, name_x_blue = 110, 340 
@@ -1778,6 +1895,7 @@ if __name__ == '__main__':
         os.makedirs('data')
         log_message("Created 'data' directory.") # ADDED LOGGING
         
+    show_title_screen()
     # start_tournament handles creating and destroying the necessary Tk instances now
     start_tournament()
 
