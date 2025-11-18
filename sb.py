@@ -94,7 +94,7 @@ def show_title_screen():
         splash,
         text="Ms. Ethels Moose Shuffleboard Tournament",
         fg="white", bg="black",
-        font=("Arial", 12)
+        font=("Arial", 20)
     ).pack(pady=10)
 
     def start_game():
