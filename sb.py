@@ -983,6 +983,21 @@ def format_destination(dest):
         return f"❌ {dest}"
     return str(dest)
 
+# NEW: Utility to calculate a team's current win/loss record
+def get_team_record(team_name):
+    """Calculates the current wins and losses for a given team from TOURNAMENT_STATE."""
+    wins = 0
+    losses = 0
+    for match_id, match_data in TOURNAMENT_STATE.items():
+        if not isinstance(match_data, dict) or match_data.get('winner') is None:
+            continue
+            
+        if team_name == match_data['winner']:
+            wins += 1
+        elif team_name in match_data.get('teams', []) and team_name != match_data['winner']:
+            losses += 1
+    return wins, losses
+    
 def update_winner_buttons():
     # ... (function body remains unchanged) ...
     """Updates the text on the winner buttons to show the assigned team names."""
@@ -1034,10 +1049,8 @@ def go_back_to_selection():
     team_blue = current_match_teams['blue']
     match_id = TOURNAMENT_STATE['active_match_id']
     status_label.config(text=f"Active Match: {match_id} - {team_red} (RED) vs {team_blue} (BLUE)", fg='black')
-    
+
 def update_scoreboard_display():
-    # ... (function body remains unchanged) ...
-    """Updates all visual elements on the scoreboard based on current_match_teams and routing."""
     global team_labels, player_labels_ref, TOURNAMENT_STATE, scoreboard_canvas_ref, status_label, current_match_teams
     global game_routing_label, team_info_labels, bracket_info_canvas_ref
 
@@ -1046,41 +1059,43 @@ def update_scoreboard_display():
     if match_id == 'TOURNAMENT_OVER':
         # Handled by display_final_rankings
         return
-    
+        
     log_message(f"Updating scoreboard display for match: {match_id}") # ADDED LOGGING
 
     team_red = current_match_teams['red']
     team_blue = current_match_teams['blue']
+    
+    # FIX: Define roster_red and roster_blue *before* they are used in the canvas item config
+    # This prevents the UnboundLocalError at startup.
+    roster_red = " / ".join(TEAM_ROSTERS.get(team_red, ["P1", "P2"]))
+    roster_blue = " / ".join(TEAM_ROSTERS.get(team_blue, ["P3", "P4"]))
 
     canvas = scoreboard_canvas_ref
     match_data = TOURNAMENT_STATE[match_id]
     match_config = match_data['config']
     
     # --- 1. Update Canvas Text (Team Name & Roster) ---
-    canvas.itemconfig(team_labels['red'], text=f"{team_red}")
-    canvas.itemconfig(team_labels['blue'], text=f"{team_blue}")
     
-    roster_red = " / ".join(TEAM_ROSTERS.get(team_red, ["TBD", "TBD"]))
-    roster_blue = " / ".join(TEAM_ROSTERS.get(team_blue, ["TBD", "TBD"]))
-
-    # MODIFIED: Update players with team number
-    canvas.itemconfig(player_labels_ref['red'], text=f"Team {team_red.split(' ')[1]} / ({roster_red})")
-    canvas.itemconfig(player_labels_ref['blue'], text=f"Team {team_blue.split(' ')[1]} / ({roster_blue})")
+    # MODIFICATION 1: Show "P1 / P2" (roster_red) as the large team name.
+    # The old large team name lines are removed.
+    canvas.itemconfig(team_labels['red'], text=roster_red)
+    canvas.itemconfig(team_labels['blue'], text=roster_blue)
+    
+    # MODIFICATION 1: Show "Team X" (team_red) as the small player name text.
+    # The old small player name lines are removed.
+    canvas.itemconfig(player_labels_ref['red'], text=team_red)
+    canvas.itemconfig(player_labels_ref['blue'], text=team_blue)
     
     # --- 2. Update Match Details Frame ---
     
     w_next = format_destination(match_config.get('W_next'))
     l_next = format_destination(match_config.get('L_next'))
     
-    def get_player_status(team_name):
-        # Find the rank associated with the team
-        for rank, team in TOURNAMENT_RANKINGS.items():
-            if team == team_name:
-                return f"({rank} Place)"
-        return "(Active)"
-        
-    team_red_status = get_player_status(team_red)
-    team_blue_status = get_player_status(team_blue)
+    # MODIFICATION 2: Calculate Wins/Losses
+    wins_red, losses_red = get_team_record(team_red)
+    wins_blue, losses_blue = get_team_record(team_blue)
+    
+    # The old team status logic (get_player_status call) is removed here.
     
     routing_text = (
         f"Game ID: {match_id}\n"
@@ -1089,13 +1104,14 @@ def update_scoreboard_display():
     )
     game_routing_label.config(text=routing_text)
     
-    # MODIFIED: Display Team Name and Players with team number and status
-    team_info_labels['red'].config(text=f"Team: {team_red}\nPlayers: {roster_red} {team_red_status}")
-    team_info_labels['blue'].config(text=f"Team: {team_blue}\nPlayers: {roster_blue} {team_blue_status}")
+    # MODIFICATION 2: Display Wins/Losses instead of Team Name/Players/Status
+    # The old team_info_labels config lines are removed.
+    team_info_labels['red'].config(text=f"Wins: {wins_red}\nLosses: {losses_red}")
+    team_info_labels['blue'].config(text=f"Wins: {wins_blue}\nLosses: {losses_blue}")
     
     # --- 3. Update Status Label and Buttons ---
     status_label.config(text=f"Active Match: {match_id} - {team_red} (RED) vs {team_blue} (BLUE)", fg='black')
-    update_winner_buttons() 
+    update_winner_buttons()
     
     # --- 4. Draw Small Bracket View ---
     if bracket_info_canvas_ref:
