@@ -1,0 +1,133 @@
+{
+  "tournament_name": "Converted from 5teamD.game",
+  "prizes": {
+    "3": 8,
+    "2": 12,
+    "1": 30
+  },
+  "games": {
+    "G1": {
+      "teams": [
+        "T4",
+        "T5"
+      ],
+      "winner_advances_to": {
+        "game": "G3",
+        "slot": 0
+      },
+      "loser_drops_to": {
+        "game": "G4",
+        "slot": 0
+      }
+    },
+    "G2": {
+      "teams": [
+        "T2",
+        "T3"
+      ],
+      "winner_advances_to": {
+        "game": "G5",
+        "slot": 0
+      },
+      "loser_drops_to": {
+        "game": "G4",
+        "slot": 1
+      }
+    },
+    "G3": {
+      "teams": [
+        "W-G1",
+        "T1"
+      ],
+      "winner_advances_to": {
+        "game": "G5",
+        "slot": 1
+      },
+      "loser_drops_to": {
+        "game": "G6",
+        "slot": 1
+      }
+    },
+    "G4": {
+      "teams": [
+        "L-G1",
+        "L-G2"
+      ],
+      "winner_advances_to": {
+        "game": "G6",
+        "slot": 0
+      },
+      "loser_drops_to": {
+        "result": "ELIMINATED",
+        "rank": "5th"
+      }
+    },
+    "G5": {
+      "teams": [
+        "W-G2",
+        "W-G3"
+      ],
+      "winner_advances_to": {
+        "game": "GF",
+        "slot": 0
+      },
+      "loser_drops_to": {
+        "game": "G7",
+        "slot": 0
+      }
+    },
+    "G6": {
+      "teams": [
+        "W-G4",
+        "L-G3"
+      ],
+      "winner_advances_to": {
+        "game": "G7",
+        "slot": 1
+      },
+      "loser_drops_to": {
+        "result": "ELIMINATED",
+        "rank": "4th"
+      }
+    },
+    "G7": {
+      "teams": [
+        "L-G5",
+        "W-G6"
+      ],
+      "winner_advances_to": {
+        "game": "GF",
+        "slot": 1
+      },
+      "loser_drops_to": {
+        "result": "ELIMINATED",
+        "rank": "3rd"
+      }
+    },
+    "GF": {
+      "teams": [
+        "W-G5",
+        "W-G7"
+      ],
+      "winner_advances_to": {
+        "result": "CHAMPION"
+      },
+      "loser_drops_to": {
+        "result": "GF_CONDITIONAL"
+      }
+    },
+    "GGF": {
+      "teams": [
+        "W-G8",
+        "L-G8"
+      ],
+      "winner_advances_to": {
+        "result": "CHAMPION"
+      },
+      "loser_drops_to": {
+        "result": "ELIMINATED",
+        "rank": "2nd"
+      }
+    }
+  }
+}

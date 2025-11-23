@@ -1,0 +1,273 @@
+{
+  "tournament_name": "Converted from 10teamD.game",
+  "prizes": {
+    "3": 20,
+    "2": 30,
+    "1": 50
+  },
+  "games": {
+    "G1": {
+      "teams": [
+        "T8",
+        "T9"
+      ],
+      "winner_advances_to": {
+        "game": "G5",
+        "slot": 0
+      },
+      "loser_drops_to": {
+        "game": "G8",
+        "slot": 0
+      }
+    },
+    "G2": {
+      "teams": [
+        "T7",
+        "T10"
+      ],
+      "winner_advances_to": {
+        "game": "G6",
+        "slot": 1
+      },
+      "loser_drops_to": {
+        "game": "G7",
+        "slot": 0
+      }
+    },
+    "G3": {
+      "teams": [
+        "T4",
+        "T5"
+      ],
+      "winner_advances_to": {
+        "game": "G11",
+        "slot": 0
+      },
+      "loser_drops_to": {
+        "game": "G9",
+        "slot": 1
+      }
+    },
+    "G4": {
+      "teams": [
+        "T3",
+        "T6"
+      ],
+      "winner_advances_to": {
+        "game": "G12",
+        "slot": 1
+      },
+      "loser_drops_to": {
+        "game": "G10",
+        "slot": 0
+      }
+    },
+    "G5": {
+      "teams": [
+        "W-G1",
+        "T1"
+      ],
+      "winner_advances_to": {
+        "game": "G11",
+        "slot": 1
+      },
+      "loser_drops_to": {
+        "game": "G7",
+        "slot": 1
+      }
+    },
+    "G6": {
+      "teams": [
+        "T2",
+        "W-G2"
+      ],
+      "winner_advances_to": {
+        "game": "G12",
+        "slot": 0
+      },
+      "loser_drops_to": {
+        "game": "G8",
+        "slot": 1
+      }
+    },
+    "G7": {
+      "teams": [
+        "L-G2",
+        "L-G5"
+      ],
+      "winner_advances_to": {
+        "game": "G9",
+        "slot": 0
+      },
+      "loser_drops_to": {
+        "result": "ELIMINATED",
+        "rank": "10th"
+      }
+    },
+    "G8": {
+      "teams": [
+        "L-G1",
+        "L-G6"
+      ],
+      "winner_advances_to": {
+        "game": "G10",
+        "slot": 1
+      },
+      "loser_drops_to": {
+        "result": "ELIMINATED",
+        "rank": "9th"
+      }
+    },
+    "G9": {
+      "teams": [
+        "W-G7",
+        "L-G3"
+      ],
+      "winner_advances_to": {
+        "game": "G13",
+        "slot": 1
+      },
+      "loser_drops_to": {
+        "result": "ELIMINATED",
+        "rank": "8th"
+      }
+    },
+    "G10": {
+      "teams": [
+        "L-G4",
+        "W-G8"
+      ],
+      "winner_advances_to": {
+        "game": "G14",
+        "slot": 0
+      },
+      "loser_drops_to": {
+        "result": "ELIMINATED",
+        "rank": "7th"
+      }
+    },
+    "G11": {
+      "teams": [
+        "W-G3",
+        "W-G5"
+      ],
+      "winner_advances_to": {
+        "game": "G15",
+        "slot": 0
+      },
+      "loser_drops_to": {
+        "game": "G14",
+        "slot": 1
+      }
+    },
+    "G12": {
+      "teams": [
+        "W-G6",
+        "W-G4"
+      ],
+      "winner_advances_to": {
+        "game": "G15",
+        "slot": 1
+      },
+      "loser_drops_to": {
+        "game": "G13",
+        "slot": 0
+      }
+    },
+    "G13": {
+      "teams": [
+        "L-G12",
+        "W-G9"
+      ],
+      "winner_advances_to": {
+        "game": "G16",
+        "slot": 0
+      },
+      "loser_drops_to": {
+        "result": "ELIMINATED",
+        "rank": "6th"
+      }
+    },
+    "G14": {
+      "teams": [
+        "W-G10",
+        "L-G11"
+      ],
+      "winner_advances_to": {
+        "game": "G16",
+        "slot": 1
+      },
+      "loser_drops_to": {
+        "result": "ELIMINATED",
+        "rank": "5th"
+      }
+    },
+    "G15": {
+      "teams": [
+        "W-G11",
+        "W-G12"
+      ],
+      "winner_advances_to": {
+        "game": "GF",
+        "slot": 0
+      },
+      "loser_drops_to": {
+        "game": "G17",
+        "slot": 0
+      }
+    },
+    "G16": {
+      "teams": [
+        "W-G13",
+        "W-G14"
+      ],
+      "winner_advances_to": {
+        "game": "G17",
+        "slot": 1
+      },
+      "loser_drops_to": {
+        "result": "ELIMINATED",
+        "rank": "4th"
+      }
+    },
+    "G17": {
+      "teams": [
+        "L-G15",
+        "W-G16"
+      ],
+      "winner_advances_to": {
+        "game": "GF",
+        "slot": 1
+      },
+      "loser_drops_to": {
+        "result": "ELIMINATED",
+        "rank": "3rd"
+      }
+    },
+    "GF": {
+      "teams": [
+        "W-G15",
+        "W-G17"
+      ],
+      "winner_advances_to": {
+        "result": "CHAMPION"
+      },
+      "loser_drops_to": {
+        "result": "GF_CONDITIONAL"
+      }
+    },
+    "GGF": {
+      "teams": [
+        "W-GF",
+        "L-GF"
+      ],
+      "winner_advances_to": {
+        "result": "CHAMPION"
+      },
+      "loser_drops_to": {
+        "result": "ELIMINATED",
+        "rank": "2nd"
+      }
+    }
+  }
+}

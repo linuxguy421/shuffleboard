@@ -9,6 +9,7 @@ import random
 import os 
 from collections import OrderedDict
 import datetime # ADDED for logging
+import json # ADDED for JSON
 
 # --- Console Logging Function ---
 def log_message(message):
@@ -299,57 +300,108 @@ def _parse_config_file_content(content):
     # Return the prize dictionary as well
     return final_config, prizes
 
-# --- Dynamic Config Loading (MODIFIED to return prizes) ---
+# --- JSON Parsing Functions (Phase 1) ---
+
+def _parse_json_destination(dest_data):
+    """
+    Translates JSON destination objects into the internal tuple/string format.
+    """
+    # Safety check: if it's not a dictionary (e.g. None or old string), return as-is or None
+    if not isinstance(dest_data, dict):
+        return None
+
+    # Case 1: Standard Game Progression (Game + Slot)
+    if 'game' in dest_data and 'slot' in dest_data:
+        # Returns tuple: ('G4', 1)
+        return (dest_data['game'], int(dest_data['slot']))
+
+    # Case 2: Result Objects (Elimination, Champion, Conditional)
+    if 'result' in dest_data:
+        res = dest_data['result']
+        
+        if res == 'ELIMINATED':
+            # Extract rank, ensure uppercase, and format: ELIMINATED[7TH]
+            rank = dest_data.get('rank', 'N/A').upper()
+            return f"ELIMINATED[{rank}]"
+            
+        # Returns string: 'CHAMPION' or 'GF_CONDITIONAL'
+        return res
+            
+    return None
+
+def _parse_json_config_content(json_content):
+    """
+    Parses the JSON dict into the application's internal dictionary structure
+    and fixes the '2st' typo.
+    """
+    config = {}
+    prizes = {}
+    
+    # 1. Parse and Fix Prizes
+    raw_prizes = json_content.get('prizes', {})
+    
+    # Explicit Mapping: JSON Key -> Python Key
+    # This also fixes the typo by mapping "2" directly to "2nd"
+    if '1' in raw_prizes: prizes['1st'] = raw_prizes['1']
+    if '2' in raw_prizes: prizes['2nd'] = raw_prizes['2'] 
+    if '3' in raw_prizes: prizes['3rd'] = raw_prizes['3']
+    
+    # 2. Parse Games
+    games = json_content.get('games', {})
+    
+    for match_id, data in games.items():
+        # Build the match entry exactly as sb.py expects it
+        match_entry = {
+            'teams': data.get('teams', [None, None]),
+            # Use the helper function to parse destinations
+            'W_next': _parse_json_destination(data.get('winner_advances_to')),
+            'L_next': _parse_json_destination(data.get('loser_drops_to'))
+        }
+        config[match_id] = match_entry
+        
+    return config, prizes
+
+# --- Dynamic Config Loading (Phase 2: JSON Loader) ---
+
 def load_bracket_config(num_teams, elimination_type='D'):
     """
-    Reads the bracket configuration from a local .game file.
-    Returns: (config_dict, prizes_dict)
+    Reads the bracket configuration from a local .json file.
+    Dynamically constructs filename based on team count (e.g., '7teamD.json').
     """
+    # 1. Construct the expected filename dynamically
+    # Example: If num_teams=7, this becomes "7teamD.json"
+    base_filename = f"{num_teams}team{elimination_type}.json"
     
-    if num_teams == 3:
-         filename = '3teamD.game'
-    elif num_teams == 4:
-         filename = '4teamD.game'  
-    elif num_teams == 5:
-         filename = '5teamD.game'
-    elif num_teams == 6:
-         filename = '6teamD.game'
-    elif num_teams == 10:
-         filename = '10teamD.game'
-    else:
-        # Fallback for other standard sizes that match the naming convention
-        if num_teams >= 7 and num_teams <= 16:
-            filename = f'{num_teams}team{elimination_type}.game'
-        else:
-             log_message(f"Error: No config defined for {num_teams} teams.") # ADDED LOGGING
-             raise ValueError(f"No configuration file defined or available for {num_teams} teams.")
+    # 2. Define search paths (local folder first, then 'data' folder)
+    search_paths = [
+        base_filename,
+        os.path.join('data', base_filename)
+    ]
+    
+    log_message(f"Searching for configuration file: {base_filename}")
 
-    filepath = filename 
-    log_message(f"Attempting to load configuration file: '{filepath}'") # ADDED LOGGING
-        
-    try:
-        with open(filepath, 'r') as f:
-            content = f.read()
-        log_message(f"Successfully loaded configuration from: '{filepath}'") # ADDED LOGGING
-        return _parse_config_file_content(content) # Returns (config, prizes)
-        
-    except FileNotFoundError:
-        filepath = os.path.join('data', filename) 
-        try:
-             with open(filepath, 'r') as f:
-                 content = f.read()
-             log_message(f"Successfully loaded configuration from: '{filepath}' (data folder)") # ADDED LOGGING
-             return _parse_config_file_content(content) # Returns (config, prizes)
-        except FileNotFoundError:
-             log_message(f"Error: Bracket logic file '{filename}' not found.") # ADDED LOGGING
-             raise FileNotFoundError(f"Bracket logic file '{filename}' not found. Unable to continue.")
-    except Exception as e:
-        log_message(f"Error reading or parsing configuration file '{filepath}': {e}") # ADDED LOGGING
-        raise ValueError(f"Error reading or parsing configuration file '{filepath}': {e}")
+    # 3. Iterate through paths to find the file
+    for filepath in search_paths:
+        if os.path.exists(filepath):
+            try:
+                with open(filepath, 'r') as f:
+                    # Native JSON loading
+                    content = json.load(f)
+                
+                log_message(f"Successfully loaded JSON configuration from: '{filepath}'")
+                
+                # Pass the raw JSON dict to our Phase 1 parser
+                return _parse_json_config_content(content)
+                
+            except Exception as e:
+                log_message(f"Error reading JSON file '{filepath}': {e}")
+                raise ValueError(f"Error parsing '{filepath}': {e}")
 
-
-# --- Dynamic Coordinate Generation (RETAINED) ---
-
+    # 4. If loop completes without returning, file was not found
+    err_msg = f"Configuration file '{base_filename}' not found. Ensure it exists in the script directory or 'data/'."
+    log_message(f"Error: {err_msg}")
+    raise FileNotFoundError(err_msg)
+    
 def calculate_dynamic_coords(state):
     # ... (function body remains unchanged) ...
     coords = {}
@@ -984,18 +1036,34 @@ def format_destination(dest):
     return str(dest)
 
 # NEW: Utility to calculate a team's current win/loss record
+
 def get_team_record(team_name):
     """Calculates the current wins and losses for a given team from TOURNAMENT_STATE."""
     wins = 0
     losses = 0
     for match_id, match_data in TOURNAMENT_STATE.items():
-        if not isinstance(match_data, dict) or match_data.get('winner') is None:
+        if not isinstance(match_data, dict):
             continue
-            
-        if team_name == match_data['winner']:
-            wins += 1
-        elif team_name in match_data.get('teams', []) and team_name != match_data['winner']:
-            losses += 1
+        
+        winner = match_data.get('winner')
+        
+        # --- PATCH START: Handle GF Reset Case ---
+        # If GF triggered a reset, the 'winner' field is cleared to None to reset the UI, 
+        # but the game effectively happened. We deduce the winner by checking GGF Slot 0.
+        if match_id == 'GF' and match_data.get('is_reset') and winner is None:
+            ggf_data = TOURNAMENT_STATE.get('GGF') or TOURNAMENT_STATE.get('GFF')
+            if ggf_data and ggf_data.get('teams'):
+                 # In handle_match_resolution, the GF winner is explicitly placed in Slot 0 of GGF
+                 winner = ggf_data['teams'][0]
+        # --- PATCH END ---
+
+        # Standard counting logic
+        if winner:
+            if team_name == winner:
+                wins += 1
+            elif team_name in match_data.get('teams', []) and team_name != winner:
+                losses += 1
+                
     return wins, losses
     
 def update_winner_buttons():
