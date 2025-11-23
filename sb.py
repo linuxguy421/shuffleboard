@@ -134,8 +134,8 @@ def show_title_screen():
 
 def calculate_winnings(num_teams):
     """Calculates prize pool and payouts based on team count, ensuring whole dollars."""
-    PAYOUT_SPLIT_3_TEAMS = {'1st': 0.70, '2st': 0.30, '3rd': 0.00}
-    PAYOUT_SPLIT_4_PLUS = {'1st': 0.50, '2st': 0.30, '3rd': 0.20}
+    PAYOUT_SPLIT_3_TEAMS = {'1st': 0.70, '2nd': 0.30, '3rd': 0.00}
+    PAYOUT_SPLIT_4_PLUS = {'1st': 0.50, '2nd': 0.30, '3rd': 0.20}
     
     total_pool = num_teams * 2 * ENTRY_FEE_PER_PERSON
     
@@ -148,11 +148,11 @@ def calculate_winnings(num_teams):
     remaining_pool = total_pool
     
     prizes['1st'] = int(total_pool * payouts['1st'])
-    prizes['2st'] = int(total_pool * payouts['2st'])
+    prizes['2nd'] = int(total_pool * payouts['2nd'])
     
     if num_teams >= 4:
         # Calculate 3rd place prize using remaining pool to ensure whole dollar remainder
-        prizes['3rd'] = remaining_pool - prizes['1st'] - prizes['2st']
+        prizes['3rd'] = remaining_pool - prizes['1st'] - prizes['2nd']
     else:
         prizes['3rd'] = 0
         
@@ -181,126 +181,6 @@ def sort_match_keys(k):
         return 100
 
     return 101
-
-# --- Bracket Configuration and Parsing Functions (MODIFIED to read PRIZES) ---
-
-def _parse_destination(dest_str):
-    """Parses destination strings into the required tuple/string format."""
-    dest_str = dest_str.strip()
-    
-    # Now only looking for G-numbers, GF, and GGF
-    match = re.search(r'(G\d+|GF|GGF)\s*\[Slot:\s*(\d+|N/A)\]', dest_str) 
-    if match:
-        match_id, slot_str = match.groups()
-        
-        if slot_str.isdigit():
-            return (match_id, int(slot_str))
-        if match_id.startswith('G') and slot_str == 'N/A':
-             return f'{match_id}_CONDITIONAL' 
-        return (match_id, 0) 
-
-    if 'CHAMPION' in dest_str:
-        return 'CHAMPION'
-        
-    # FIX: Use regex to correctly look for 'ELIMINATED (nTH)' format in the config files
-    elim_match = re.search(r'ELIMINATED\s*\((.+?)\)', dest_str, re.IGNORECASE)
-    if elim_match:
-        # Extract the rank part (e.g., '5th'), convert to uppercase ('5TH'), and format as ELIMINATED[RANK]
-        rank_part = elim_match.group(1).upper().replace('.', '').strip()
-        return f'ELIMINATED[{rank_part}]'
-        
-    if dest_str.endswith('_CONDITIONAL'):
-        return dest_str
-        
-    return dest_str
-
-def _parse_config_file_content(content):
-    """Parses the text content of the [N]teamD.game file into a Python dictionary, including PRIZES."""
-    config = {}
-    current_match_id = None
-    prizes = {}  # Dictionary to store prizes
-    
-    is_parsing_prizes = False # State flag for prize parsing
-    
-    # Pre-clean the content to handle varying whitespace before processing
-    content = re.sub(r'\r', '', content) # Remove carriage returns
-    lines = [line.strip() for line in content.split('\n')]
-    
-    for line in lines:
-        line = line.strip()
-        
-        # 1. Parse PRIZES block
-        if line.startswith('PRIZES:'):
-            is_parsing_prizes = True
-            log_message("Parsing PRIZES block.") # ADDED LOGGING
-            continue
-            
-        if is_parsing_prizes:
-            # Match line with format '  3: 20' or '3: 20'
-            prize_match = re.match(r'(\d+):\s*(\d+)', line)
-            if prize_match:
-                rank = prize_match.group(1) # '1', '2', '3'
-                amount = int(prize_match.group(2))
-                
-                # Store prizes in the format used by show_draw_summary ('1st', '2st', '3rd')
-                if rank == '1':
-                    prizes['1st'] = amount
-                elif rank == '2':
-                    prizes['2st'] = amount
-                elif rank == '3':
-                    prizes['3rd'] = amount
-                log_message(f"Parsed prize: Rank {rank}, Amount ${amount}") # ADDED LOGGING
-                continue
-            
-            # Stop prize parsing if a blank line or a match header is encountered
-            if not line or re.match(r'(G\d+|GF|GGF)\s*\(.+\):', line):
-                 is_parsing_prizes = False
-                 log_message("Finished parsing PRIZES block.") # ADDED LOGGING
-                 
-        if is_parsing_prizes:
-            continue
-            
-        # 2. Parse Match Configuration
-        match_header = re.match(r'(G\d+|GF|GGF)\s*\(.+\):', line) 
-        if match_header:
-            current_match_id = match_header.group(1)
-            
-            config[current_match_id] = {'config': {}}
-            log_message(f"Parsing match configuration for: {current_match_id}") # ADDED LOGGING
-            continue
-            
-        if not current_match_id:
-            continue
-            
-        if line.startswith('Teams:'):
-            teams_str = line.split(':', 1)[1].strip()
-            # This extracts T1, T2, W-G1, L-G2, etc.
-            teams = [t.strip().replace('(', '').replace(')', '').split(' ')[0] for t in teams_str.split(',')]
-            config[current_match_id]['teams'] = teams
-            log_message(f"  Teams: {teams}") # ADDED LOGGING
-            
-        elif line.startswith('Winner_Advances_To:'):
-            dest_str = line.split(':', 1)[1].strip()
-            config[current_match_id]['config']['W_next'] = _parse_destination(dest_str)
-            log_message(f"  Winner advances to: {config[current_match_id]['config']['W_next']}") # ADDED LOGGING
-            
-        elif line.startswith('Loser_Drops_To:'):
-            dest_str = line.split(':', 1)[1].strip()
-            config[current_match_id]['config']['L_next'] = _parse_destination(dest_str)
-            log_message(f"  Loser drops to: {config[current_match_id]['config']['L_next']}") # ADDED LOGGING
-
-    final_config = {}
-    for match_id, data in config.items():
-         if 'teams' in data:
-              final_config[match_id] = {
-                   'teams': data['teams'],
-                   'W_next': data['config'].get('W_next'),
-                   'L_next': data['config'].get('L_next')
-              }
-    # Return the prize dictionary as well
-    return final_config, prizes
-
-# --- JSON Parsing Functions (Phase 1) ---
 
 def _parse_json_destination(dest_data):
     """
@@ -332,7 +212,7 @@ def _parse_json_destination(dest_data):
 def _parse_json_config_content(json_content):
     """
     Parses the JSON dict into the application's internal dictionary structure
-    and fixes the '2st' typo.
+    and fixes the '2nd' typo.
     """
     config = {}
     prizes = {}
@@ -1527,12 +1407,12 @@ def show_draw_summary(player_draws, TEAMS, TEAM_ROSTERS, num_teams, total_pool, 
     
     # Calculate per-player prizes
     per_player_1st = int(prizes.get('1st', 0) / 2)
-    per_player_2st = int(prizes.get('2st', 0) / 2)
+    per_player_2nd = int(prizes.get('2nd', 0) / 2)
     
     # Display format: Total Pool and then Nth Place Prize: $TOTAL ($PER_PLAYER per player)
     prize_text = f"Total Pool: ${total_pool}\n"
     prize_text += f"1st Place Prize: ${prizes.get('1st', 0)} (${per_player_1st} per player)\n"
-    prize_text += f"2nd Place Prize: ${prizes.get('2st', 0)} (${per_player_2st} per player)\n"
+    prize_text += f"2nd Place Prize: ${prizes.get('2nd', 0)} (${per_player_2nd} per player)\n"
     
     # Ensure 3rd place is shown if it exists in the prize dictionary, even if 0
     if prizes.get('3rd') is not None:
@@ -1924,11 +1804,11 @@ def start_tournament():
     
     # Ensure all prize ranks exist, defaulting to 0 if missing from the file
     prizes['1st'] = prizes.get('1st', 0)
-    prizes['2st'] = prizes.get('2st', 0)
+    prizes['2nd'] = prizes.get('2nd', 0)
     prizes['3rd'] = prizes.get('3rd', 0)
     
     # Calculate Total Pool by summing the prizes read from the file
-    total_pool = prizes['1st'] + prizes['2st'] + prizes['3rd']
+    total_pool = prizes['1st'] + prizes['2nd'] + prizes['3rd']
     log_message(f"Loaded prizes: {prizes}. Total Pool: ${total_pool}") # ADDED LOGGING
         
     # --- 3. Show Draw Summary (Unchanged) ---
