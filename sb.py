@@ -98,7 +98,7 @@ def show_title_screen():
     from PIL import Image, ImageTk
 
     splash = tk.Tk()
-    splash.title("Moose Lodge Shuffleboard")
+    splash.title("Moose Lodge Shuffleboard (large_bracket)")
     splash.geometry("500x500")
     splash.configure(bg="black")
 
@@ -108,7 +108,7 @@ def show_title_screen():
         logo = ImageTk.PhotoImage(img)
         tk.Label(splash, image=logo, bg="black").pack(pady=20)
     except Exception as e:
-        tk.Label(splash, text="Moose Lodge Shuffleboard", fg="white", bg="black", font=("Arial", 20, "bold")).pack(pady=60)
+        tk.Label(splash, text="Moose Lodge Shuffleboard (large_bracket)", fg="white", bg="black", font=("Arial", 20, "bold")).pack(pady=60)
         print(f"[Title Screen] Could not load image: {e}")
 
     tk.Label(
@@ -650,13 +650,12 @@ def draw_large_bracket(canvas):
             roster = TEAM_ROSTERS.get(winner_team, ['?', '?'])
             roster_str = f"{roster[0]} / {roster[1]}"
             
-            canvas.create_text(x + match_w/2, y + match_h/2 - 5, text=winner_team, font=('Arial', font_team_size, 'bold'))
-            canvas.create_text(x + match_w/2, y + match_h/2 + 10, text=roster_str, font=('Arial', font_roster_size))
+            canvas.create_text(x + match_w/2, y + match_h/2 - 5, text=roster_str, font=('Arial', font_team_size, 'bold'))
+            canvas.create_text(x + match_w/2, y + match_h/2 + 10, text=winner_team, font=('Arial', font_roster_size))
         else:
             tA = match_data['teams'][0]
             txt_A = tA if tA else "TBD"
             canvas.create_text(x + 5, y + match_h/4 + 5, text=txt_A, anchor='w', font=('Arial', font_roster_size))
-            
             canvas.create_line(x, y + match_h/2, x + match_w, y + match_h/2, fill='#CCCCCC')
             
             tB = match_data['teams'][1]
@@ -1615,7 +1614,7 @@ def setup_main_gui(root):
     global main_root
     main_root = root
     # MODIFIED: Renamed window title
-    root.title("Moose Lodge Shuffleboard")
+    root.title("Moose Lodge Shuffleboard (large_bracket)")
     root.protocol("WM_DELETE_WINDOW", lambda: on_close(root)) 
     
     root.geometry("470x500") 
