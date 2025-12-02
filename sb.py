@@ -403,7 +403,7 @@ def draw_angled_lines(canvas, state, coords, match_w, match_h, H_SCALE, V_SCALE,
     - Uses a direct diagonal cut if horizontal space permits.
     - Falls back to chamfered (octagonal) routing if space is tight.
     """
-    LINE_COLOR = '#888888' 
+    LINE_COLOR = '#BBBBBB' 
     LINE_WIDTH = 2
     CHAMFER_SIZE = 15 # Pixels for the corner cuts
     MIN_STRAIGHT = 15 # Minimum horizontal landing pad before the box
@@ -642,7 +642,7 @@ def draw_large_bracket(canvas):
 
         # Draw Box
         canvas.create_rectangle(x, y, x + match_w, y + match_h, fill=fill_color, outline='black', width=2)
-        canvas.create_text(x + 5, y + 5, text=f"{match_id}", anchor='w', fill='#555555', font=('Arial', 8, 'bold'))
+        canvas.create_text(x + 5, y + 5, text=f"{match_id}", anchor='w', fill='#FFFFFF', font=('Arial', 8, 'bold'))
 
         # Draw Text
         if match_data['winner'] or match_data.get('champion'):
@@ -710,7 +710,7 @@ def open_full_bracket():
     h_scroll = tk.Scrollbar(container, orient='horizontal')
     
     # Canvas
-    full_bracket_canvas = tk.Canvas(container, bg='white', 
+    full_bracket_canvas = tk.Canvas(container, bg='#5E5E5E', 
                                     yscrollcommand=v_scroll.set, 
                                     xscrollcommand=h_scroll.set)
     
