@@ -50,6 +50,8 @@ btn_switch = None
 current_match_teams = {'red': None, 'blue': None} 
 last_assigned_match_id = None 
 switch_frame_ref = None # Global reference for the switch button's container frame
+full_bracket_root = None
+full_bracket_canvas = None
 # Global logging control
 LOG_GAME_TO_FILE = False 
 LOG_FILE_HANDLE = None
@@ -395,6 +397,110 @@ def calculate_dynamic_coords(state):
     return coords
 
 # --- Dynamic Line Drawing (RETAINED) ---
+def draw_angled_lines(canvas, state, coords, match_w, match_h, H_SCALE, V_SCALE, H_PAD, V_PAD):
+    """
+    Draws connecting lines using 45-degree angles ('Classic' style).
+    - Uses a direct diagonal cut if horizontal space permits.
+    - Falls back to chamfered (octagonal) routing if space is tight.
+    """
+    LINE_COLOR = '#888888' 
+    LINE_WIDTH = 2
+    CHAMFER_SIZE = 15 # Pixels for the corner cuts
+    MIN_STRAIGHT = 15 # Minimum horizontal landing pad before the box
+
+    # Helper: Convert Unit to Pixel
+    def get_pixel_coords(match_id):
+        if match_id not in coords: return None, None
+        u_x, u_y = coords[match_id]
+        x = u_x * H_SCALE + H_PAD
+        y = u_y * V_SCALE + V_PAD
+        return x, y
+        
+    def box_center_right(match_id):
+        x, y = get_pixel_coords(match_id)
+        if x is None: return None, None
+        return x + match_w, y + match_h / 2
+        
+    def box_in_left(match_id):
+        x, y = get_pixel_coords(match_id)
+        if x is None: return None, None
+        return x, y + match_h / 2
+
+    for match_id, match_data in state.items():
+        if not isinstance(match_data, dict) or 'config' not in match_data: continue
+        if match_id not in coords: continue
+        
+        # Start Point (Right side of source box)
+        x1, y1 = box_center_right(match_id)
+        if x1 is None: continue
+
+        # Loop through destinations (Winner and Loser)
+        for dest_key in ['W_next', 'L_next']:
+            target = match_data['config'].get(dest_key)
+            if not isinstance(target, tuple): continue 
+                 
+            next_match_id, slot = target
+            
+            if next_match_id in coords:
+                x2, y2_center = box_in_left(next_match_id)
+                if x2 is None: continue
+                
+                # Calculate Destination Y based on slot
+                # Slot 0 = Top, Slot 1 = Bottom
+                y2 = y2_center - (match_h / 4) if slot == 0 else y2_center + (match_h / 4)
+
+                # --- 45-DEGREE LOGIC ---
+                
+                dx = x2 - x1
+                dy = abs(y2 - y1)
+                
+                # Check 1: Is destination backwards? (Shouldn't happen in standard bracket)
+                if dx <= 0:
+                    # Fallback to direct line
+                    canvas.create_line(x1, y1, x2, y2, fill=LINE_COLOR, width=LINE_WIDTH)
+                    continue
+
+                # Check 2: Do we have enough space for a "Perfect Diagonal"?
+                # We need enough X to cover the Y drop + the landing pads
+                required_dx = dy + (MIN_STRAIGHT * 1.5)
+                
+                if dx > required_dx:
+                    # STYLE A: Direct Converging Diagonal
+                    # Path: Horizontal -> 45deg Cut -> Horizontal Stub -> Box
+                    
+                    turn_point_x = x2 - dy - MIN_STRAIGHT
+                    
+                    points = [
+                        x1, y1,                     # Start
+                        turn_point_x, y1,           # Go Horizontal
+                        x2 - MIN_STRAIGHT, y2,      # Cut Diagonal
+                        x2, y2                      # Landing Stub
+                    ]
+                    canvas.create_line(points, fill=LINE_COLOR, width=LINE_WIDTH, capstyle='round')
+
+                else:
+                    # STYLE B: Chamfered Pipe (Octagonal)
+                    # Used when the boxes are too far apart vertically relative to width
+                    # Path: Horizontal -> Chamfer -> Vertical -> Chamfer -> Horizontal
+                    
+                    mid_x = x1 + (dx / 2)
+                    
+                    # Calculate safe chamfer size (don't exceed half the available space)
+                    safe_chamfer = min(CHAMFER_SIZE, dx/2 - 2, dy/2 - 2)
+                    if safe_chamfer < 2: safe_chamfer = 0 # Degrade to sharp corner if tiny
+                    
+                    # Direction of vertical travel
+                    y_sign = 1 if y2 > y1 else -1
+                    
+                    points = [
+                        x1, y1,                                      # Start
+                        mid_x - safe_chamfer, y1,                    # Horizontal to Chamfer Start
+                        mid_x, y1 + (safe_chamfer * y_sign),         # Diagonal to Vertical
+                        mid_x, y2 - (safe_chamfer * y_sign),         # Vertical line
+                        mid_x + safe_chamfer, y2,                    # Diagonal to Horizontal
+                        x2, y2                                       # End
+                    ]
+                    canvas.create_line(points, fill=LINE_COLOR, width=LINE_WIDTH, capstyle='round')
 
 def draw_dynamic_lines(canvas, state, coords, match_w, match_h, H_SCALE, V_SCALE, H_PAD, V_PAD):
     # ... (function body remains unchanged) ...
@@ -462,9 +568,146 @@ def draw_dynamic_lines(canvas, state, coords, match_w, match_h, H_SCALE, V_SCALE
                      canvas.create_line(x1_out, y1_out, x2_in, y1_out, fill=LINE_COLOR, width=LINE_WIDTH)
     # log_message("Bracket connection lines drawn.") # ADDED LOGGING (Too verbose)
 
+def on_full_bracket_close():
+    """Resets global variables when the full bracket window is closed."""
+    global full_bracket_root, full_bracket_canvas
+    if full_bracket_root:
+        full_bracket_root.destroy()
+    full_bracket_root = None
+    full_bracket_canvas = None
 
-# --- Draw Bracket Function (RETAINED) ---
+def draw_large_bracket(canvas):
+    """
+    Draws the bracket with FIXED scaling and 45-degree styled lines.
+    """
+    canvas.delete('all')
     
+    # 1. Define Fixed Scale (Pixels per Unit)
+    H_SCALE_PX = 14  
+    V_SCALE_PX = 10  
+    
+    MATCH_W_U = 12   
+    MATCH_H_U = 6    
+    
+    match_w = MATCH_W_U * H_SCALE_PX
+    match_h = MATCH_H_U * V_SCALE_PX
+    
+    # 2. Get Coordinates
+    match_coords = calculate_dynamic_coords(TOURNAMENT_STATE)
+    if not match_coords: return
+
+    # 3. Calculate Scroll Region
+    max_x_u = 0
+    max_y_u = 0
+    for (mx, my) in match_coords.values():
+        if mx > max_x_u: max_x_u = mx
+        if my > max_y_u: max_y_u = my
+        
+    total_width = (max_x_u + MATCH_W_U + 5) * H_SCALE_PX
+    total_height = (max_y_u + MATCH_H_U + 5) * V_SCALE_PX
+    
+    canvas.config(scrollregion=(0, 0, total_width, total_height))
+    
+    # 4. Helper for drawing
+    H_PAD = 20
+    V_PAD = 20
+    
+    def get_coords(match_id):
+        if match_id not in match_coords: return 0, 0
+        u_x, u_y = match_coords[match_id]
+        x = u_x * H_SCALE_PX + H_PAD
+        y = u_y * V_SCALE_PX + V_PAD
+        return x, y
+
+    # --- CHANGED: Use the new Angled Line Drawer ---
+    draw_angled_lines(canvas, TOURNAMENT_STATE, match_coords, match_w, match_h, H_SCALE_PX, V_SCALE_PX, H_PAD, V_PAD)
+    # -----------------------------------------------
+
+    # 6. Draw Boxes (Same as before)
+    font_team_size = 10
+    font_roster_size = 8
+    
+    for match_id, match_data in TOURNAMENT_STATE.items():
+        if not isinstance(match_data, dict) or 'teams' not in match_data: continue
+        if match_id not in match_coords: continue
+            
+        x, y = get_coords(match_id)
+
+        # Color Logic
+        fill_color = 'white'
+        if match_data.get('champion'): fill_color = 'gold'
+        elif match_id == TOURNAMENT_STATE.get('active_match_id') and match_data['winner'] is None: fill_color = '#FFFFCC'
+        elif match_data.get('winner_color') == 'red': fill_color = '#FFCCCC' 
+        elif match_data.get('winner_color') == 'blue': fill_color = '#CCE5FF' 
+
+        # Draw Box
+        canvas.create_rectangle(x, y, x + match_w, y + match_h, fill=fill_color, outline='black', width=2)
+        canvas.create_text(x + 5, y + 5, text=f"{match_id}", anchor='w', fill='#555555', font=('Arial', 8, 'bold'))
+
+        # Draw Text
+        if match_data['winner'] or match_data.get('champion'):
+            winner_team = match_data.get('champion') or match_data['winner']
+            roster = TEAM_ROSTERS.get(winner_team, ['?', '?'])
+            roster_str = f"{roster[0]} / {roster[1]}"
+            
+            canvas.create_text(x + match_w/2, y + match_h/2 - 5, text=winner_team, font=('Arial', font_team_size, 'bold'))
+            canvas.create_text(x + match_w/2, y + match_h/2 + 10, text=roster_str, font=('Arial', font_roster_size))
+        else:
+            tA = match_data['teams'][0]
+            txt_A = tA if tA else "TBD"
+            canvas.create_text(x + 5, y + match_h/4 + 5, text=txt_A, anchor='w', font=('Arial', font_roster_size))
+            
+            canvas.create_line(x, y + match_h/2, x + match_w, y + match_h/2, fill='#CCCCCC')
+            
+            tB = match_data['teams'][1]
+            txt_B = tB if tB else "TBD"
+            canvas.create_text(x + 5, y + 3*match_h/4, text=txt_B, anchor='w', font=('Arial', font_roster_size))
+            
+def open_full_bracket():
+    """Opens (or lifts) the large scrollable bracket window."""
+    global full_bracket_root, full_bracket_canvas
+    
+    # If open, just bring to front
+    if full_bracket_root is not None:
+        try:
+            full_bracket_root.lift()
+            return
+        except:
+            full_bracket_root = None
+
+    # Create Window
+    full_bracket_root = tk.Toplevel(main_root)
+    full_bracket_root.title("Full Tournament Bracket")
+    full_bracket_root.geometry("1000x700")
+    full_bracket_root.protocol("WM_DELETE_WINDOW", on_full_bracket_close)
+    
+    # Container for scrollbars
+    container = tk.Frame(full_bracket_root)
+    container.pack(fill='both', expand=True)
+    
+    # Scrollbars
+    v_scroll = tk.Scrollbar(container, orient='vertical')
+    h_scroll = tk.Scrollbar(container, orient='horizontal')
+    
+    # Canvas
+    full_bracket_canvas = tk.Canvas(container, bg='white', 
+                                    yscrollcommand=v_scroll.set, 
+                                    xscrollcommand=h_scroll.set)
+    
+    v_scroll.config(command=full_bracket_canvas.yview)
+    h_scroll.config(command=full_bracket_canvas.xview)
+    
+    # Grid Layout
+    full_bracket_canvas.grid(row=0, column=0, sticky='nsew')
+    v_scroll.grid(row=0, column=1, sticky='ns')
+    h_scroll.grid(row=1, column=0, sticky='ew')
+    
+    container.grid_rowconfigure(0, weight=1)
+    container.grid_columnconfigure(0, weight=1)
+    
+    # Initial Draw
+    draw_large_bracket(full_bracket_canvas)
+
 def draw_bracket(canvas):
     # ... (function body remains unchanged) ...
     """
@@ -1065,6 +1308,13 @@ def update_scoreboard_display():
     if bracket_info_canvas_ref:
         draw_small_bracket_view(bracket_info_canvas_ref, TOURNAMENT_STATE)
 
+    # --- NEW: Refresh Big Board if open ---
+    if full_bracket_root and full_bracket_canvas:
+        try:
+            draw_large_bracket(full_bracket_canvas)
+        except Exception as e:
+            log_message(f"Error updating full bracket: {e}")
+
 def display_final_rankings(champion):
     # ... (function body remains unchanged) ...
     """
@@ -1282,9 +1532,16 @@ def setup_scoreboard(root, team_red_placeholder, team_blue_placeholder):
 
     # Switch Button Frame
     switch_frame_ref = tk.Frame(root) 
-    btn_switch = tk.Button(switch_frame_ref, text="SWITCH RED/BLUE", command=swap_teams, bg='#EEEEEE', fg='black', font=('Arial', 10), height=1)
-    btn_switch.pack(fill='x')
     
+    # 1. Switch Button (Left side, takes 50%)
+    btn_switch = tk.Button(switch_frame_ref, text="SWITCH RED/BLUE", command=swap_teams, 
+                           bg='#EEEEEE', fg='black', font=('Arial', 10), height=1)
+    btn_switch.pack(side=tk.LEFT, fill='x', expand=True, padx=(0, 2))
+    
+    # 2. Full Bracket Button (Right side, takes 50%)
+    btn_bracket = tk.Button(switch_frame_ref, text="FULL BRACKET", command=open_full_bracket,
+                            bg='#DDDDDD', fg='black', font=('Arial', 10, 'bold'), height=1)
+    btn_bracket.pack(side=tk.LEFT, fill='x', expand=True, padx=(2, 0))    
     # Match Details Frame (Contains routing/bracket/team info)
     match_details_frame = tk.Frame(root, padx=10, pady=5)
     
