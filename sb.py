@@ -642,7 +642,7 @@ def draw_large_bracket(canvas):
 
         # Draw Box
         canvas.create_rectangle(x, y, x + match_w, y + match_h, fill=fill_color, outline='black', width=2)
-        canvas.create_text(x + 5, y + 5, text=f"{match_id}", anchor='w', fill='#FFFFFF', font=('Arial', 8, 'bold'))
+        canvas.create_text(x + 5, y + 5, text=f"{match_id}", anchor='w', fill='#000000', font=('Arial', 8, 'bold'))
 
         # Draw Text
         if match_data['winner'] or match_data.get('champion'):
