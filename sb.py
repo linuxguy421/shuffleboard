@@ -584,7 +584,7 @@ def draw_large_bracket(canvas):
     
     # 1. Define Fixed Scale (Pixels per Unit)
     H_SCALE_PX = 14  
-    V_SCALE_PX = 10  
+    V_SCALE_PX = 7  
     
     MATCH_W_U = 12   
     MATCH_H_U = 6    
@@ -653,13 +653,34 @@ def draw_large_bracket(canvas):
             canvas.create_text(x + match_w/2, y + match_h/2 - 5, text=roster_str, font=('Arial', font_team_size, 'bold'))
             canvas.create_text(x + match_w/2, y + match_h/2 + 10, text=winner_team, font=('Arial', font_roster_size))
         else:
+            # --- Team A Logic (Display Roster if Team Name is Known) ---
             tA = match_data['teams'][0]
-            txt_A = tA if tA else "TBD"
+            if tA and not tA.startswith('W:'): 
+                # Team name is known. Display roster.
+                roster_A = TEAM_ROSTERS.get(tA, ['?','?'])
+                txt_A = f"{tA} ({roster_A[0]}/{roster_A[1]})"
+            elif tA:
+                # Placeholder like 'W:G1' or 'L:G2'. Display the match reference.
+                txt_A = tA
+            else:
+                txt_A = "TBD"
+                
             canvas.create_text(x + 5, y + match_h/4 + 5, text=txt_A, anchor='w', font=('Arial', font_roster_size))
+            
             canvas.create_line(x, y + match_h/2, x + match_w, y + match_h/2, fill='#CCCCCC')
             
+            # --- Team B Logic (Display Roster if Team Name is Known) ---
             tB = match_data['teams'][1]
-            txt_B = tB if tB else "TBD"
+            if tB and not tB.startswith('W:'):
+                # Team name is known. Display roster.
+                roster_B = TEAM_ROSTERS.get(tB, ['?','?'])
+                txt_B = f"{tB} ({roster_B[0]}/{roster_B[1]})"
+            elif tB:
+                # Placeholder like 'W:G1' or 'L:G2'. Display the match reference.
+                txt_B = tB
+            else:
+                txt_B = "TBD"
+                
             canvas.create_text(x + 5, y + 3*match_h/4, text=txt_B, anchor='w', font=('Arial', font_roster_size))
             
 def open_full_bracket():
