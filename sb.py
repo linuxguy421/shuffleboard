@@ -50,6 +50,8 @@ btn_switch = None
 current_match_teams = {'red': None, 'blue': None} 
 last_assigned_match_id = None 
 switch_frame_ref = None # Global reference for the switch button's container frame
+full_bracket_root = None
+full_bracket_canvas = None
 # Global logging control
 LOG_GAME_TO_FILE = False 
 LOG_FILE_HANDLE = None
@@ -96,7 +98,7 @@ def show_title_screen():
     from PIL import Image, ImageTk
 
     splash = tk.Tk()
-    splash.title("Moose Lodge Shuffleboard")
+    splash.title("Moose Lodge Shuffleboard (large_bracket)")
     splash.geometry("500x500")
     splash.configure(bg="black")
 
@@ -106,7 +108,7 @@ def show_title_screen():
         logo = ImageTk.PhotoImage(img)
         tk.Label(splash, image=logo, bg="black").pack(pady=20)
     except Exception as e:
-        tk.Label(splash, text="Moose Lodge Shuffleboard", fg="white", bg="black", font=("Arial", 20, "bold")).pack(pady=60)
+        tk.Label(splash, text="Moose Lodge Shuffleboard (large_bracket)", fg="white", bg="black", font=("Arial", 20, "bold")).pack(pady=60)
         print(f"[Title Screen] Could not load image: {e}")
 
     tk.Label(
@@ -246,155 +248,266 @@ def _parse_json_config_content(json_content):
 def load_bracket_config(num_teams, elimination_type='D'):
     """
     Reads the bracket configuration from a local .json file.
-    Dynamically constructs filename based on team count (e.g., '7teamD.json').
+    PATCHED: Automatically adds GF and GGF definitions using the FLAT structure required by generate_dynamic_bracket.
     """
-    # 1. Construct the expected filename dynamically
-    # Example: If num_teams=7, this becomes "7teamD.json"
     base_filename = f"{num_teams}team{elimination_type}.json"
-    
-    # 2. Define search paths (local folder first, then 'data' folder)
-    search_paths = [
-        base_filename,
-        os.path.join('data', base_filename)
-    ]
+    search_paths = [base_filename, os.path.join('data', base_filename)]
     
     log_message(f"Searching for configuration file: {base_filename}")
+    
+    state = {}
+    prizes = {}
+    json_loaded = False
 
-    # 3. Iterate through paths to find the file
     for filepath in search_paths:
         if os.path.exists(filepath):
             try:
                 with open(filepath, 'r') as f:
-                    # Native JSON loading
                     content = json.load(f)
-                
-                log_message(f"Successfully loaded JSON configuration from: '{filepath}'")
-                
-                # Pass the raw JSON dict to our Phase 1 parser
-                return _parse_json_config_content(content)
-                
+                state, prizes = _parse_json_config_content(content)
+                log_message(f"Successfully loaded JSON from: '{filepath}'")
+                json_loaded = True
+                break
             except Exception as e:
                 log_message(f"Error reading JSON file '{filepath}': {e}")
                 raise ValueError(f"Error parsing '{filepath}': {e}")
 
-    # 4. If loop completes without returning, file was not found
-    err_msg = f"Configuration file '{base_filename}' not found. Ensure it exists in the script directory or 'data/'."
-    log_message(f"Error: {err_msg}")
-    raise FileNotFoundError(err_msg)
+    if not json_loaded:
+        err_msg = f"Configuration file '{base_filename}' not found."
+        log_message(f"Error: {err_msg}")
+        raise FileNotFoundError(err_msg)
+
+    # --- PATCH: AUTO-INJECT FINALS LOGIC ---
+    WB_FINAL_ID = None
+    LB_FINAL_ID = None
     
+    # 1. Heuristics to find WBF and LBF
+    for match_id, match_data in state.items():
+        w_next = match_data.get('W_next')
+        if w_next == 'CHAMPION':
+            WB_FINAL_ID = match_id
+    
+    # 2. Fallbacks if heuristics fail
+    sorted_matches = sorted([k for k in state.keys() if k.startswith('G')], key=sort_match_keys)
+    if not WB_FINAL_ID and len(sorted_matches) > 1:
+        WB_FINAL_ID = sorted_matches[-2] 
+    if not LB_FINAL_ID and sorted_matches:
+        LB_FINAL_ID = sorted_matches[-1]
+
+    # 3. Create GF and GGF Entries (FLAT STRUCTURE FIX)
+    
+    # Update WBF/LBF to point to GF
+    if WB_FINAL_ID in state: state[WB_FINAL_ID]['W_next'] = ('GF', 0)
+    if LB_FINAL_ID in state: state[LB_FINAL_ID]['W_next'] = ('GF', 1)
+
+    # GF Entry - Flattened to match expected input for generate_dynamic_bracket
+    state['GF'] = {
+        'teams': [None, None],
+        'W_next': ('CHAMPION', 0), 
+        'L_next': ('GGF', 0) 
+    }
+
+    # GGF Entry - Flattened to match expected input for generate_dynamic_bracket
+    state['GGF'] = {
+        'teams': [None, None],
+        'W_next': ('CHAMPION', 0),
+        'L_next': ('CHAMPION', 1)
+    }
+    
+    log_message(f"Injected Finals: GF linked from {WB_FINAL_ID} & {LB_FINAL_ID}")
+    return state, prizes
+        
 def calculate_dynamic_coords(state):
-    # ... (function body remains unchanged) ...
+    """
+    Calculates X/Y coordinates for all matches, including GF/GGF.
+    """
     coords = {}
     
-    # Constants (Normalized Units)
-    X_UNITS = 100 
-    Y_UNITS = 100 
+    # Constants
     MATCH_WIDTH_U = 12 
     MATCH_HEIGHT_U = 6 
+    
+    # Vertical Spacing (Adjust these to shorten vertical lines)
     WB_START_Y_U = 10
     LB_START_Y_U = 55
-    FINALS_Y_U = 35
-    X_STEP_U = MATCH_WIDTH_U + 6 # Distance between columns
-    Y_STEP_U = MATCH_HEIGHT_U + 4 # Distance between rows
+    FINALS_Y_U = 35 # Vertically centered
+    
+    X_STEP_U = MATCH_WIDTH_U + 6 
+    Y_STEP_U = MATCH_HEIGHT_U + 4 
 
-    # Get all match keys sorted chronologically (G1, G2, G3, ..., GF, GGF)
-    sorted_match_keys = sorted(
-        [k for k in state.keys() if k.startswith('G') or k == 'GF' or k == 'GGF'], 
+    # Sort keys chronologically
+    sorted_keys = sorted(
+        [k for k in state.keys() if k.startswith('G') or k in ['GF', 'GGF']], 
         key=sort_match_keys
     )
     
-    # 1. Classify Matches and Assign Rounds (X-coordinate logic)
+    # 1. Determine Rounds
+    match_props = {}
+    max_round = 0
     
-    match_properties = {} 
-    round_map_by_id = {}
-    
-    for match_id in sorted_match_keys:
-        properties = {'track': 'WB', 'round': 0}
+    for mid in sorted_keys:
+        props = {'track': 'WB', 'round': 1}
         
-        if match_id == 'GF' or match_id == 'GGF':
-            properties['track'] = 'Finals'
-        elif match_id.startswith('G'):
-            try:
-                num = int(match_id[1:])
-            except ValueError:
-                 continue 
+        if mid in ['GF', 'GGF']:
+            props['track'] = 'Finals'
+        elif mid.startswith('G'):
+            try: num = int(mid[1:])
+            except: num = 1
             
-            # Rough Round Logic based on G# progression in typical DE brackets
-            if num in [1, 2]: properties['round'] = 1
-            elif num in [3, 4]: properties['round'] = 2
-            elif num in [5, 6]: properties['round'] = 3
-            elif num == 7: properties['round'] = 4 
-            elif num == 8: properties['round'] = 5 
-            else: properties['round'] = ceil(num / 2) 
+            # Simple round estimation based on Game ID
+            # Adjust these ranges if your brackets are larger than 8 teams
+            if num <= 2: r = 1
+            elif num <= 4: r = 2
+            elif num <= 6: r = 3
+            else: r = 4
+            
+            props['round'] = r
+            if r > max_round: max_round = r
+            
+            # Identify Loser Bracket games (Standard heuristic)
+            if num in [4, 6, 7]: props['track'] = 'LB'
+            
+        match_props[mid] = props
 
-            # Track Logic: If Loser drops to ELIMINATED or if the match ID suggests LB (like G4, G6, G7)
-            l_next = state[match_id]['config'].get('L_next')
-            if l_next and 'ELIMINATED' in l_next:
-                properties['track'] = 'LB'
-            # Force G4, G6, G7 (LB) based on standard 5-team config
-            if num in [4, 6, 7]: properties['track'] = 'LB'
-            if num == 3 and isinstance(l_next, tuple) and l_next[0].startswith('G'): properties['track'] = 'WB' 
-            
-        match_properties[match_id] = properties
+    # 2. Assign Coordinates
+    wb_counts = {}
+    lb_counts = {}
+    
+    for mid in sorted_keys:
+        p = match_props.get(mid)
+        if not p: continue
         
-    # 2. Assign X-Coordinates (Round based)
-    
-    round_x_map = {} 
-    current_x_u = 2
-    
-    # Calculate X for WB rounds
-    all_rounds = sorted(list(set(p['round'] for p in match_properties.values() if p['round'] > 0)))
-    for r in all_rounds:
-        round_x_map[r] = current_x_u
-        current_x_u += X_STEP_U
-        
-    # Assign Finals X
-    GF_X_U = current_x_u
-    GGF_X_U = current_x_u + X_STEP_U
-
-    # 3. Assign Y-Coordinates (Stack based)
-    
-    wb_y_counts = {r: 0 for r in round_x_map}
-    lb_y_counts = {r: 0 for r in round_x_map}
-    
-    for match_id in sorted_match_keys:
-        props = match_properties.get(match_id)
-        if not props or props['round'] == 0: continue
-            
-        r = props['round']
-        track = props['track']
+        r = p['round']
+        track = p['track']
         
         if track == 'WB':
-            x_u = round_x_map.get(r, 0)
-            y_u = WB_START_Y_U + (Y_STEP_U * wb_y_counts.get(r, 0))
-            wb_y_counts[r] = wb_y_counts.get(r, 0) + 1
-            coords[match_id] = (x_u, y_u)
+            x = 2 + ((r - 1) * X_STEP_U)
+            y = WB_START_Y_U + (Y_STEP_U * wb_counts.get(r, 0))
+            wb_counts[r] = wb_counts.get(r, 0) + 1
+            coords[mid] = (x, y)
             
         elif track == 'LB':
-            x_u = round_x_map.get(r, 0)
-            y_u = LB_START_Y_U + (Y_STEP_U * lb_y_counts.get(r, 0))
-            lb_y_counts[r] = lb_y_counts.get(r, 0) + 1
-            
-            # Adjust X for specific LB matches
-            if match_id == 'G4' and 2 in round_x_map:
-                 x_u = round_x_map[2]
-            elif match_id == 'G6' and 3 in round_x_map:
-                 x_u = round_x_map[3]
-            elif match_id == 'G7' and 4 in round_x_map: 
-                 x_u = round_x_map[4]
-            
-            coords[match_id] = (x_u, y_u)
+            x = 2 + ((r - 1) * X_STEP_U)
+            y = LB_START_Y_U + (Y_STEP_U * lb_counts.get(r, 0))
+            lb_counts[r] = lb_counts.get(r, 0) + 1
+            coords[mid] = (x, y)
             
         elif track == 'Finals':
-            if match_id == 'GF':
-                coords[match_id] = (GF_X_U, FINALS_Y_U)
-            elif match_id == 'GGF':
-                coords[match_id] = (GGF_X_U, FINALS_Y_U)
+            # Place finals 1 step to the right of the max round
+            finals_x = 2 + (max_round * X_STEP_U) + 5
+            
+            if mid == 'GF':
+                coords[mid] = (finals_x, FINALS_Y_U)
+            elif mid == 'GGF':
+                coords[mid] = (finals_x + X_STEP_U, FINALS_Y_U)
 
-    # log_message(f"Calculated dynamic coordinates for {len(coords)} matches.") # ADDED LOGGING (Too verbose)
     return coords
-
+    
 # --- Dynamic Line Drawing (RETAINED) ---
+def draw_angled_lines(canvas, state, coords, match_w, match_h, H_SCALE, V_SCALE, H_PAD, V_PAD):
+    """
+    Draws connecting lines using 45-degree angles ('Classic' style).
+    - Uses a direct diagonal cut if horizontal space permits.
+    - Falls back to chamfered (octagonal) routing if space is tight.
+    """
+    LINE_COLOR = '#BBBBBB' 
+    LINE_WIDTH = 2
+    CHAMFER_SIZE = 15 # Pixels for the corner cuts
+    MIN_STRAIGHT = 15 # Minimum horizontal landing pad before the box
+
+    # Helper: Convert Unit to Pixel
+    def get_pixel_coords(match_id):
+        if match_id not in coords: return None, None
+        u_x, u_y = coords[match_id]
+        x = u_x * H_SCALE + H_PAD
+        y = u_y * V_SCALE + V_PAD
+        return x, y
+        
+    def box_center_right(match_id):
+        x, y = get_pixel_coords(match_id)
+        if x is None: return None, None
+        return x + match_w, y + match_h / 2
+        
+    def box_in_left(match_id):
+        x, y = get_pixel_coords(match_id)
+        if x is None: return None, None
+        return x, y + match_h / 2
+
+    for match_id, match_data in state.items():
+        if not isinstance(match_data, dict) or 'config' not in match_data: continue
+        if match_id not in coords: continue
+        
+        # Start Point (Right side of source box)
+        x1, y1 = box_center_right(match_id)
+        if x1 is None: continue
+
+        # Loop through destinations (Winner and Loser)
+        for dest_key in ['W_next', 'L_next']:
+            target = match_data['config'].get(dest_key)
+            if not isinstance(target, tuple): continue 
+                 
+            next_match_id, slot = target
+            
+            if next_match_id in coords:
+                x2, y2_center = box_in_left(next_match_id)
+                if x2 is None: continue
+                
+                # Calculate Destination Y based on slot
+                # Slot 0 = Top, Slot 1 = Bottom
+                y2 = y2_center - (match_h / 4) if slot == 0 else y2_center + (match_h / 4)
+
+                # --- 45-DEGREE LOGIC ---
+                
+                dx = x2 - x1
+                dy = abs(y2 - y1)
+                
+                # Check 1: Is destination backwards? (Shouldn't happen in standard bracket)
+                if dx <= 0:
+                    # Fallback to direct line
+                    canvas.create_line(x1, y1, x2, y2, fill=LINE_COLOR, width=LINE_WIDTH)
+                    continue
+
+                # Check 2: Do we have enough space for a "Perfect Diagonal"?
+                # We need enough X to cover the Y drop + the landing pads
+                required_dx = dy + (MIN_STRAIGHT * 1.5)
+                
+                if dx > required_dx:
+                    # STYLE A: Direct Converging Diagonal
+                    # Path: Horizontal -> 45deg Cut -> Horizontal Stub -> Box
+                    
+                    turn_point_x = x2 - dy - MIN_STRAIGHT
+                    
+                    points = [
+                        x1, y1,                     # Start
+                        turn_point_x, y1,           # Go Horizontal
+                        x2 - MIN_STRAIGHT, y2,      # Cut Diagonal
+                        x2, y2                      # Landing Stub
+                    ]
+                    canvas.create_line(points, fill=LINE_COLOR, width=LINE_WIDTH, capstyle='round')
+
+                else:
+                    # STYLE B: Chamfered Pipe (Octagonal)
+                    # Used when the boxes are too far apart vertically relative to width
+                    # Path: Horizontal -> Chamfer -> Vertical -> Chamfer -> Horizontal
+                    
+                    mid_x = x1 + (dx / 2)
+                    
+                    # Calculate safe chamfer size (don't exceed half the available space)
+                    safe_chamfer = min(CHAMFER_SIZE, dx/2 - 2, dy/2 - 2)
+                    if safe_chamfer < 2: safe_chamfer = 0 # Degrade to sharp corner if tiny
+                    
+                    # Direction of vertical travel
+                    y_sign = 1 if y2 > y1 else -1
+                    
+                    points = [
+                        x1, y1,                                      # Start
+                        mid_x - safe_chamfer, y1,                    # Horizontal to Chamfer Start
+                        mid_x, y1 + (safe_chamfer * y_sign),         # Diagonal to Vertical
+                        mid_x, y2 - (safe_chamfer * y_sign),         # Vertical line
+                        mid_x + safe_chamfer, y2,                    # Diagonal to Horizontal
+                        x2, y2                                       # End
+                    ]
+                    canvas.create_line(points, fill=LINE_COLOR, width=LINE_WIDTH, capstyle='round')
 
 def draw_dynamic_lines(canvas, state, coords, match_w, match_h, H_SCALE, V_SCALE, H_PAD, V_PAD):
     # ... (function body remains unchanged) ...
@@ -462,9 +575,166 @@ def draw_dynamic_lines(canvas, state, coords, match_w, match_h, H_SCALE, V_SCALE
                      canvas.create_line(x1_out, y1_out, x2_in, y1_out, fill=LINE_COLOR, width=LINE_WIDTH)
     # log_message("Bracket connection lines drawn.") # ADDED LOGGING (Too verbose)
 
+def on_full_bracket_close():
+    """Resets global variables when the full bracket window is closed."""
+    global full_bracket_root, full_bracket_canvas
+    if full_bracket_root:
+        full_bracket_root.destroy()
+    full_bracket_root = None
+    full_bracket_canvas = None
 
-# --- Draw Bracket Function (RETAINED) ---
+def draw_large_bracket(canvas):
+    """
+    Draws the bracket with FIXED scaling and 45-degree styled lines.
+    """
+    canvas.delete('all')
     
+    # 1. Define Fixed Scale (Pixels per Unit)
+    H_SCALE_PX = 14  
+    V_SCALE_PX = 7  
+    
+    MATCH_W_U = 12   
+    MATCH_H_U = 6    
+    
+    match_w = MATCH_W_U * H_SCALE_PX
+    match_h = MATCH_H_U * V_SCALE_PX
+    
+    # 2. Get Coordinates
+    match_coords = calculate_dynamic_coords(TOURNAMENT_STATE)
+    if not match_coords: return
+
+    # 3. Calculate Scroll Region
+    max_x_u = 0
+    max_y_u = 0
+    for (mx, my) in match_coords.values():
+        if mx > max_x_u: max_x_u = mx
+        if my > max_y_u: max_y_u = my
+        
+    total_width = (max_x_u + MATCH_W_U + 5) * H_SCALE_PX
+    total_height = (max_y_u + MATCH_H_U + 5) * V_SCALE_PX
+    
+    canvas.config(scrollregion=(0, 0, total_width, total_height))
+    
+    # 4. Helper for drawing
+    H_PAD = 20
+    V_PAD = 20
+    
+    def get_coords(match_id):
+        if match_id not in match_coords: return 0, 0
+        u_x, u_y = match_coords[match_id]
+        x = u_x * H_SCALE_PX + H_PAD
+        y = u_y * V_SCALE_PX + V_PAD
+        return x, y
+
+    # --- CHANGED: Use the new Angled Line Drawer ---
+    draw_angled_lines(canvas, TOURNAMENT_STATE, match_coords, match_w, match_h, H_SCALE_PX, V_SCALE_PX, H_PAD, V_PAD)
+    # -----------------------------------------------
+
+    # 6. Draw Boxes (Same as before)
+    font_team_size = 10
+    font_roster_size = 8
+    
+    for match_id, match_data in TOURNAMENT_STATE.items():
+        if not isinstance(match_data, dict) or 'teams' not in match_data: continue
+        if match_id not in match_coords: continue
+            
+        x, y = get_coords(match_id)
+
+        # Color Logic
+        fill_color = 'white'
+        if match_data.get('champion'): fill_color = 'gold'
+        elif match_id == TOURNAMENT_STATE.get('active_match_id') and match_data['winner'] is None: fill_color = '#FFFFCC'
+        elif match_data.get('winner_color') == 'red': fill_color = '#FFCCCC' 
+        elif match_data.get('winner_color') == 'blue': fill_color = '#CCE5FF' 
+
+        # Draw Box
+        canvas.create_rectangle(x, y, x + match_w, y + match_h, fill=fill_color, outline='black', width=2)
+        canvas.create_text(x + 5, y + 5, text=f"{match_id}", anchor='w', fill='#000000', font=('Arial', 8, 'bold'))
+
+        # Draw Text
+        if match_data['winner'] or match_data.get('champion'):
+            winner_team = match_data.get('champion') or match_data['winner']
+            roster = TEAM_ROSTERS.get(winner_team, ['?', '?'])
+            roster_str = f"{roster[0]} / {roster[1]}"
+            
+            canvas.create_text(x + match_w/2, y + match_h/2 - 5, text=roster_str, font=('Arial', font_team_size, 'bold'))
+            canvas.create_text(x + match_w/2, y + match_h/2 + 10, text=winner_team, font=('Arial', font_roster_size))
+        else:
+            # --- Team A Logic (Display Roster if Team Name is Known) ---
+            tA = match_data['teams'][0]
+            if tA and not tA.startswith('W:'): 
+                # Team name is known. Display roster.
+                roster_A = TEAM_ROSTERS.get(tA, ['?','?'])
+                txt_A = f"{tA} ({roster_A[0]}/{roster_A[1]})"
+            elif tA:
+                # Placeholder like 'W:G1' or 'L:G2'. Display the match reference.
+                txt_A = tA
+            else:
+                txt_A = "TBD"
+                
+            canvas.create_text(x + 5, y + match_h/4 + 5, text=txt_A, anchor='w', font=('Arial', font_roster_size))
+            
+            canvas.create_line(x, y + match_h/2, x + match_w, y + match_h/2, fill='#CCCCCC')
+            
+            # --- Team B Logic (Display Roster if Team Name is Known) ---
+            tB = match_data['teams'][1]
+            if tB and not tB.startswith('W:'):
+                # Team name is known. Display roster.
+                roster_B = TEAM_ROSTERS.get(tB, ['?','?'])
+                txt_B = f"{tB} ({roster_B[0]}/{roster_B[1]})"
+            elif tB:
+                # Placeholder like 'W:G1' or 'L:G2'. Display the match reference.
+                txt_B = tB
+            else:
+                txt_B = "TBD"
+                
+            canvas.create_text(x + 5, y + 3*match_h/4, text=txt_B, anchor='w', font=('Arial', font_roster_size))
+            
+def open_full_bracket():
+    """Opens (or lifts) the large scrollable bracket window."""
+    global full_bracket_root, full_bracket_canvas
+    
+    # If open, just bring to front
+    if full_bracket_root is not None:
+        try:
+            full_bracket_root.lift()
+            return
+        except:
+            full_bracket_root = None
+
+    # Create Window
+    full_bracket_root = tk.Toplevel(main_root)
+    full_bracket_root.title("Full Tournament Bracket")
+    full_bracket_root.geometry("1000x700")
+    full_bracket_root.protocol("WM_DELETE_WINDOW", on_full_bracket_close)
+    
+    # Container for scrollbars
+    container = tk.Frame(full_bracket_root)
+    container.pack(fill='both', expand=True)
+    
+    # Scrollbars
+    v_scroll = tk.Scrollbar(container, orient='vertical')
+    h_scroll = tk.Scrollbar(container, orient='horizontal')
+    
+    # Canvas
+    full_bracket_canvas = tk.Canvas(container, bg='#5E5E5E', 
+                                    yscrollcommand=v_scroll.set, 
+                                    xscrollcommand=h_scroll.set)
+    
+    v_scroll.config(command=full_bracket_canvas.yview)
+    h_scroll.config(command=full_bracket_canvas.xview)
+    
+    # Grid Layout
+    full_bracket_canvas.grid(row=0, column=0, sticky='nsew')
+    v_scroll.grid(row=0, column=1, sticky='ns')
+    h_scroll.grid(row=1, column=0, sticky='ew')
+    
+    container.grid_rowconfigure(0, weight=1)
+    container.grid_columnconfigure(0, weight=1)
+    
+    # Initial Draw
+    draw_large_bracket(full_bracket_canvas)
+
 def draw_bracket(canvas):
     # ... (function body remains unchanged) ...
     """
@@ -1065,6 +1335,13 @@ def update_scoreboard_display():
     if bracket_info_canvas_ref:
         draw_small_bracket_view(bracket_info_canvas_ref, TOURNAMENT_STATE)
 
+    # --- NEW: Refresh Big Board if open ---
+    if full_bracket_root and full_bracket_canvas:
+        try:
+            draw_large_bracket(full_bracket_canvas)
+        except Exception as e:
+            log_message(f"Error updating full bracket: {e}")
+
 def display_final_rankings(champion):
     # ... (function body remains unchanged) ...
     """
@@ -1282,9 +1559,16 @@ def setup_scoreboard(root, team_red_placeholder, team_blue_placeholder):
 
     # Switch Button Frame
     switch_frame_ref = tk.Frame(root) 
-    btn_switch = tk.Button(switch_frame_ref, text="SWITCH RED/BLUE", command=swap_teams, bg='#EEEEEE', fg='black', font=('Arial', 10), height=1)
-    btn_switch.pack(fill='x')
     
+    # 1. Switch Button (Left side, takes 50%)
+    btn_switch = tk.Button(switch_frame_ref, text="SWITCH RED/BLUE", command=swap_teams, 
+                           bg='#EEEEEE', fg='black', font=('Arial', 10), height=1)
+    btn_switch.pack(side=tk.LEFT, fill='x', expand=True, padx=(0, 2))
+    
+    # 2. Full Bracket Button (Right side, takes 50%)
+    btn_bracket = tk.Button(switch_frame_ref, text="FULL BRACKET", command=open_full_bracket,
+                            bg='#DDDDDD', fg='black', font=('Arial', 10, 'bold'), height=1)
+    btn_bracket.pack(side=tk.LEFT, fill='x', expand=True, padx=(2, 0))    
     # Match Details Frame (Contains routing/bracket/team info)
     match_details_frame = tk.Frame(root, padx=10, pady=5)
     
@@ -1358,7 +1642,7 @@ def setup_main_gui(root):
     global main_root
     main_root = root
     # MODIFIED: Renamed window title
-    root.title("Moose Lodge Shuffleboard")
+    root.title("Moose Lodge Shuffleboard (large_bracket)")
     root.protocol("WM_DELETE_WINDOW", lambda: on_close(root)) 
     
     root.geometry("470x500") 
@@ -1436,16 +1720,16 @@ def generate_dynamic_bracket(teams, config=None):
     """
     Loads the bracket structure from the config file, initializes TOURNAMENT_STATE,
     and seeds the starting matches with teams (T1, T2, etc.).
+    PATCHED: Added safety check for NoneType teams to prevent regex crash on GF/GGF.
     """
     global TOURNAMENT_STATE
     TOURNAMENT_STATE.clear()
 
     num_teams = len(teams)
-    log_message(f"Generating bracket for {num_teams} teams.") # ADDED LOGGING
+    log_message(f"Generating bracket for {num_teams} teams.") 
     
     if config is None:
         try:
-            # Load config and discard the prize data (which is already used)
             config, _ = load_bracket_config(num_teams, 'D') 
         except Exception as e:
             messagebox.showerror("Configuration Error", str(e))
@@ -1458,36 +1742,46 @@ def generate_dynamic_bracket(teams, config=None):
             'config': {
                 'W_next': match_config['W_next'],
                 'L_next': match_config['L_next'],
+                # Persist round info if available, helpful for logic
+                'M_round': match_config.get('M_round', 0),
+                'L_round': match_config.get('L_round', 0)
             },
             'teams': [None, None], # Teams are TBD initially
             'winner': None,
             'winner_color': None,
-            'is_reset': False
+            'is_reset': match_id == 'GGF' # Mark GGF as reset game if applicable
         }
         
     # 2. Seed the starting teams into the correct matches
     for match_id, match_data in config.items():
         if match_id.startswith('G'):
-            # The config specifies which teams (T1, T2, T3, etc.) play in the match
             for i in range(2):
+                # Safety check: Match data might be sparse or malformed
+                if 'teams' not in match_data: continue
+                
                 team_slot_id = match_data['teams'][i]
                 
+                # --- PATCH START: Check for None before Regex ---
+                if not team_slot_id: 
+                    continue
+                # --- PATCH END ---
+                
                 # Check if the slot is a team placeholder (T1, T2, T3, etc.)
-                match_t_id = re.match(r'T(\d+)', team_slot_id)
+                match_t_id = re.match(r'T(\d+)', str(team_slot_id))
                 
                 if match_t_id:
                     t_num = int(match_t_id.group(1)) - 1 # T1 is index 0
                     if t_num < len(teams):
                         # Assign the actual team name based on the draw/seeding
                         TOURNAMENT_STATE[match_id]['teams'][i] = teams[t_num]
-                        log_message(f"Seeded {teams[t_num]} into {match_id} [Slot {i}].") # ADDED LOGGING
+                        log_message(f"Seeded {teams[t_num]} into {match_id} [Slot {i}].") 
                     else:
                         TOURNAMENT_STATE[match_id]['teams'][i] = None 
 
     # 3. Set initial active match
     initial_active_match = find_next_active_match()
     TOURNAMENT_STATE['active_match_id'] = initial_active_match
-    log_message(f"Bracket generation complete. Initial active match: {initial_active_match}") # ADDED LOGGING
+    log_message(f"Bracket generation complete. Initial active match: {initial_active_match}")
 
 # --- Logging File Management ---
 def toggle_log_game(log_var):
