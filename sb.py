@@ -248,154 +248,161 @@ def _parse_json_config_content(json_content):
 def load_bracket_config(num_teams, elimination_type='D'):
     """
     Reads the bracket configuration from a local .json file.
-    Dynamically constructs filename based on team count (e.g., '7teamD.json').
+    PATCHED: Automatically adds GF and GGF definitions using the FLAT structure required by generate_dynamic_bracket.
     """
-    # 1. Construct the expected filename dynamically
-    # Example: If num_teams=7, this becomes "7teamD.json"
     base_filename = f"{num_teams}team{elimination_type}.json"
-    
-    # 2. Define search paths (local folder first, then 'data' folder)
-    search_paths = [
-        base_filename,
-        os.path.join('data', base_filename)
-    ]
+    search_paths = [base_filename, os.path.join('data', base_filename)]
     
     log_message(f"Searching for configuration file: {base_filename}")
+    
+    state = {}
+    prizes = {}
+    json_loaded = False
 
-    # 3. Iterate through paths to find the file
     for filepath in search_paths:
         if os.path.exists(filepath):
             try:
                 with open(filepath, 'r') as f:
-                    # Native JSON loading
                     content = json.load(f)
-                
-                log_message(f"Successfully loaded JSON configuration from: '{filepath}'")
-                
-                # Pass the raw JSON dict to our Phase 1 parser
-                return _parse_json_config_content(content)
-                
+                state, prizes = _parse_json_config_content(content)
+                log_message(f"Successfully loaded JSON from: '{filepath}'")
+                json_loaded = True
+                break
             except Exception as e:
                 log_message(f"Error reading JSON file '{filepath}': {e}")
                 raise ValueError(f"Error parsing '{filepath}': {e}")
 
-    # 4. If loop completes without returning, file was not found
-    err_msg = f"Configuration file '{base_filename}' not found. Ensure it exists in the script directory or 'data/'."
-    log_message(f"Error: {err_msg}")
-    raise FileNotFoundError(err_msg)
+    if not json_loaded:
+        err_msg = f"Configuration file '{base_filename}' not found."
+        log_message(f"Error: {err_msg}")
+        raise FileNotFoundError(err_msg)
+
+    # --- PATCH: AUTO-INJECT FINALS LOGIC ---
+    WB_FINAL_ID = None
+    LB_FINAL_ID = None
     
+    # 1. Heuristics to find WBF and LBF
+    for match_id, match_data in state.items():
+        w_next = match_data.get('W_next')
+        if w_next == 'CHAMPION':
+            WB_FINAL_ID = match_id
+    
+    # 2. Fallbacks if heuristics fail
+    sorted_matches = sorted([k for k in state.keys() if k.startswith('G')], key=sort_match_keys)
+    if not WB_FINAL_ID and len(sorted_matches) > 1:
+        WB_FINAL_ID = sorted_matches[-2] 
+    if not LB_FINAL_ID and sorted_matches:
+        LB_FINAL_ID = sorted_matches[-1]
+
+    # 3. Create GF and GGF Entries (FLAT STRUCTURE FIX)
+    
+    # Update WBF/LBF to point to GF
+    if WB_FINAL_ID in state: state[WB_FINAL_ID]['W_next'] = ('GF', 0)
+    if LB_FINAL_ID in state: state[LB_FINAL_ID]['W_next'] = ('GF', 1)
+
+    # GF Entry - Flattened to match expected input for generate_dynamic_bracket
+    state['GF'] = {
+        'teams': [None, None],
+        'W_next': ('CHAMPION', 0), 
+        'L_next': ('GGF', 0) 
+    }
+
+    # GGF Entry - Flattened to match expected input for generate_dynamic_bracket
+    state['GGF'] = {
+        'teams': [None, None],
+        'W_next': ('CHAMPION', 0),
+        'L_next': ('CHAMPION', 1)
+    }
+    
+    log_message(f"Injected Finals: GF linked from {WB_FINAL_ID} & {LB_FINAL_ID}")
+    return state, prizes
+        
 def calculate_dynamic_coords(state):
-    # ... (function body remains unchanged) ...
+    """
+    Calculates X/Y coordinates for all matches, including GF/GGF.
+    """
     coords = {}
     
-    # Constants (Normalized Units)
-    X_UNITS = 100 
-    Y_UNITS = 100 
+    # Constants
     MATCH_WIDTH_U = 12 
     MATCH_HEIGHT_U = 6 
+    
+    # Vertical Spacing (Adjust these to shorten vertical lines)
     WB_START_Y_U = 10
     LB_START_Y_U = 55
-    FINALS_Y_U = 35
-    X_STEP_U = MATCH_WIDTH_U + 6 # Distance between columns
-    Y_STEP_U = MATCH_HEIGHT_U + 4 # Distance between rows
+    FINALS_Y_U = 35 # Vertically centered
+    
+    X_STEP_U = MATCH_WIDTH_U + 6 
+    Y_STEP_U = MATCH_HEIGHT_U + 4 
 
-    # Get all match keys sorted chronologically (G1, G2, G3, ..., GF, GGF)
-    sorted_match_keys = sorted(
-        [k for k in state.keys() if k.startswith('G') or k == 'GF' or k == 'GGF'], 
+    # Sort keys chronologically
+    sorted_keys = sorted(
+        [k for k in state.keys() if k.startswith('G') or k in ['GF', 'GGF']], 
         key=sort_match_keys
     )
     
-    # 1. Classify Matches and Assign Rounds (X-coordinate logic)
+    # 1. Determine Rounds
+    match_props = {}
+    max_round = 0
     
-    match_properties = {} 
-    round_map_by_id = {}
-    
-    for match_id in sorted_match_keys:
-        properties = {'track': 'WB', 'round': 0}
+    for mid in sorted_keys:
+        props = {'track': 'WB', 'round': 1}
         
-        if match_id == 'GF' or match_id == 'GGF':
-            properties['track'] = 'Finals'
-        elif match_id.startswith('G'):
-            try:
-                num = int(match_id[1:])
-            except ValueError:
-                 continue 
+        if mid in ['GF', 'GGF']:
+            props['track'] = 'Finals'
+        elif mid.startswith('G'):
+            try: num = int(mid[1:])
+            except: num = 1
             
-            # Rough Round Logic based on G# progression in typical DE brackets
-            if num in [1, 2]: properties['round'] = 1
-            elif num in [3, 4]: properties['round'] = 2
-            elif num in [5, 6]: properties['round'] = 3
-            elif num == 7: properties['round'] = 4 
-            elif num == 8: properties['round'] = 5 
-            else: properties['round'] = ceil(num / 2) 
+            # Simple round estimation based on Game ID
+            # Adjust these ranges if your brackets are larger than 8 teams
+            if num <= 2: r = 1
+            elif num <= 4: r = 2
+            elif num <= 6: r = 3
+            else: r = 4
+            
+            props['round'] = r
+            if r > max_round: max_round = r
+            
+            # Identify Loser Bracket games (Standard heuristic)
+            if num in [4, 6, 7]: props['track'] = 'LB'
+            
+        match_props[mid] = props
 
-            # Track Logic: If Loser drops to ELIMINATED or if the match ID suggests LB (like G4, G6, G7)
-            l_next = state[match_id]['config'].get('L_next')
-            if l_next and 'ELIMINATED' in l_next:
-                properties['track'] = 'LB'
-            # Force G4, G6, G7 (LB) based on standard 5-team config
-            if num in [4, 6, 7]: properties['track'] = 'LB'
-            if num == 3 and isinstance(l_next, tuple) and l_next[0].startswith('G'): properties['track'] = 'WB' 
-            
-        match_properties[match_id] = properties
+    # 2. Assign Coordinates
+    wb_counts = {}
+    lb_counts = {}
+    
+    for mid in sorted_keys:
+        p = match_props.get(mid)
+        if not p: continue
         
-    # 2. Assign X-Coordinates (Round based)
-    
-    round_x_map = {} 
-    current_x_u = 2
-    
-    # Calculate X for WB rounds
-    all_rounds = sorted(list(set(p['round'] for p in match_properties.values() if p['round'] > 0)))
-    for r in all_rounds:
-        round_x_map[r] = current_x_u
-        current_x_u += X_STEP_U
-        
-    # Assign Finals X
-    GF_X_U = current_x_u
-    GGF_X_U = current_x_u + X_STEP_U
-
-    # 3. Assign Y-Coordinates (Stack based)
-    
-    wb_y_counts = {r: 0 for r in round_x_map}
-    lb_y_counts = {r: 0 for r in round_x_map}
-    
-    for match_id in sorted_match_keys:
-        props = match_properties.get(match_id)
-        if not props or props['round'] == 0: continue
-            
-        r = props['round']
-        track = props['track']
+        r = p['round']
+        track = p['track']
         
         if track == 'WB':
-            x_u = round_x_map.get(r, 0)
-            y_u = WB_START_Y_U + (Y_STEP_U * wb_y_counts.get(r, 0))
-            wb_y_counts[r] = wb_y_counts.get(r, 0) + 1
-            coords[match_id] = (x_u, y_u)
+            x = 2 + ((r - 1) * X_STEP_U)
+            y = WB_START_Y_U + (Y_STEP_U * wb_counts.get(r, 0))
+            wb_counts[r] = wb_counts.get(r, 0) + 1
+            coords[mid] = (x, y)
             
         elif track == 'LB':
-            x_u = round_x_map.get(r, 0)
-            y_u = LB_START_Y_U + (Y_STEP_U * lb_y_counts.get(r, 0))
-            lb_y_counts[r] = lb_y_counts.get(r, 0) + 1
-            
-            # Adjust X for specific LB matches
-            if match_id == 'G4' and 2 in round_x_map:
-                 x_u = round_x_map[2]
-            elif match_id == 'G6' and 3 in round_x_map:
-                 x_u = round_x_map[3]
-            elif match_id == 'G7' and 4 in round_x_map: 
-                 x_u = round_x_map[4]
-            
-            coords[match_id] = (x_u, y_u)
+            x = 2 + ((r - 1) * X_STEP_U)
+            y = LB_START_Y_U + (Y_STEP_U * lb_counts.get(r, 0))
+            lb_counts[r] = lb_counts.get(r, 0) + 1
+            coords[mid] = (x, y)
             
         elif track == 'Finals':
-            if match_id == 'GF':
-                coords[match_id] = (GF_X_U, FINALS_Y_U)
-            elif match_id == 'GGF':
-                coords[match_id] = (GGF_X_U, FINALS_Y_U)
+            # Place finals 1 step to the right of the max round
+            finals_x = 2 + (max_round * X_STEP_U) + 5
+            
+            if mid == 'GF':
+                coords[mid] = (finals_x, FINALS_Y_U)
+            elif mid == 'GGF':
+                coords[mid] = (finals_x + X_STEP_U, FINALS_Y_U)
 
-    # log_message(f"Calculated dynamic coordinates for {len(coords)} matches.") # ADDED LOGGING (Too verbose)
     return coords
-
+    
 # --- Dynamic Line Drawing (RETAINED) ---
 def draw_angled_lines(canvas, state, coords, match_w, match_h, H_SCALE, V_SCALE, H_PAD, V_PAD):
     """
@@ -1713,16 +1720,16 @@ def generate_dynamic_bracket(teams, config=None):
     """
     Loads the bracket structure from the config file, initializes TOURNAMENT_STATE,
     and seeds the starting matches with teams (T1, T2, etc.).
+    PATCHED: Added safety check for NoneType teams to prevent regex crash on GF/GGF.
     """
     global TOURNAMENT_STATE
     TOURNAMENT_STATE.clear()
 
     num_teams = len(teams)
-    log_message(f"Generating bracket for {num_teams} teams.") # ADDED LOGGING
+    log_message(f"Generating bracket for {num_teams} teams.") 
     
     if config is None:
         try:
-            # Load config and discard the prize data (which is already used)
             config, _ = load_bracket_config(num_teams, 'D') 
         except Exception as e:
             messagebox.showerror("Configuration Error", str(e))
@@ -1735,36 +1742,46 @@ def generate_dynamic_bracket(teams, config=None):
             'config': {
                 'W_next': match_config['W_next'],
                 'L_next': match_config['L_next'],
+                # Persist round info if available, helpful for logic
+                'M_round': match_config.get('M_round', 0),
+                'L_round': match_config.get('L_round', 0)
             },
             'teams': [None, None], # Teams are TBD initially
             'winner': None,
             'winner_color': None,
-            'is_reset': False
+            'is_reset': match_id == 'GGF' # Mark GGF as reset game if applicable
         }
         
     # 2. Seed the starting teams into the correct matches
     for match_id, match_data in config.items():
         if match_id.startswith('G'):
-            # The config specifies which teams (T1, T2, T3, etc.) play in the match
             for i in range(2):
+                # Safety check: Match data might be sparse or malformed
+                if 'teams' not in match_data: continue
+                
                 team_slot_id = match_data['teams'][i]
                 
+                # --- PATCH START: Check for None before Regex ---
+                if not team_slot_id: 
+                    continue
+                # --- PATCH END ---
+                
                 # Check if the slot is a team placeholder (T1, T2, T3, etc.)
-                match_t_id = re.match(r'T(\d+)', team_slot_id)
+                match_t_id = re.match(r'T(\d+)', str(team_slot_id))
                 
                 if match_t_id:
                     t_num = int(match_t_id.group(1)) - 1 # T1 is index 0
                     if t_num < len(teams):
                         # Assign the actual team name based on the draw/seeding
                         TOURNAMENT_STATE[match_id]['teams'][i] = teams[t_num]
-                        log_message(f"Seeded {teams[t_num]} into {match_id} [Slot {i}].") # ADDED LOGGING
+                        log_message(f"Seeded {teams[t_num]} into {match_id} [Slot {i}].") 
                     else:
                         TOURNAMENT_STATE[match_id]['teams'][i] = None 
 
     # 3. Set initial active match
     initial_active_match = find_next_active_match()
     TOURNAMENT_STATE['active_match_id'] = initial_active_match
-    log_message(f"Bracket generation complete. Initial active match: {initial_active_match}") # ADDED LOGGING
+    log_message(f"Bracket generation complete. Initial active match: {initial_active_match}")
 
 # --- Logging File Management ---
 def toggle_log_game(log_var):
