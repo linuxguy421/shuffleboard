@@ -704,7 +704,7 @@ def open_full_bracket():
 
     # Create Window
     full_bracket_root = tk.Toplevel(main_root)
-    full_bracket_root.title("Full Tournament Bracket")
+    full_bracket_root.title("Moose Lodge Shuffleboard Bracket")
     full_bracket_root.geometry("1000x700")
     full_bracket_root.protocol("WM_DELETE_WINDOW", on_full_bracket_close)
     
