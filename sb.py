@@ -9,6 +9,7 @@ import random
 import os 
 from collections import OrderedDict
 import datetime # ADDED for logging
+import time
 import json # ADDED for JSON
 
 # --- Console Logging Function ---
@@ -35,6 +36,10 @@ MAX_PLAYERS = 20
 
 # Global state and Canvas item IDs
 TOURNAMENT_STATE = {}
+REPLAY_FILEPATH = None
+REPLAY_MODE = False
+REPLAY_VIEW_ONLY = False
+SNAPSHOT_VERSION = 1
 scoreboard_canvas_ref = None 
 bracket_canvas = None
 status_label = None 
@@ -69,6 +74,150 @@ rankings_display_frame_ref = None # NEW: Frame to hold the final rankings text
 
 
 # --- System Functions ---
+def _find_last_snapshot_in_file(path):
+    """
+    Read the file forward and return the last SNAPSHOT object.
+    Safe and simple for normal replay file sizes.
+    """
+    if not os.path.exists(path):
+        raise FileNotFoundError(path)
+
+    last_snapshot = None
+
+    with open(path, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                obj = json.loads(line)
+                if isinstance(obj, dict) and obj.get("type") == "SNAPSHOT":
+                    last_snapshot = obj
+            except Exception:
+                continue
+
+    return last_snapshot
+
+def check_cli_for_replay():
+
+    if "--replay" in sys.argv:
+        idx = sys.argv.index("--replay")
+        if idx + 1 >= len(sys.argv):
+            print("Usage: sb.py --replay <file>")
+            sys.exit(1)
+
+        replay_path = sys.argv[idx + 1]
+        run_replay_mode(replay_path)
+        # run_replay_mode does not return (it calls mainloop then exits)
+        sys.exit(0)
+
+def run_replay_mode(path):
+    global REPLAY_FILEPATH, REPLAY_MODE, REPLAY_VIEW_ONLY
+    global main_root, TEAMS, TEAM_ROSTERS, TOURNAMENT_STATE, TOURNAMENT_RANKINGS
+
+    REPLAY_FILEPATH = None
+    REPLAY_MODE = True
+    REPLAY_VIEW_ONLY = False
+
+    # Load last snapshot
+    try:
+        snap = _find_last_snapshot_in_file(path)
+    except Exception as e:
+        print(f"Replay error: {e}")
+        sys.exit(1)
+
+    if not snap:
+        print("Replay file contains no SNAPSHOT entries.")
+        sys.exit(1)
+
+    # Validate minimal structure
+    required_keys = ("teams", "rosters", "state", "active_match_id")
+    for key in required_keys:
+        if key not in snap:
+            print(f"Snapshot missing required field '{key}'. Cannot continue.")
+            sys.exit(1)
+
+    # -----------------------------
+    # Load the snapshot into state
+    # -----------------------------
+    TEAMS[:] = snap.get("teams", [])
+    TEAM_ROSTERS.clear()
+    TEAM_ROSTERS.update(snap.get("rosters", {}))
+    TOURNAMENT_RANKINGS.clear()
+    TOURNAMENT_RANKINGS.update(snap.get("rankings", {}))
+
+    # Restore match state
+    TOURNAMENT_STATE.clear()
+    raw_state = snap.get("state", {})
+    for mid, m in raw_state.items():
+        config = {}
+        raw_cfg = m.get("config", {})
+
+        for ck, cv in raw_cfg.items():
+            if isinstance(cv, list) and len(cv) == 2:
+                config[ck] = (cv[0], int(cv[1]))
+            else:
+                config[ck] = cv
+
+        TOURNAMENT_STATE[mid] = {
+            "teams": m.get("teams", [None, None]),
+            "winner": m.get("winner"),
+            "winner_color": m.get("winner_color"),
+            "is_reset": m.get("is_reset", False),
+            "config": config,
+        }
+
+    # Active match
+    active = snap.get("active_match_id")
+    TOURNAMENT_STATE["active_match_id"] = active
+
+    is_complete = (
+        active == "TOURNAMENT_OVER" 
+        or "1ST" in TOURNAMENT_RANKINGS
+    )
+
+    # -----------------------------
+    # VIEW-ONLY MODE
+    # -----------------------------
+    if is_complete:
+        REPLAY_VIEW_ONLY = True
+
+        root = tk.Tk()
+        root.title("Moose Lodge Shuffleboard — Replay (VIEW ONLY)")
+        root.withdraw()
+
+        main_root = root
+        open_full_bracket()
+
+        if full_bracket_root:
+            full_bracket_root.title("Full Tournament Bracket — Replay (VIEW ONLY)")
+
+        root.mainloop()
+        sys.exit(0)
+
+    # -----------------------------
+    # CONTINUE MODE
+    # -----------------------------
+    REPLAY_VIEW_ONLY = False
+
+    root = tk.Tk()
+    root.title("Moose Lodge Shuffleboard — Replay Mode (Continue)")
+    main_root = root
+
+    am = TOURNAMENT_STATE.get("active_match_id")
+    if am and am in TOURNAMENT_STATE:
+        tA, tB = TOURNAMENT_STATE[am]["teams"]
+    else:
+        tA = TEAMS[0] if TEAMS else None
+        tB = TEAMS[1] if len(TEAMS) > 1 else None
+
+    setup_scoreboard(root, tA, tB)
+
+    update_roster_seeding_display()
+    update_scoreboard_display()
+
+    root.mainloop()
+    sys.exit(0)
 
 def on_close(root):
     """Handles clean exit when the window or the console is closed/interrupted."""
@@ -906,7 +1055,98 @@ def find_next_active_match():
     log_message("Tournament is over (or in final state check).") # ADDED LOGGING
     return 'TOURNAMENT_OVER'
 
-# --- Match Setup & Resolution (RETAINED) ---
+def _serialize_config_for_snapshot(config):
+    """
+    Convert any tuple destinations into lists so it's JSON-serializable.
+    e.g. ('G4', 1) -> ['G4', 1]
+    Leave strings alone.
+    """
+    if isinstance(config, dict):
+        out = {}
+        for k, v in config.items():
+            if isinstance(v, tuple):
+                out[k] = [v[0], int(v[1])]
+            else:
+                out[k] = v
+        return out
+    return config
+
+def _serialize_match_for_snapshot(match_data):
+    """
+    Produce a minimal JSON-serializable dict for a single match entry.
+    Keep only the fields needed to restore: teams, winner, winner_color, is_reset, config
+    """
+    if not isinstance(match_data, dict):
+        return match_data
+    return {
+        "teams": match_data.get("teams"),
+        "winner": match_data.get("winner"),
+        "winner_color": match_data.get("winner_color"),
+        "is_reset": bool(match_data.get("is_reset", False)),
+        "config": _serialize_config_for_snapshot(match_data.get("config", {})),
+        # We intentionally omit transient UI-only fields
+    }
+
+def serialize_snapshot():
+    """
+    Produce the minimal tournament snapshot to support replay.
+    """
+    snapshot = {
+        "type": "SNAPSHOT",
+        "version": SNAPSHOT_VERSION,
+        "timestamp": time.time(),
+        "teams": list(TEAMS),
+        "rosters": dict(TEAM_ROSTERS),
+        "state": {},
+        "rankings": dict(TOURNAMENT_RANKINGS),
+        "active_match_id": TOURNAMENT_STATE.get("active_match_id"),
+    }
+
+    # Serialize match-level state.
+    for mid, match_data in TOURNAMENT_STATE.items():
+        if isinstance(match_data, dict):
+            snapshot["state"][mid] = {
+                "teams": match_data.get("teams"),
+                "winner": match_data.get("winner"),
+                "winner_color": match_data.get("winner_color"),
+                "is_reset": match_data.get("is_reset", False),
+                "config": {
+                    k: (list(v) if isinstance(v, tuple) else v)
+                    for k, v in match_data.get("config", {}).items()
+                },
+            }
+
+    return snapshot
+
+def append_snapshot_to_file(path):
+    """
+    Append a single ND-JSON snapshot to the replay file.
+    No writes occur if no replay file is active.
+    """
+    if not path:
+        return
+
+    try:
+        snapshot = serialize_snapshot()
+        line = json.dumps(snapshot, separators=(",", ":")) + "\n"
+
+        # Create directory if needed
+        directory = os.path.dirname(path)
+        if directory and not os.path.exists(directory):
+            os.makedirs(directory, exist_ok=True)
+
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(line)
+            f.flush()
+            try:
+                os.fsync(f.fileno())
+            except Exception:
+                pass
+
+        log_message(f"[Replay] Snapshot appended to {path}")
+
+    except Exception as e:
+        log_message(f"[Replay] Error writing snapshot: {e}")
 
 def handle_match_resolution(winner, loser, winning_color, match_id):
     # ... (function body remains unchanged) ...
@@ -1001,6 +1241,7 @@ def handle_match_resolution(winner, loser, winning_color, match_id):
         
         TOURNAMENT_STATE['active_match_id'] = 'TOURNAMENT_OVER'
         log_message(f"Match {match_id} (Reset) completed. 1ST={winner}, 2ND={gfgf_loser}. Tournament is over.") # ADDED LOGGING
+        append_snapshot_to_file(REPLAY_FILEPATH)
         reset_game() 
         return 
         
@@ -1045,10 +1286,15 @@ def handle_match_resolution(winner, loser, winning_color, match_id):
     TOURNAMENT_STATE['active_match_id'] = find_next_active_match()
     log_message(f"Standard Match Resolution complete. New active match: {TOURNAMENT_STATE['active_match_id']}") # ADDED LOGGING
     
-    reset_game(update_teams=False) 
+    reset_game(update_teams=False)
 
+    # If a replay file is active, append the new snapshot so replays capture progress.
+    try:
+        append_snapshot_to_file(REPLAY_FILEPATH)
+    except Exception as e:
+        log_message(f"[Replay] Error writing snapshot after match resolution: {e}")
 
-# --- Draw Small Bracket View (RETAINED) ---
+    append_snapshot_to_file(REPLAY_FILEPATH)
 
 def draw_small_bracket_view(canvas, state):
     """
@@ -2255,6 +2501,11 @@ if __name__ == '__main__':
         os.makedirs('data')
         log_message("Created 'data' directory.") # ADDED LOGGING
         
+    check_cli_for_replay()
+    os.makedirs("replays", exist_ok=True)
+    REPLAY_FILEPATH = f"replays/game_{int(time.time())}.json"
+    append_snapshot_to_file(REPLAY_FILEPATH)
+    
     show_title_screen()
     # start_tournament handles creating and destroying the necessary Tk instances now
     start_tournament()
