@@ -1,42 +1,41 @@
 #!/usr/bin/env python3
 
 import tkinter as tk
-from tkinter import messagebox, simpledialog
+from tkinter import messagebox, simpledialog, filedialog # Added filedialog
 from math import log2, ceil
 import sys
 import re 
 import random 
 import os 
 from collections import OrderedDict
-import datetime # ADDED for logging
+import datetime 
 import time
-import json # ADDED for JSON
+import json 
 
 # --- Console Logging Function ---
 def log_message(message):
     """Prints a timestamped message to the console and file (if enabled) for tracking."""
-    global LOG_GAME_TO_FILE, LOG_FILE_HANDLE # ADDED for file logging
+    global LOG_GAME_TO_FILE, LOG_FILE_HANDLE 
     timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     log_line = f"[{timestamp}] {message}"
     
     print(log_line)
 
-    # ADDED: Write to file if enabled
     if LOG_GAME_TO_FILE and LOG_FILE_HANDLE:
         LOG_FILE_HANDLE.write(log_line + "\n")
-        LOG_FILE_HANDLE.flush() # Ensure it's written immediately
+        LOG_FILE_HANDLE.flush() 
 
 # --- Global & Tournament Variables ---
 TEAMS = []          
 TEAM_ROSTERS = {}   
-TOURNAMENT_RANKINGS = OrderedDict() # Stores {'1ST': 'Team X', '2ND': 'Team Y', '3RD': 'Team Z', ...}
+TOURNAMENT_RANKINGS = OrderedDict() 
 ENTRY_FEE_PER_PERSON = 5
 MIN_PLAYERS = 6     
 MAX_PLAYERS = 20    
 
 # Global state and Canvas item IDs
 TOURNAMENT_STATE = {}
-REPLAY_FILEPATH = None
+REPLAY_FILEPATH = None # Initialized to None, set only on New Game or Resume
 REPLAY_MODE = False
 REPLAY_VIEW_ONLY = False
 SNAPSHOT_VERSION = 1
@@ -54,13 +53,13 @@ btn_blue = None
 btn_switch = None 
 current_match_teams = {'red': None, 'blue': None} 
 last_assigned_match_id = None 
-switch_frame_ref = None # Global reference for the switch button's container frame
+switch_frame_ref = None 
 full_bracket_root = None
 full_bracket_canvas = None
 # Global logging control
 LOG_GAME_TO_FILE = False 
 LOG_FILE_HANDLE = None
-final_control_frame_ref = None # Container for the final QUIT button
+final_control_frame_ref = None 
 
 # Global Variables for Match Details UI
 match_details_frame = None
@@ -70,7 +69,7 @@ bracket_info_canvas_ref = None
 rankings_label_ref = None
 bracket_info_frame_ref = None 
 team_info_frame_ref = None 
-rankings_display_frame_ref = None # NEW: Frame to hold the final rankings text
+rankings_display_frame_ref = None 
 
 
 # --- System Functions ---
@@ -98,33 +97,22 @@ def _find_last_snapshot_in_file(path):
 
     return last_snapshot
 
-def check_cli_for_replay():
-
-    if "--replay" in sys.argv:
-        idx = sys.argv.index("--replay")
-        if idx + 1 >= len(sys.argv):
-            print("Usage: sb.py --replay <file>")
-            sys.exit(1)
-
-        replay_path = sys.argv[idx + 1]
-        run_replay_mode(replay_path)
-        # run_replay_mode does not return (it calls mainloop then exits)
-        sys.exit(0)
-
 def run_replay_mode(path):
     global REPLAY_FILEPATH, REPLAY_MODE, REPLAY_VIEW_ONLY
     global main_root, TEAMS, TEAM_ROSTERS, TOURNAMENT_STATE, TOURNAMENT_RANKINGS
 
-    REPLAY_FILEPATH = None
     REPLAY_MODE = True
     REPLAY_VIEW_ONLY = False
+
+    log_message(f"Attempting to load replay from: {path}")
 
     # Load last snapshot
     try:
         snap = _find_last_snapshot_in_file(path)
     except Exception as e:
         print(f"Replay error: {e}")
-        sys.exit(1)
+        messagebox.showerror("Replay Error", f"Could not load file: {e}")
+        return # Return to title screen logic if possible, or exit
 
     if not snap:
         print("Replay file contains no SNAPSHOT entries.")
@@ -177,11 +165,14 @@ def run_replay_mode(path):
     )
 
     # -----------------------------
-    # VIEW-ONLY MODE
+    # VIEW-ONLY MODE (Finished Game)
     # -----------------------------
     if is_complete:
         REPLAY_VIEW_ONLY = True
+        REPLAY_FILEPATH = None # Rule 10: Do not write snapshots for finished games
 
+        log_message("Replay loaded: Tournament Finished. Entering View-Only Mode.")
+        
         root = tk.Tk()
         root.title("Moose Lodge Shuffleboard — Replay (VIEW ONLY)")
         root.withdraw()
@@ -196,9 +187,12 @@ def run_replay_mode(path):
         sys.exit(0)
 
     # -----------------------------
-    # CONTINUE MODE
+    # CONTINUE MODE (Unfinished Game)
     # -----------------------------
     REPLAY_VIEW_ONLY = False
+    REPLAY_FILEPATH = path # Rule 9: Resume appending to the existing file
+    
+    log_message(f"Replay loaded: Resuming tournament. Appending to {path}")
 
     root = tk.Tk()
     root.title("Moose Lodge Shuffleboard — Replay Mode (Continue)")
@@ -222,11 +216,10 @@ def run_replay_mode(path):
 def on_close(root):
     """Handles clean exit when the window or the console is closed/interrupted."""
     global main_root
-    global LOG_FILE_HANDLE # ADDED for file logging
+    global LOG_FILE_HANDLE 
     
-    log_message("Application close requested.") # ADDED LOGGING
+    log_message("Application close requested.") 
     
-    # ADDED: Close log file handle if open
     if LOG_FILE_HANDLE:
         try:
             LOG_FILE_HANDLE.close()
@@ -236,19 +229,20 @@ def on_close(root):
 
     try:
         if root:
-            root.quit()
+            # Destroy the main_root (even if hidden) to stop mainloop()
+            root.destroy() 
         sys.exit(0)
     except:
         sys.exit(0)
 
 def show_title_screen():
-    """Displays a title image and Begin button before tournament setup."""
+    """Displays a title image, Load Game button, and New Game button."""
     import tkinter as tk
     from PIL import Image, ImageTk
 
     splash = tk.Tk()
     splash.title("Moose Lodge Shuffleboard (large_bracket)")
-    splash.geometry("500x500")
+    splash.geometry("500x550") # Slightly taller for extra button
     splash.configure(bg="black")
 
     try:
@@ -267,17 +261,42 @@ def show_title_screen():
         font=("Arial", 20)
     ).pack(pady=10)
 
-    def start_game():
-        splash.destroy()
+    # --- Button Logic ---
 
+    def start_new_game():
+        splash.destroy()
+        start_tournament()
+
+    def load_existing_game():
+        # Rule 6: Load existing replay file
+        filename = filedialog.askopenfilename(
+            title="Select Replay File",
+            initialdir="replays",
+            filetypes=[("JSON Replay", "*.json"), ("All Files", "*.*")]
+        )
+        if filename:
+            splash.destroy()
+            run_replay_mode(filename)
+
+    # Load Game Button
     tk.Button(
         splash,
-        text="Begin Game Setup",
-        command=start_game,
-        bg="#4CAF50", fg="white",
+        text="Load Game",
+        command=load_existing_game,
+        bg="#2196F3", fg="white", # Blue
         font=("Arial", 14, "bold"),
         height=2
-    ).pack(pady=40, fill="x", padx=50)
+    ).pack(pady=(20, 10), fill="x", padx=50)
+
+    # New Game Button
+    tk.Button(
+        splash,
+        text="Begin New Game",
+        command=start_new_game,
+        bg="#4CAF50", fg="white", # Green
+        font=("Arial", 14, "bold"),
+        height=2
+    ).pack(pady=10, fill="x", padx=50)
 
     splash.mainloop()
 
@@ -307,7 +326,7 @@ def calculate_winnings(num_teams):
     else:
         prizes['3rd'] = 0
         
-    log_message(f"Calculated prizes (fallback): Total Pool ${total_pool}, Prizes {prizes}") # ADDED LOGGING
+    log_message(f"Calculated prizes (fallback): Total Pool ${total_pool}, Prizes {prizes}") 
     return total_pool, prizes
 
 # --- Bracket Sorting Utility (Retained) ---
@@ -337,25 +356,19 @@ def _parse_json_destination(dest_data):
     """
     Translates JSON destination objects into the internal tuple/string format.
     """
-    # Safety check: if it's not a dictionary (e.g. None or old string), return as-is or None
     if not isinstance(dest_data, dict):
         return None
 
-    # Case 1: Standard Game Progression (Game + Slot)
     if 'game' in dest_data and 'slot' in dest_data:
-        # Returns tuple: ('G4', 1)
         return (dest_data['game'], int(dest_data['slot']))
 
-    # Case 2: Result Objects (Elimination, Champion, Conditional)
     if 'result' in dest_data:
         res = dest_data['result']
         
         if res == 'ELIMINATED':
-            # Extract rank, ensure uppercase, and format: ELIMINATED[7TH]
             rank = dest_data.get('rank', 'N/A').upper()
             return f"ELIMINATED[{rank}]"
             
-        # Returns string: 'CHAMPION' or 'GF_CONDITIONAL'
         return res
             
     return None
@@ -363,7 +376,6 @@ def _parse_json_destination(dest_data):
 def _parse_json_config_content(json_content):
     """
     Parses the JSON dict into the application's internal dictionary structure
-    and fixes the '2nd' typo.
     """
     config = {}
     prizes = {}
@@ -371,8 +383,6 @@ def _parse_json_config_content(json_content):
     # 1. Parse and Fix Prizes
     raw_prizes = json_content.get('prizes', {})
     
-    # Explicit Mapping: JSON Key -> Python Key
-    # This also fixes the typo by mapping "2" directly to "2nd"
     if '1' in raw_prizes: prizes['1st'] = raw_prizes['1']
     if '2' in raw_prizes: prizes['2nd'] = raw_prizes['2'] 
     if '3' in raw_prizes: prizes['3rd'] = raw_prizes['3']
@@ -381,10 +391,8 @@ def _parse_json_config_content(json_content):
     games = json_content.get('games', {})
     
     for match_id, data in games.items():
-        # Build the match entry exactly as sb.py expects it
         match_entry = {
             'teams': data.get('teams', [None, None]),
-            # Use the helper function to parse destinations
             'W_next': _parse_json_destination(data.get('winner_advances_to')),
             'L_next': _parse_json_destination(data.get('loser_drops_to'))
         }
@@ -392,12 +400,11 @@ def _parse_json_config_content(json_content):
         
     return config, prizes
 
-# --- Dynamic Config Loading (Phase 2: JSON Loader) ---
+# --- Dynamic Config Loading ---
 
 def load_bracket_config(num_teams, elimination_type='D'):
     """
     Reads the bracket configuration from a local .json file.
-    PATCHED: Automatically adds GF and GGF definitions using the FLAT structure required by generate_dynamic_bracket.
     """
     base_filename = f"{num_teams}team{elimination_type}.json"
     search_paths = [base_filename, os.path.join('data', base_filename)]
@@ -430,33 +437,26 @@ def load_bracket_config(num_teams, elimination_type='D'):
     WB_FINAL_ID = None
     LB_FINAL_ID = None
     
-    # 1. Heuristics to find WBF and LBF
     for match_id, match_data in state.items():
         w_next = match_data.get('W_next')
         if w_next == 'CHAMPION':
             WB_FINAL_ID = match_id
     
-    # 2. Fallbacks if heuristics fail
     sorted_matches = sorted([k for k in state.keys() if k.startswith('G')], key=sort_match_keys)
     if not WB_FINAL_ID and len(sorted_matches) > 1:
         WB_FINAL_ID = sorted_matches[-2] 
     if not LB_FINAL_ID and sorted_matches:
         LB_FINAL_ID = sorted_matches[-1]
 
-    # 3. Create GF and GGF Entries (FLAT STRUCTURE FIX)
-    
-    # Update WBF/LBF to point to GF
     if WB_FINAL_ID in state: state[WB_FINAL_ID]['W_next'] = ('GF', 0)
     if LB_FINAL_ID in state: state[LB_FINAL_ID]['W_next'] = ('GF', 1)
 
-    # GF Entry - Flattened to match expected input for generate_dynamic_bracket
     state['GF'] = {
         'teams': [None, None],
         'W_next': ('CHAMPION', 0), 
         'L_next': ('GGF', 0) 
     }
 
-    # GGF Entry - Flattened to match expected input for generate_dynamic_bracket
     state['GGF'] = {
         'teams': [None, None],
         'W_next': ('CHAMPION', 0),
@@ -472,25 +472,21 @@ def calculate_dynamic_coords(state):
     """
     coords = {}
     
-    # Constants
     MATCH_WIDTH_U = 12 
     MATCH_HEIGHT_U = 6 
     
-    # Vertical Spacing (Adjust these to shorten vertical lines)
     WB_START_Y_U = 10
     LB_START_Y_U = 55
-    FINALS_Y_U = 35 # Vertically centered
+    FINALS_Y_U = 35 
     
     X_STEP_U = MATCH_WIDTH_U + 6 
     Y_STEP_U = MATCH_HEIGHT_U + 4 
 
-    # Sort keys chronologically
     sorted_keys = sorted(
         [k for k in state.keys() if k.startswith('G') or k in ['GF', 'GGF']], 
         key=sort_match_keys
     )
     
-    # 1. Determine Rounds
     match_props = {}
     max_round = 0
     
@@ -503,8 +499,6 @@ def calculate_dynamic_coords(state):
             try: num = int(mid[1:])
             except: num = 1
             
-            # Simple round estimation based on Game ID
-            # Adjust these ranges if your brackets are larger than 8 teams
             if num <= 2: r = 1
             elif num <= 4: r = 2
             elif num <= 6: r = 3
@@ -513,12 +507,10 @@ def calculate_dynamic_coords(state):
             props['round'] = r
             if r > max_round: max_round = r
             
-            # Identify Loser Bracket games (Standard heuristic)
             if num in [4, 6, 7]: props['track'] = 'LB'
             
         match_props[mid] = props
 
-    # 2. Assign Coordinates
     wb_counts = {}
     lb_counts = {}
     
@@ -542,7 +534,6 @@ def calculate_dynamic_coords(state):
             coords[mid] = (x, y)
             
         elif track == 'Finals':
-            # Place finals 1 step to the right of the max round
             finals_x = 2 + (max_round * X_STEP_U) + 5
             
             if mid == 'GF':
@@ -552,19 +543,16 @@ def calculate_dynamic_coords(state):
 
     return coords
     
-# --- Dynamic Line Drawing (RETAINED) ---
+# --- Dynamic Line Drawing ---
 def draw_angled_lines(canvas, state, coords, match_w, match_h, H_SCALE, V_SCALE, H_PAD, V_PAD):
     """
     Draws connecting lines using 45-degree angles ('Classic' style).
-    - Uses a direct diagonal cut if horizontal space permits.
-    - Falls back to chamfered (octagonal) routing if space is tight.
     """
     LINE_COLOR = '#BBBBBB' 
     LINE_WIDTH = 2
-    CHAMFER_SIZE = 15 # Pixels for the corner cuts
-    MIN_STRAIGHT = 15 # Minimum horizontal landing pad before the box
+    CHAMFER_SIZE = 15 
+    MIN_STRAIGHT = 15 
 
-    # Helper: Convert Unit to Pixel
     def get_pixel_coords(match_id):
         if match_id not in coords: return None, None
         u_x, u_y = coords[match_id]
@@ -586,11 +574,9 @@ def draw_angled_lines(canvas, state, coords, match_w, match_h, H_SCALE, V_SCALE,
         if not isinstance(match_data, dict) or 'config' not in match_data: continue
         if match_id not in coords: continue
         
-        # Start Point (Right side of source box)
         x1, y1 = box_center_right(match_id)
         if x1 is None: continue
 
-        # Loop through destinations (Winner and Loser)
         for dest_key in ['W_next', 'L_next']:
             target = match_data['config'].get(dest_key)
             if not isinstance(target, tuple): continue 
@@ -601,71 +587,51 @@ def draw_angled_lines(canvas, state, coords, match_w, match_h, H_SCALE, V_SCALE,
                 x2, y2_center = box_in_left(next_match_id)
                 if x2 is None: continue
                 
-                # Calculate Destination Y based on slot
-                # Slot 0 = Top, Slot 1 = Bottom
                 y2 = y2_center - (match_h / 4) if slot == 0 else y2_center + (match_h / 4)
 
-                # --- 45-DEGREE LOGIC ---
-                
                 dx = x2 - x1
                 dy = abs(y2 - y1)
                 
-                # Check 1: Is destination backwards? (Shouldn't happen in standard bracket)
                 if dx <= 0:
-                    # Fallback to direct line
                     canvas.create_line(x1, y1, x2, y2, fill=LINE_COLOR, width=LINE_WIDTH)
                     continue
 
-                # Check 2: Do we have enough space for a "Perfect Diagonal"?
-                # We need enough X to cover the Y drop + the landing pads
                 required_dx = dy + (MIN_STRAIGHT * 1.5)
                 
                 if dx > required_dx:
-                    # STYLE A: Direct Converging Diagonal
-                    # Path: Horizontal -> 45deg Cut -> Horizontal Stub -> Box
-                    
                     turn_point_x = x2 - dy - MIN_STRAIGHT
                     
                     points = [
-                        x1, y1,                     # Start
-                        turn_point_x, y1,           # Go Horizontal
-                        x2 - MIN_STRAIGHT, y2,      # Cut Diagonal
-                        x2, y2                      # Landing Stub
+                        x1, y1,                     
+                        turn_point_x, y1,           
+                        x2 - MIN_STRAIGHT, y2,      
+                        x2, y2                      
                     ]
                     canvas.create_line(points, fill=LINE_COLOR, width=LINE_WIDTH, capstyle='round')
 
                 else:
-                    # STYLE B: Chamfered Pipe (Octagonal)
-                    # Used when the boxes are too far apart vertically relative to width
-                    # Path: Horizontal -> Chamfer -> Vertical -> Chamfer -> Horizontal
-                    
                     mid_x = x1 + (dx / 2)
-                    
-                    # Calculate safe chamfer size (don't exceed half the available space)
                     safe_chamfer = min(CHAMFER_SIZE, dx/2 - 2, dy/2 - 2)
-                    if safe_chamfer < 2: safe_chamfer = 0 # Degrade to sharp corner if tiny
+                    if safe_chamfer < 2: safe_chamfer = 0 
                     
-                    # Direction of vertical travel
                     y_sign = 1 if y2 > y1 else -1
                     
                     points = [
-                        x1, y1,                                      # Start
-                        mid_x - safe_chamfer, y1,                    # Horizontal to Chamfer Start
-                        mid_x, y1 + (safe_chamfer * y_sign),         # Diagonal to Vertical
-                        mid_x, y2 - (safe_chamfer * y_sign),         # Vertical line
-                        mid_x + safe_chamfer, y2,                    # Diagonal to Horizontal
-                        x2, y2                                       # End
+                        x1, y1,                                      
+                        mid_x - safe_chamfer, y1,                    
+                        mid_x, y1 + (safe_chamfer * y_sign),         
+                        mid_x, y2 - (safe_chamfer * y_sign),         
+                        mid_x + safe_chamfer, y2,                    
+                        x2, y2                                       
                     ]
                     canvas.create_line(points, fill=LINE_COLOR, width=LINE_WIDTH, capstyle='round')
 
 def draw_dynamic_lines(canvas, state, coords, match_w, match_h, H_SCALE, V_SCALE, H_PAD, V_PAD):
-    # ... (function body remains unchanged) ...
     """Draws all connection lines based on match configuration (W_next, L_next)."""
     
     LINE_COLOR = '#888888' 
     LINE_WIDTH = 2
     
-    # Helper to convert Unit coordinates to Pixel coordinates and get key points
     def get_pixel_coords(match_id):
         if match_id not in coords: return None, None
         u_x, u_y = coords[match_id]
@@ -684,7 +650,6 @@ def draw_dynamic_lines(canvas, state, coords, match_w, match_h, H_SCALE, V_SCALE
         return x, y + match_h / 2
         
     for match_id, match_data in state.items():
-        # Ensure we only process match data (dictionaries)
         if not isinstance(match_data, dict) or 'config' not in match_data: continue
 
         if match_id not in coords: continue
@@ -692,7 +657,6 @@ def draw_dynamic_lines(canvas, state, coords, match_w, match_h, H_SCALE, V_SCALE
         x1_out, y1_out = box_center(match_id)
         if x1_out is None: continue
 
-        # Iterate over both Winner and Loser destinations
         for dest_key in ['W_next', 'L_next']:
             target = match_data['config'].get(dest_key)
             if not isinstance(target, tuple):
@@ -704,15 +668,11 @@ def draw_dynamic_lines(canvas, state, coords, match_w, match_h, H_SCALE, V_SCALE
                 x2_in, y2_in = box_in(next_match_id)
                 if x2_in is None: continue
                 
-                # Vertical offset for the slot (Top=0, Bottom=1)
                 y2_offset = y2_in - (match_h / 4) if slot == 0 else y2_in + (match_h / 4)
                 
-                # Draw the line
                 if x2_in > x1_out:
-                    # Line moves horizontally and then vertically
                     mid_x = x1_out + (x2_in - x1_out) / 2
                     
-                    # If the line travels across a great distance, make the horizontal section longer
                     if mid_x < x1_out + 10: mid_x = x1_out + 10 
                     if mid_x > x2_in - 10: mid_x = x2_in - 10
 
@@ -720,13 +680,18 @@ def draw_dynamic_lines(canvas, state, coords, match_w, match_h, H_SCALE, V_SCALE
                                        mid_x, y2_offset, x2_in, y2_offset, 
                                        fill=LINE_COLOR, width=LINE_WIDTH, smooth=True)
                 else: 
-                     # For Finals reset line (GF -> GGF)
                      canvas.create_line(x1_out, y1_out, x2_in, y1_out, fill=LINE_COLOR, width=LINE_WIDTH)
-    # log_message("Bracket connection lines drawn.") # ADDED LOGGING (Too verbose)
 
 def on_full_bracket_close():
-    """Resets global variables when the full bracket window is closed."""
-    global full_bracket_root, full_bracket_canvas
+    """Resets global variables when the full bracket window is closed, and exits application if in view-only mode."""
+    global full_bracket_root, full_bracket_canvas, REPLAY_VIEW_ONLY, main_root
+    
+    if REPLAY_VIEW_ONLY:
+        # If in view-only mode, closing the bracket window should exit the application.
+        log_message("View-Only mode detected. Exiting application on window close.")
+        on_close(main_root)
+        return
+
     if full_bracket_root:
         full_bracket_root.destroy()
     full_bracket_root = None
@@ -738,7 +703,6 @@ def draw_large_bracket(canvas):
     """
     canvas.delete('all')
     
-    # 1. Define Fixed Scale (Pixels per Unit)
     H_SCALE_PX = 14  
     V_SCALE_PX = 7  
     
@@ -748,11 +712,9 @@ def draw_large_bracket(canvas):
     match_w = MATCH_W_U * H_SCALE_PX
     match_h = MATCH_H_U * V_SCALE_PX
     
-    # 2. Get Coordinates
     match_coords = calculate_dynamic_coords(TOURNAMENT_STATE)
     if not match_coords: return
 
-    # 3. Calculate Scroll Region
     max_x_u = 0
     max_y_u = 0
     for (mx, my) in match_coords.values():
@@ -764,7 +726,6 @@ def draw_large_bracket(canvas):
     
     canvas.config(scrollregion=(0, 0, total_width, total_height))
     
-    # 4. Helper for drawing
     H_PAD = 20
     V_PAD = 20
     
@@ -775,11 +736,8 @@ def draw_large_bracket(canvas):
         y = u_y * V_SCALE_PX + V_PAD
         return x, y
 
-    # --- CHANGED: Use the new Angled Line Drawer ---
     draw_angled_lines(canvas, TOURNAMENT_STATE, match_coords, match_w, match_h, H_SCALE_PX, V_SCALE_PX, H_PAD, V_PAD)
-    # -----------------------------------------------
 
-    # 6. Draw Boxes (Same as before)
     font_team_size = 10
     font_roster_size = 8
     
@@ -789,18 +747,15 @@ def draw_large_bracket(canvas):
             
         x, y = get_coords(match_id)
 
-        # Color Logic
         fill_color = 'white'
         if match_data.get('champion'): fill_color = 'gold'
         elif match_id == TOURNAMENT_STATE.get('active_match_id') and match_data['winner'] is None: fill_color = '#FFFFCC'
         elif match_data.get('winner_color') == 'red': fill_color = '#FFCCCC' 
         elif match_data.get('winner_color') == 'blue': fill_color = '#CCE5FF' 
 
-        # Draw Box
         canvas.create_rectangle(x, y, x + match_w, y + match_h, fill=fill_color, outline='black', width=2)
         canvas.create_text(x + 5, y + 5, text=f"{match_id}", anchor='w', fill='#000000', font=('Arial', 8, 'bold'))
 
-        # Draw Text
         if match_data['winner'] or match_data.get('champion'):
             winner_team = match_data.get('champion') or match_data['winner']
             roster = TEAM_ROSTERS.get(winner_team, ['?', '?'])
@@ -809,14 +764,11 @@ def draw_large_bracket(canvas):
             canvas.create_text(x + match_w/2, y + match_h/2 - 5, text=roster_str, font=('Arial', font_team_size, 'bold'))
             canvas.create_text(x + match_w/2, y + match_h/2 + 10, text=winner_team, font=('Arial', font_roster_size))
         else:
-            # --- Team A Logic (Display Roster if Team Name is Known) ---
             tA = match_data['teams'][0]
             if tA and not tA.startswith('W:'): 
-                # Team name is known. Display roster.
                 roster_A = TEAM_ROSTERS.get(tA, ['?','?'])
                 txt_A = f"{tA} ({roster_A[0]}/{roster_A[1]})"
             elif tA:
-                # Placeholder like 'W:G1' or 'L:G2'. Display the match reference.
                 txt_A = tA
             else:
                 txt_A = "TBD"
@@ -825,14 +777,11 @@ def draw_large_bracket(canvas):
             
             canvas.create_line(x, y + match_h/2, x + match_w, y + match_h/2, fill='#CCCCCC')
             
-            # --- Team B Logic (Display Roster if Team Name is Known) ---
             tB = match_data['teams'][1]
             if tB and not tB.startswith('W:'):
-                # Team name is known. Display roster.
                 roster_B = TEAM_ROSTERS.get(tB, ['?','?'])
                 txt_B = f"{tB} ({roster_B[0]}/{roster_B[1]})"
             elif tB:
-                # Placeholder like 'W:G1' or 'L:G2'. Display the match reference.
                 txt_B = tB
             else:
                 txt_B = "TBD"
@@ -840,10 +789,9 @@ def draw_large_bracket(canvas):
             canvas.create_text(x + 5, y + 3*match_h/4, text=txt_B, anchor='w', font=('Arial', font_roster_size))
             
 def open_full_bracket():
-    """Opens (or lifts) the large scrollable bracket window."""
-    global full_bracket_root, full_bracket_canvas
+    """Opens (or lifts) the large scrollable bracket window, adding an exit button in View Only mode."""
+    global full_bracket_root, full_bracket_canvas, REPLAY_VIEW_ONLY
     
-    # If open, just bring to front
     if full_bracket_root is not None:
         try:
             full_bracket_root.lift()
@@ -851,103 +799,100 @@ def open_full_bracket():
         except:
             full_bracket_root = None
 
-    # Create Window
     full_bracket_root = tk.Toplevel(main_root)
     full_bracket_root.title("Moose Lodge Shuffleboard Bracket")
     full_bracket_root.geometry("1000x700")
+    # This protocol is now the central exit point for the window
     full_bracket_root.protocol("WM_DELETE_WINDOW", on_full_bracket_close)
     
-    # Container for scrollbars
     container = tk.Frame(full_bracket_root)
     container.pack(fill='both', expand=True)
+
+    if REPLAY_VIEW_ONLY:
+        # Add an explicit exit button when in view-only mode
+        exit_frame = tk.Frame(container, bg='#1F1F1F')
+        exit_frame.pack(fill='x', pady=(0, 5))
+        
+        exit_btn = tk.Button(exit_frame, text="EXIT APPLICATION (View Only)", 
+                             command=lambda: on_close(main_root),
+                             bg='#D32F2F', fg='white', font=('Arial', 12, 'bold'), height=2)
+        exit_btn.pack(padx=10, pady=5, fill='x')
+        
+        # Place the canvas in a sub-container to separate it from the exit button
+        bracket_canvas_container = tk.Frame(container)
+        bracket_canvas_container.pack(fill='both', expand=True, padx=5, pady=5)
+    else:
+        bracket_canvas_container = container
     
-    # Scrollbars
-    v_scroll = tk.Scrollbar(container, orient='vertical')
-    h_scroll = tk.Scrollbar(container, orient='horizontal')
+    v_scroll = tk.Scrollbar(bracket_canvas_container, orient='vertical')
+    h_scroll = tk.Scrollbar(bracket_canvas_container, orient='horizontal')
     
-    # Canvas
-    full_bracket_canvas = tk.Canvas(container, bg='#5E5E5E', 
+    full_bracket_canvas = tk.Canvas(bracket_canvas_container, bg='#5E5E5E', 
                                     yscrollcommand=v_scroll.set, 
                                     xscrollcommand=h_scroll.set)
     
     v_scroll.config(command=full_bracket_canvas.yview)
     h_scroll.config(command=full_bracket_canvas.xview)
     
-    # Grid Layout
     full_bracket_canvas.grid(row=0, column=0, sticky='nsew')
     v_scroll.grid(row=0, column=1, sticky='ns')
     h_scroll.grid(row=1, column=0, sticky='ew')
     
-    container.grid_rowconfigure(0, weight=1)
-    container.grid_columnconfigure(0, weight=1)
+    bracket_canvas_container.grid_rowconfigure(0, weight=1)
+    bracket_canvas_container.grid_columnconfigure(0, weight=1)
     
-    # Initial Draw
     draw_large_bracket(full_bracket_canvas)
 
 def draw_bracket(canvas):
-    # ... (function body remains unchanged) ...
     """
     Draws the visual bracket on the Canvas using dynamically calculated proportional 
     coordinates and dynamic line drawing.
     """
     global TEAM_ROSTERS
     canvas.delete('all')
-    log_message("Redrawing main bracket.") # ADDED LOGGING
+    log_message("Redrawing main bracket.") 
     
     canvas.update_idletasks()
     canvas_width = canvas.winfo_width()
     canvas_height = canvas.winfo_height()
-    
-    # --- 1. Determine Scale Factors and Dynamic Dimensions ---
     
     X_UNITS = 100 
     Y_UNITS = 100 
     MATCH_WIDTH_U = 12 
     MATCH_HEIGHT_U = 6 
     
-    # Use a small padding percentage (2%) to keep elements off the edge
     H_PAD = 0.02 * canvas_width
     V_PAD = 0.02 * canvas_height
     
     effective_width = canvas_width - 2 * H_PAD
     effective_height = canvas_height - 2 * V_PAD
     
-    # Scale based on the effective interior size
     H_SCALE = effective_width / X_UNITS
     V_SCALE = effective_height / Y_UNITS
 
     match_w = MATCH_WIDTH_U * H_SCALE
     match_h = MATCH_HEIGHT_U * V_SCALE
     
-    # Define minimum box size to ensure readability
     MIN_MATCH_W, MIN_MATCH_H = 80, 30
     match_w = max(match_w, MIN_MATCH_W)
     match_h = max(match_h, MIN_MATCH_H)
     
-    # --- 2. Calculate Dynamic Coordinates ---
     match_coords = calculate_dynamic_coords(TOURNAMENT_STATE)
 
-    # Helper function to convert Unit coordinates to Pixel coordinates
     def get_coords(match_id):
         if match_id not in match_coords: return 0, 0
         u_x, u_y = match_coords[match_id]
-        # Add H_PAD and V_PAD to shift from 0,0 to the padded start
         x = u_x * H_SCALE + H_PAD
         y = u_y * V_SCALE + V_PAD
         return x, y
         
-    # --- 3. Line Drawing (Now Dynamic) ---
     draw_dynamic_lines(canvas, TOURNAMENT_STATE, match_coords, match_w, match_h, H_SCALE, V_SCALE, H_PAD, V_PAD)
 
-    # --- 4. Draw Match Boxes and Text ---
-    
-    # Dynamic font sizes (Scaled based on match_h)
     font_id_size = max(5, int(match_h / 8))
     font_team_size = max(8, int(match_h / 5))
     font_roster_size = max(6, int(match_h / 8))
     
     for match_id, match_data in TOURNAMENT_STATE.items():
-        # Ensure we only process match data (dictionaries)
         if not isinstance(match_data, dict) or 'teams' not in match_data:
              continue
             
@@ -966,7 +911,6 @@ def draw_bracket(canvas):
         elif match_data.get('is_reset') and match_data.get('winner') is None:
              fill_color = 'orange'
         
-        # Override fill color if a winner is declared
         if match_data.get('champion'):
              fill_color = 'gold'
         elif match_data.get('winner') is not None and match_data.get('winner_color') == 'red':
@@ -977,10 +921,8 @@ def draw_bracket(canvas):
         canvas.create_rectangle(x, y, x + match_w, y + match_h, 
                                 fill=fill_color, outline='black', width=2, tags=match_id)
         
-        # Match ID
         canvas.create_text(x + 5, y + 5, text=f"{match_id}", anchor='w', fill='gray', font=('Arial', font_id_size))
 
-        # Display winning team and players on two lines
         if match_data['winner'] or match_data.get('champion'):
             winner_team = match_data.get('champion') or match_data['winner']
             color = 'dark red' if match_data.get('champion') else 'dark green'
@@ -988,15 +930,12 @@ def draw_bracket(canvas):
             roster = TEAM_ROSTERS.get(winner_team, ['P1', 'P2'])
             roster_str = f"({roster[0]} / {roster[1]})"
             
-            # Team Name (Bold)
             canvas.create_text(x + match_w/2, y + match_h/2 - font_team_size/2, 
                                text=winner_team, fill=color, font=('Arial', font_team_size, 'bold'))
-            # Player Names
             canvas.create_text(x + match_w/2, y + match_h/2 + font_roster_size*1.2, 
                                text=roster_str, fill=color, font=('Arial', font_roster_size))
 
         else:
-            # --- Team A (Top slot) ---
             team_A = match_data['teams'][0]
             text_fill_color_A = 'black'
             if team_A:
@@ -1007,13 +946,10 @@ def draw_bracket(canvas):
                 text_A = 'TBD (Waiting for Winner/Loser)'
                 text_fill_color_A = 'darkgrey'
 
-            # Position A: Centered vertically in the top half
             canvas.create_text(x + 5, y + match_h/4 + 3, text=text_A, anchor='w', font=('Arial', font_roster_size), fill=text_fill_color_A)
 
-            # Separator Line
             canvas.create_line(x + 5, y + match_h/2, x + match_w - 5, y + match_h/2, fill='#CCCCCC')
 
-            # --- Team B (Bottom slot) ---
             team_B = match_data['teams'][1]
             text_fill_color_B = 'black'
             if team_B:
@@ -1024,14 +960,12 @@ def draw_bracket(canvas):
                 text_B = 'TBD (Waiting for Winner/Loser)'
                 text_fill_color_B = 'darkgrey'
             
-            # Position B: Centered vertically in the bottom half
             canvas.create_text(x + 5, y + 3*match_h/4 - 3, text=text_B, anchor='w', font=('Arial', font_roster_size), fill=text_fill_color_B)
 
 
-# --- Utility to find the Next Active Match (RETAINED) ---
+# --- Utility to find the Next Active Match ---
 
 def find_next_active_match():
-    # ... (function body remains unchanged) ...
     """Iterates through all match keys (in chronological order) to find the next ready-to-play match."""
     
     sorted_match_keys = sorted(
@@ -1043,16 +977,16 @@ def find_next_active_match():
         data = TOURNAMENT_STATE[k]
         
         if data['teams'][0] and data['teams'][1] and data['winner'] is None:
-            log_message(f"Found next active match: {k} ({data['teams'][0]} vs {data['teams'][1]})") # ADDED LOGGING
+            log_message(f"Found next active match: {k} ({data['teams'][0]} vs {data['teams'][1]})") 
             return k
     
     if sorted_match_keys:
         last_g_id = sorted_match_keys[-1]
         if TOURNAMENT_STATE[last_g_id].get('is_reset', False) and TOURNAMENT_STATE[last_g_id].get('winner') is None:
-             log_message(f"Found next active match (Finals Reset): {last_g_id}") # ADDED LOGGING
+             log_message(f"Found next active match (Finals Reset): {last_g_id}") 
              return last_g_id
          
-    log_message("Tournament is over (or in final state check).") # ADDED LOGGING
+    log_message("Tournament is over (or in final state check).") 
     return 'TOURNAMENT_OVER'
 
 def _serialize_config_for_snapshot(config):
@@ -1074,7 +1008,6 @@ def _serialize_config_for_snapshot(config):
 def _serialize_match_for_snapshot(match_data):
     """
     Produce a minimal JSON-serializable dict for a single match entry.
-    Keep only the fields needed to restore: teams, winner, winner_color, is_reset, config
     """
     if not isinstance(match_data, dict):
         return match_data
@@ -1084,7 +1017,6 @@ def _serialize_match_for_snapshot(match_data):
         "winner_color": match_data.get("winner_color"),
         "is_reset": bool(match_data.get("is_reset", False)),
         "config": _serialize_config_for_snapshot(match_data.get("config", {})),
-        # We intentionally omit transient UI-only fields
     }
 
 def serialize_snapshot():
@@ -1149,30 +1081,26 @@ def append_snapshot_to_file(path):
         log_message(f"[Replay] Error writing snapshot: {e}")
 
 def handle_match_resolution(winner, loser, winning_color, match_id):
-    # ... (function body remains unchanged) ...
     """
     Propagates the winner/loser of the *specific* completed match (match_id) 
     to the next games, with GF/GGF reset logic.
     """
     global current_match_res_buttons, TOURNAMENT_RANKINGS
     
-    log_message(f"Resolving match {match_id}: Winner={winner} ({winning_color}), Loser={loser}") # ADDED LOGGING
+    log_message(f"Resolving match {match_id}: Winner={winner} ({winning_color}), Loser={loser}") 
     
-    # Bug fix: Use the passed match_id instead of the active_match_id from global state
     if match_id == 'TOURNAMENT_OVER':
-         # This should not happen with the fix, but as a safeguard:
          messagebox.showerror("Error", "Attempted to resolve 'TOURNAMENT_OVER' state.")
          TOURNAMENT_STATE['active_match_id'] = find_next_active_match()
          reset_game(update_teams=True)
-         log_message("Error: Attempted to resolve 'TOURNAMENT_OVER'. Resetting game state.") # ADDED LOGGING
+         log_message("Error: Attempted to resolve 'TOURNAMENT_OVER'. Resetting game state.") 
          return
          
     match_data = TOURNAMENT_STATE.get(match_id)
 
     if not match_data or 'config' not in match_data:
-        log_message(f"Error: Match {match_id} configuration data is missing or invalid.") # ADDED LOGGING
+        log_message(f"Error: Match {match_id} configuration data is missing or invalid.") 
         messagebox.showerror("Error", f"Match {match_id} configuration data is missing or invalid.")
-        # Try to recover by resetting to the next active match
         TOURNAMENT_STATE['active_match_id'] = find_next_active_match()
         reset_game(update_teams=True)
         return
@@ -1180,7 +1108,7 @@ def handle_match_resolution(winner, loser, winning_color, match_id):
     match_config = match_data['config']
     
     if match_data.get('winner') is not None and not match_data.get('is_reset', False):
-        log_message(f"Warning: Match {match_id} already resolved.") # ADDED LOGGING
+        log_message(f"Warning: Match {match_id} already resolved.") 
         messagebox.showinfo("Error", f"Match {match_id} already resolved.")
         return
         
@@ -1189,35 +1117,30 @@ def handle_match_resolution(winner, loser, winning_color, match_id):
 
     # 1. Handle Grand Finals Bracket Reset/Championship Win Logic (GF and GGF)
     if match_id == 'GF':
-        # WB finalist is teams[0] in GF
         wb_finalist = match_data['teams'][0] 
         
         # Case 1: LB Winner (winner) defeats WB Winner (loser) in GF -> FORCES RESET
         if winner != wb_finalist and not match_data.get('is_reset', False): 
             match_data['is_reset'] = True 
             
-            # Find the reset game (GGF)
             reset_game_id = next((k for k in TOURNAMENT_STATE if k == 'GGF' or k == 'GFF'), 'GGF')
             
             if reset_game_id in TOURNAMENT_STATE:
-                # Set up GGF with the winner of GF (LB team) and the loser (WB team)
                 TOURNAMENT_STATE[reset_game_id]['teams'] = [winner, loser]
                 TOURNAMENT_STATE[reset_game_id]['is_reset'] = True
                 
-                # Clear the winner and winner_color of GF as the tournament is not over yet.
                 match_data['winner'] = None 
                 match_data['winner_color'] = None 
             
-            # MODIFIED: Custom Finals Reset Message
             w_roster = "/".join(TEAM_ROSTERS.get(winner, ["P1", "P2"]))
             l_roster = "/".join(TEAM_ROSTERS.get(loser, ["P3", "P4"]))
+            append_snapshot_to_file(REPLAY_FILEPATH)
             messagebox.showinfo("Final Round!", 
                                 f"{w_roster} have defeated the previously undefeated team {l_roster}! So for the marbles...")
             
             TOURNAMENT_STATE['active_match_id'] = reset_game_id
-            log_message(f"Match GF resulted in Bracket Reset. Next active match: {reset_game_id} ({winner} vs {loser})") # ADDED LOGGING
+            log_message(f"Match GF resulted in Bracket Reset. Next active match: {reset_game_id} ({winner} vs {loser})") 
             
-            # Since the bracket drawing is removed, we only need to call reset_game
             reset_game() 
             return # EXIT after reset handling
 
@@ -1227,7 +1150,7 @@ def handle_match_resolution(winner, loser, winning_color, match_id):
             TOURNAMENT_RANKINGS['1ST'] = winner
             TOURNAMENT_RANKINGS['2ND'] = loser
             TOURNAMENT_STATE['active_match_id'] = 'TOURNAMENT_OVER'
-            log_message(f"Match GF: WB Winner {winner} wins Championship. 1ST={winner}, 2ND={loser}") # ADDED LOGGING
+            log_message(f"Match GF: WB Winner {winner} wins Championship. 1ST={winner}, 2ND={loser}") 
             reset_game() 
             return 
 
@@ -1235,12 +1158,11 @@ def handle_match_resolution(winner, loser, winning_color, match_id):
         # Case 3: GGF is played -> TOURNAMENT OVER
         TOURNAMENT_STATE[match_id]['champion'] = winner
         TOURNAMENT_RANKINGS['1ST'] = winner
-        # Loser is the other team in the match
         gfgf_loser = TOURNAMENT_STATE[match_id]['teams'][0] if winner == TOURNAMENT_STATE[match_id]['teams'][1] else TOURNAMENT_STATE[match_id]['teams'][1]
         TOURNAMENT_RANKINGS['2ND'] = gfgf_loser
         
         TOURNAMENT_STATE['active_match_id'] = 'TOURNAMENT_OVER'
-        log_message(f"Match {match_id} (Reset) completed. 1ST={winner}, 2ND={gfgf_loser}. Tournament is over.") # ADDED LOGGING
+        log_message(f"Match {match_id} (Reset) completed. 1ST={winner}, 2ND={gfgf_loser}. Tournament is over.") 
         append_snapshot_to_file(REPLAY_FILEPATH)
         reset_game() 
         return 
@@ -1253,11 +1175,11 @@ def handle_match_resolution(winner, loser, winning_color, match_id):
         next_match_id, slot = w_target
         if next_match_id in TOURNAMENT_STATE and TOURNAMENT_STATE[next_match_id]['teams'][slot] is None:
             TOURNAMENT_STATE[next_match_id]['teams'][slot] = winner
-            log_message(f"Propagated Winner {winner} to {next_match_id} [Slot {slot}].") # ADDED LOGGING
+            log_message(f"Propagated Winner {winner} to {next_match_id} [Slot {slot}].") 
     elif w_target == 'CHAMPION':
          match_data['champion'] = winner
          TOURNAMENT_RANKINGS['1ST'] = winner
-         log_message(f"Match {match_id}: Winner {winner} is CHAMPION.") # ADDED LOGGING
+         log_message(f"Match {match_id}: Winner {winner} is CHAMPION.") 
     
     # 3. Propagate Loser and Assign Elimination Rank (MODIFIED)
     l_target = match_config.get('L_next')
@@ -1266,29 +1188,24 @@ def handle_match_resolution(winner, loser, winning_color, match_id):
         loser_match_id, slot = l_target
         if loser_match_id in TOURNAMENT_STATE and TOURNAMENT_STATE[loser_match_id]['teams'][slot] is None:
             TOURNAMENT_STATE[loser_match_id]['teams'][slot] = loser
-            log_message(f"Propagated Loser {loser} to {loser_match_id} [Slot {slot}].") # ADDED LOGGING
+            log_message(f"Propagated Loser {loser} to {loser_match_id} [Slot {slot}].") 
     elif l_target and l_target.startswith('ELIMINATED'):
-        # Assign Elimination Rank
-        # Rank is extracted from the internal format 'ELIMINATED[RANK]'
         rank_match = re.search(r'\[(\w+)\]', l_target)
         if rank_match:
             rank = rank_match.group(1)
-            # Only assign if the rank slot hasn't been filled yet
             if rank not in TOURNAMENT_RANKINGS:
                 TOURNAMENT_RANKINGS[rank] = loser
-                log_message(f"Assigned rank {rank} to eliminated team {loser}.") # ADDED LOGGING
+                log_message(f"Assigned rank {rank} to eliminated team {loser}.") 
         
     elif l_target and l_target.endswith('_CONDITIONAL'):
-        # This is for GF, which is handled in the reset logic above.
         pass 
 
     # 4. Find the next actively playable match
     TOURNAMENT_STATE['active_match_id'] = find_next_active_match()
-    log_message(f"Standard Match Resolution complete. New active match: {TOURNAMENT_STATE['active_match_id']}") # ADDED LOGGING
+    log_message(f"Standard Match Resolution complete. New active match: {TOURNAMENT_STATE['active_match_id']}") 
     
     reset_game(update_teams=False)
 
-    # If a replay file is active, append the new snapshot so replays capture progress.
     try:
         append_snapshot_to_file(REPLAY_FILEPATH)
     except Exception as e:
@@ -1299,7 +1216,6 @@ def handle_match_resolution(winner, loser, winning_color, match_id):
 def draw_small_bracket_view(canvas, state):
     """
     Draws a simplified view of the tournament bracket that scales to fit the window.
-    MODIFIED: Finished matches now use the winning team's color (Red/Blue) instead of green.
     """
     canvas.delete('all')
     
@@ -1389,7 +1305,6 @@ def draw_small_bracket_view(canvas, state):
         
         if not isinstance(data, dict): continue 
             
-        # --- COLOR LOGIC START ---
         if data and data.get('champion'):
             fill_color = 'gold'
             text_color = 'white'
@@ -1398,15 +1313,13 @@ def draw_small_bracket_view(canvas, state):
         elif data and data.get('is_reset', False) and data.get('winner') is None:
              fill_color = 'orange'
         elif data and data.get('winner') is not None:
-             # CHANGED: Check winner_color instead of defaulting to lightgreen
              w_color = data.get('winner_color')
              if w_color == 'red':
-                 fill_color = '#FF5555' # Red Button Color
+                 fill_color = '#FF5555' 
              elif w_color == 'blue':
-                 fill_color = '#55AAFF' # Blue Button Color
+                 fill_color = '#55AAFF' 
              else:
-                 fill_color = 'lightgreen' # Fallback
-        # --- COLOR LOGIC END ---
+                 fill_color = 'lightgreen' 
         
         canvas.create_rectangle(x, y, x + W_box, y + H_box, fill=fill_color, outline=outline_color)
         
@@ -1416,7 +1329,6 @@ def draw_small_bracket_view(canvas, state):
 # --- Helper Functions (RETAINED) ---
 
 def format_destination(dest):
-    # ... (function body remains unchanged) ...
     """Converts the parsed destination tuple/string into a user-readable string."""
     if dest == 'CHAMPION':
         return "🏆 CHAMPION"
@@ -1426,12 +1338,9 @@ def format_destination(dest):
         return f"{match_id} [{slot_name}]"
     if isinstance(dest, str) and dest.endswith('_CONDITIONAL'):
         return f"Grand Finals Reset ({dest.split('_')[0]}R)"
-    # Check if the destination is the ELIMINATED[n] format
     if dest and str(dest).upper().startswith('ELIMINATED['):
         return f"❌ {dest}"
     return str(dest)
-
-# NEW: Utility to calculate a team's current win/loss record
 
 def get_team_record(team_name):
     """Calculates the current wins and losses for a given team from TOURNAMENT_STATE."""
@@ -1443,17 +1352,11 @@ def get_team_record(team_name):
         
         winner = match_data.get('winner')
         
-        # --- PATCH START: Handle GF Reset Case ---
-        # If GF triggered a reset, the 'winner' field is cleared to None to reset the UI, 
-        # but the game effectively happened. We deduce the winner by checking GGF Slot 0.
         if match_id == 'GF' and match_data.get('is_reset') and winner is None:
             ggf_data = TOURNAMENT_STATE.get('GGF') or TOURNAMENT_STATE.get('GFF')
             if ggf_data and ggf_data.get('teams'):
-                 # In handle_match_resolution, the GF winner is explicitly placed in Slot 0 of GGF
                  winner = ggf_data['teams'][0]
-        # --- PATCH END ---
 
-        # Standard counting logic
         if winner:
             if team_name == winner:
                 wins += 1
@@ -1463,7 +1366,6 @@ def get_team_record(team_name):
     return wins, losses
     
 def update_winner_buttons():
-    # ... (function body remains unchanged) ...
     """Updates the text on the winner buttons to show the assigned team names."""
     global btn_red, btn_blue, current_match_teams
     
@@ -1473,30 +1375,25 @@ def update_winner_buttons():
     if btn_red and btn_blue:
         btn_red.config(text=f"WINNERS: {team_red} (RED)")
         btn_blue.config(text=f"WINNERS: {team_blue} (BLUE)")
-    log_message(f"Updated winner buttons: Red={team_red}, Blue={team_blue}") # ADDED LOGGING
+    log_message(f"Updated winner buttons: Red={team_red}, Blue={team_blue}") 
 
-# ADDED: Swap function
 def swap_teams():
-    # ... (function body remains unchanged) ...
     """Swaps the Red and Blue teams in the current match UI."""
     global current_match_teams
     
-    log_message(f"Swapping teams: {current_match_teams['red']} <-> {current_match_teams['blue']}") # ADDED LOGGING
+    log_message(f"Swapping teams: {current_match_teams['red']} <-> {current_match_teams['blue']}") 
     
-    # Perform the swap
     temp = current_match_teams['red']
     current_match_teams['red'] = current_match_teams['blue']
     current_match_teams['blue'] = temp
     
-    # Update the UI
     update_scoreboard_display()
 
 def go_back_to_selection():
-    # ... (function body remains unchanged) ...
     """Hides the confirmation frame and shows the winner selection frame."""
     global match_res_frame, match_input_frame, match_details_frame, current_match_res_buttons, switch_frame_ref
     
-    log_message("Going back to winner selection screen.") # ADDED LOGGING
+    log_message("Going back to winner selection screen.") 
     
     match_res_frame.pack_forget()
     
@@ -1504,8 +1401,7 @@ def go_back_to_selection():
         widget.destroy()
     current_match_res_buttons.clear()
     
-    # FIX: Add padding to pack call
-    if switch_frame_ref: switch_frame_ref.pack(fill='x', padx=10, pady=(0, 5)) # REPACK SWITCH FRAME
+    if switch_frame_ref: switch_frame_ref.pack(fill='x', padx=10, pady=(0, 5)) 
     if match_details_frame: match_details_frame.pack(fill='x', padx=10, pady=5)
     match_input_frame.pack(fill='x', pady=5)
     
@@ -1521,16 +1417,13 @@ def update_scoreboard_display():
     match_id = TOURNAMENT_STATE.get('active_match_id', 'TOURNAMENT_OVER')
     
     if match_id == 'TOURNAMENT_OVER':
-        # Handled by display_final_rankings
         return
         
-    log_message(f"Updating scoreboard display for match: {match_id}") # ADDED LOGGING
+    log_message(f"Updating scoreboard display for match: {match_id}") 
 
     team_red = current_match_teams['red']
     team_blue = current_match_teams['blue']
     
-    # FIX: Define roster_red and roster_blue *before* they are used in the canvas item config
-    # This prevents the UnboundLocalError at startup.
     roster_red = " / ".join(TEAM_ROSTERS.get(team_red, ["P1", "P2"]))
     roster_blue = " / ".join(TEAM_ROSTERS.get(team_blue, ["P3", "P4"]))
 
@@ -1538,28 +1431,17 @@ def update_scoreboard_display():
     match_data = TOURNAMENT_STATE[match_id]
     match_config = match_data['config']
     
-    # --- 1. Update Canvas Text (Team Name & Roster) ---
-    
-    # MODIFICATION 1: Show "P1 / P2" (roster_red) as the large team name.
-    # The old large team name lines are removed.
     canvas.itemconfig(team_labels['red'], text=roster_red)
     canvas.itemconfig(team_labels['blue'], text=roster_blue)
     
-    # MODIFICATION 1: Show "Team X" (team_red) as the small player name text.
-    # The old small player name lines are removed.
     canvas.itemconfig(player_labels_ref['red'], text=team_red)
     canvas.itemconfig(player_labels_ref['blue'], text=team_blue)
-    
-    # --- 2. Update Match Details Frame ---
     
     w_next = format_destination(match_config.get('W_next'))
     l_next = format_destination(match_config.get('L_next'))
     
-    # MODIFICATION 2: Calculate Wins/Losses
     wins_red, losses_red = get_team_record(team_red)
     wins_blue, losses_blue = get_team_record(team_blue)
-    
-    # The old team status logic (get_player_status call) is removed here.
     
     routing_text = (
         f"Game ID: {match_id}\n"
@@ -1568,20 +1450,15 @@ def update_scoreboard_display():
     )
     game_routing_label.config(text=routing_text)
     
-    # MODIFICATION 2: Display Wins/Losses instead of Team Name/Players/Status
-    # The old team_info_labels config lines are removed.
     team_info_labels['red'].config(text=f"Wins: {wins_red}\nLosses: {losses_red}")
     team_info_labels['blue'].config(text=f"Wins: {wins_blue}\nLosses: {losses_blue}")
     
-    # --- 3. Update Status Label and Buttons ---
     status_label.config(text=f"Active Match: {match_id} - {team_red} (RED) vs {team_blue} (BLUE)", fg='black')
     update_winner_buttons()
     
-    # --- 4. Draw Small Bracket View ---
     if bracket_info_canvas_ref:
         draw_small_bracket_view(bracket_info_canvas_ref, TOURNAMENT_STATE)
 
-    # --- NEW: Refresh Big Board if open ---
     if full_bracket_root and full_bracket_canvas:
         try:
             draw_large_bracket(full_bracket_canvas)
@@ -1589,35 +1466,28 @@ def update_scoreboard_display():
             log_message(f"Error updating full bracket: {e}")
 
 def display_final_rankings(champion):
-    # ... (function body remains unchanged) ...
     """
-    FIXED: Manages packing of match detail frames to ensure the ranking label 
+    Manages packing of match detail frames to ensure the ranking label 
     is visible between the scoreboard and the Quit button.
     """
     global team_labels, player_labels_ref, scoreboard_canvas_ref, match_input_frame, match_details_frame, status_label
     global TOURNAMENT_RANKINGS, main_root, rankings_label_ref, bracket_info_frame_ref, team_info_frame_ref, switch_frame_ref
     global final_control_frame_ref, rankings_display_frame_ref
     
-    log_message(f"Displaying final rankings. Champion: {champion}") # ADDED LOGGING
+    log_message(f"Displaying final rankings. Champion: {champion}") 
     
-    # Clear active match UI elements
     match_input_frame.pack_forget()
     if switch_frame_ref:
         switch_frame_ref.pack_forget() 
     
-    # HIDE match-in-progress frames
     if match_details_frame: 
         match_details_frame.pack_forget()
     
-    # Ensure the ranking display frame is visible and takes its place
     if rankings_display_frame_ref:
         rankings_display_frame_ref.pack(fill='both', expand=True, padx=10, pady=5)
         
     status_label.config(text=f"TOURNAMENT OVER! Champion: {champion}", font=('Arial', 14, 'bold'), fg='dark green')
     
-    # --- 1. Update Scoreboard Canvas for 1ST/2ND Place ---
-    
-    # Get 1st and 2nd place
     first_place = TOURNAMENT_RANKINGS.get('1ST', 'N/A')
     second_place = TOURNAMENT_RANKINGS.get('2ND', 'N/A')
     
@@ -1635,26 +1505,17 @@ def display_final_rankings(champion):
     
     canvas.create_line(center_x, 5, center_x, 95, fill='#CCCCCC', width=1)
     
-    # 1ST PLACE (Left)
     canvas.create_text(name_x_1st, 15, text=f"1ST PLACE (Team {first_team_num})", fill='gold', font=('Arial', 9, 'bold'))
     canvas.create_text(name_x_1st, 40, text=f"{first_roster}", font=('Arial', 16, 'bold'), fill='gold')
-    #canvas.create_text(name_x_1st, 70, text=f"${prizes.get('1st', 0)}", font=('Arial', 9), width=200)
 
-    # 2ND PLACE (Right)
     canvas.create_text(name_x_2nd, 15, text=f"2ND PLACE (Team {second_team_num})", fill='#333333', font=('Arial', 9, 'bold'))
     canvas.create_text(name_x_2nd, 40, text=f"{second_roster}", font=('Arial', 16, 'bold'), fill='#333333')
-    #canvas.create_text(name_x_2nd, 70, text=f"${prizes.get('2nd', 0)}", font=('Arial', 9), width=200)
 
-    # --- 2. Display Remaining Rankings ---
-    
     rankings_text = "--- Remaining Tournament Rankings ---\n\n"
     
-    # Get sorted ranks (excluding 1ST and 2ND, then sorting by the rank number/string)
     def rank_sort_key(rank_str):
-        # Converts rank string (e.g., '3RD', '5TH') to an integer for sorting
         if rank_str == '1ST' or rank_str == '2ND':
-            return 0 # Put them first, though they are excluded later
-        # Correctly capture the digits from ordinal strings (e.g., '3RD' -> 3)
+            return 0 
         match = re.match(r'(\d+)', rank_str)
         if match:
             return int(match.group(1))
@@ -1667,18 +1528,13 @@ def display_final_rankings(champion):
             team = TOURNAMENT_RANKINGS[rank]
             team_num = team.split(' ')[1] if 'Team' in team else ''
             roster = " / ".join(TEAM_ROSTERS.get(team, ["TBD", "TBD"]))
-            # Show the rank, Team name, and players
             rankings_text += f"{rank} Place: {team} ({roster})\n"
             
-    log_message(f"Final Rankings: {dict(TOURNAMENT_RANKINGS)}") # ADDED LOGGING
+    log_message(f"Final Rankings: {dict(TOURNAMENT_RANKINGS)}") 
             
-    # Update the rankings label which is now inside its own frame
     if rankings_label_ref:
         rankings_label_ref.config(text=rankings_text, justify=tk.LEFT, fg='black', bg='#F0F0F0', font=('Arial', 10, 'bold'))
     
-    # --- 3. Add Quit Button (Ensuring only one is ever created/packed) ---
-    
-    # Clear any previous content in the final control frame
     for widget in final_control_frame_ref.winfo_children():
         widget.destroy()
         
@@ -1690,31 +1546,9 @@ def display_final_rankings(champion):
 
 def reset_game(update_teams=True):
     """Resets the game state (only updating teams now)."""
-    log_message("Resetting game UI.") # ADDED LOGGING
+    log_message("Resetting game UI.") 
     if update_teams:
         load_match_data_and_teams()
-
-def update_roster_seeding_display():
-    """Updates the Team Roster & Seeding information box."""
-    global roster_seeding_frame_ref, TEAMS, TEAM_ROSTERS
-
-    if not roster_seeding_frame_ref or not TEAMS:
-        return
-
-    log_message("Updating Team Roster & Seeding display.")
-
-    # Clear existing widgets
-    for widget in roster_seeding_frame_ref.winfo_children():
-        widget.destroy()
-
-    # Create the roster list string
-    roster_text = "Seeding | Team Name | Players\n"
-    roster_text += "--------|-----------|---------\n"
-    for i, team_name in enumerate(TEAMS):
-        roster = TEAM_ROSTERS.get(team_name, ["N/A", "N/A"])
-        roster_text += f"T{i+1:<6}| {team_name:<9} | {roster[0]} / {roster[1]}\n"
-
-    tk.Label(roster_seeding_frame_ref, text=roster_text, justify=tk.LEFT, font=('Courier', 10), bg='#EEEEEE').pack(fill='x', padx=5, pady=(0, 5))
 
 def update_roster_seeding_display():
     """Updates the Team Roster & Seeding information box with a horizontal, player-focused view."""
@@ -1725,11 +1559,9 @@ def update_roster_seeding_display():
 
     log_message("Updating Team Roster & Seeding display (horizontal).")
 
-    # Clear existing widgets
     for widget in roster_seeding_frame_ref.winfo_children():
         widget.destroy()
 
-    # Inner frame to hold all team blocks and pack them horizontally (side=tk.LEFT)
     teams_inner_frame = tk.Frame(roster_seeding_frame_ref, bg='#EEEEEE')
     teams_inner_frame.pack(side='top', padx=5, pady=(0, 5))
 
@@ -1737,11 +1569,9 @@ def update_roster_seeding_display():
         roster = TEAM_ROSTERS.get(team_name, ["N/A", "N/A"])
         players_str = f"{roster[0]} / {roster[1]}"
         
-        # Team container frame, packs horizontally
         team_container = tk.Frame(teams_inner_frame, bg='#DDDDDD', bd=1, relief=tk.RIDGE)
         team_container.pack(side=tk.LEFT, padx=5, pady=2) 
         
-        # Label combining team name and players, e.g., "Team Alpha: P1 / P2"
         tk.Label(team_container, text=f"{team_name}: {players_str}", font=('Courier', 9), 
                  bg='#DDDDDD', fg='black').pack(padx=5, pady=2)
 
@@ -1762,33 +1592,26 @@ def setup_scoreboard(root, team_red_placeholder, team_blue_placeholder):
     status_label = tk.Label(root, text="Tournament Initialized.", font=('Arial', 10, 'bold'), pady=5, bd=1, relief='sunken')
     status_label.pack(fill='x')
     
-    # --- Scoreboard Canvas ---
     scoreboard_canvas_ref = tk.Canvas(root, width=450, height=100, bg='white', highlightthickness=0)
     scoreboard_canvas_ref.pack(fill='x', padx=10, pady=5)
 
-    # 1. Outer Frame: Holds the scrollbar and canvas for ROSTER
     roster_outer_frame = tk.Frame(root, padx=10, pady=2, bd=1, relief=tk.GROOVE, bg='#EEEEEE')
     roster_outer_frame.pack(fill='x', padx=10, pady=2) 
 
-    # 2. Scrollbar: For horizontal scrolling (ROSTER ONLY)
     h_scrollbar = tk.Scrollbar(roster_outer_frame, orient=tk.HORIZONTAL)
     h_scrollbar.pack(side=tk.BOTTOM, fill=tk.X)
 
-    # 3. Canvas: Hosts the content (roster_seeding_frame_ref)
     roster_canvas_ref = tk.Canvas(roster_outer_frame, bg='#666666', height=35, xscrollcommand=h_scrollbar.set, highlightthickness=0)
     roster_canvas_ref.pack(side=tk.TOP, fill=tk.X, expand=True)
 
     h_scrollbar.config(command=roster_canvas_ref.xview)
 
-    # 4. Inner Frame: This is the frame the rest of the code needs to target
     roster_seeding_frame_ref = tk.Frame(roster_canvas_ref, bg='#EEEEEE')
     roster_canvas_ref.create_window((0, 0), window=roster_seeding_frame_ref, anchor="nw")
     roster_seeding_frame_ref.bind("<Configure>", lambda e: roster_canvas_ref.configure(scrollregion=roster_canvas_ref.bbox("all")))
     
-    # Initial content update for the roster/seeding frame
     update_roster_seeding_display()
 
-    # --- Main Scoreboard Text Items ---
     match_details_frame = tk.Frame(root, padx=10, pady=5, bd=1, relief=tk.SUNKEN)
     match_details_frame.pack(fill='x', padx=10, pady=5)
     
@@ -1803,53 +1626,40 @@ def setup_scoreboard(root, team_red_placeholder, team_blue_placeholder):
     team_labels['blue'] = scoreboard_canvas_ref.create_text(name_x_blue, 40, text=f"{team_blue_placeholder}", font=('Arial', 16, 'bold'), fill='#0066CC')
     player_labels_ref['blue'] = scoreboard_canvas_ref.create_text(name_x_blue, 70, text="Team Y / (P3, P4)", font=('Arial', 9), width=200)
 
-    # Switch Button Frame
     switch_frame_ref = tk.Frame(root) 
     
-    # 1. Switch Button (Left side, takes 50%)
     btn_switch = tk.Button(switch_frame_ref, text="SWITCH RED/BLUE", command=swap_teams, 
                            bg='#EEEEEE', fg='black', font=('Arial', 10), height=1)
     btn_switch.pack(side=tk.LEFT, fill='x', expand=True, padx=(0, 2))
     
-    # 2. Full Bracket Button (Right side, takes 50%)
     btn_bracket = tk.Button(switch_frame_ref, text="FULL BRACKET", command=open_full_bracket,
                             bg='#DDDDDD', fg='black', font=('Arial', 10, 'bold'), height=1)
     btn_bracket.pack(side=tk.LEFT, fill='x', expand=True, padx=(2, 0))    
-    # Match Details Frame (Contains routing/bracket/team info)
+    
     match_details_frame = tk.Frame(root, padx=10, pady=5)
     
-    # ADDED: Store bracket info frame reference
     bracket_info_frame = tk.Frame(match_details_frame, bd=1, relief='sunken')
     bracket_info_frame.pack(fill='x', pady=(0, 5))
     bracket_info_frame_ref = bracket_info_frame 
     
-    # --- MODIFIED: Dynamic Fit Mini Bracket (No Scrollbar) ---
-    # Increased height to 80 to fit two rows comfortable
-    # bind <Configure> to trigger redraw on resize if needed, though currently logic is redraw-on-update
     bracket_info_canvas = tk.Canvas(bracket_info_frame, height=80, bg='white')
     bracket_info_canvas.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
     
-    # Bind resize event to redraw bracket so it stays fitted
     bracket_info_canvas.bind("<Configure>", lambda event: draw_small_bracket_view(bracket_info_canvas, TOURNAMENT_STATE))
 
     bracket_info_canvas_ref = bracket_info_canvas 
-    # ---------------------------------------------------------
     
-    # Rankings Display
     rankings_display_frame_ref = tk.Frame(root, padx=10, pady=5, bd=1, relief='solid', bg='#F0F0F0')
     
-    # Routing Label
     game_routing_label = tk.Label(match_details_frame, text="Game ID: G#\nWinner Advances To: TBD\nLoser Drops To: TBD", 
                                   justify=tk.LEFT, font=('Arial', 9), bd=1, relief='solid', padx=5, pady=5, bg='#f0f0f0')
     game_routing_label.pack(fill='x', pady=(0, 5))
     
-    # Rankings Label
     rankings_label_ref = tk.Label(rankings_display_frame_ref, 
                                   text="--- Remaining Tournament Rankings ---", 
                                   justify=tk.LEFT, fg='black', bg='#F0F0F0', font=('Arial', 10, 'bold'), padx=5, pady=5)
     rankings_label_ref.pack(fill='both', expand=True)
     
-    # Team Info Frame
     team_info_frame = tk.Frame(match_details_frame)
     team_info_frame.pack(fill='x')
     team_info_frame_ref = team_info_frame
@@ -1862,18 +1672,14 @@ def setup_scoreboard(root, team_red_placeholder, team_blue_placeholder):
                                         justify=tk.LEFT, font=('Arial', 9), fg='#0066CC')
     team_info_labels['blue'].pack(side=tk.LEFT, expand=True, padx=5)
     
-    # Match Input Frame (Winner Buttons)
     match_input_frame = tk.Frame(root, padx=10, pady=5)
 
-    # Match Input Frame (Winner Buttons ONLY)
     match_input_frame = tk.Frame(root, padx=10, pady=5)
 
     btn_red = tk.Button(match_input_frame, text="RED TEAM WINS", command=lambda: declare_winner('red'), bg='#FF5555', fg='black', font=('Arial', 12, 'bold'), height=2)
-    # The winner buttons now expand equally and fill the space
     btn_red.pack(side=tk.LEFT, expand=True, padx=(5, 5), pady=0)
     
     btn_blue = tk.Button(match_input_frame, text="BLUE TEAM WINS", command=lambda: declare_winner('blue'), bg='#55AAFF', fg='black', font=('Arial', 12, 'bold'), height=2)
-    # The winner buttons now expand equally and fill the space
     btn_blue.pack(side=tk.LEFT, expand=True, padx=(5, 5), pady=0)
 
     match_res_frame = tk.Frame(root, bg='#eeeeee', padx=10, pady=10)
@@ -1883,11 +1689,9 @@ def setup_scoreboard(root, team_red_placeholder, team_blue_placeholder):
     load_match_data_and_teams()
         
 def setup_main_gui(root):
-    # ... (function body remains unchanged) ...
-    """Sets up the main windows and calls component initialization. MODIFIED for single window."""
+    """Sets up the main windows and calls component initialization."""
     global main_root
     main_root = root
-    # MODIFIED: Renamed window title
     root.title("Moose Lodge Shuffleboard (large_bracket)")
     root.protocol("WM_DELETE_WINDOW", lambda: on_close(root)) 
     
@@ -1897,9 +1701,8 @@ def setup_main_gui(root):
     team_A = g1_teams[0] or "Team Red"
     team_B = g1_teams[1] or "Team Blue"
     
-    log_message(f"Setting up main GUI for teams: {team_A} vs {team_B}") # ADDED LOGGING
+    log_message(f"Setting up main GUI for teams: {team_A} vs {team_B}") 
     
-    # MODIFIED: Scoreboard setup is now for the main root window
     setup_scoreboard(root, team_A, team_B) 
 
 def show_draw_summary(player_draws, TEAMS, TEAM_ROSTERS, num_teams, total_pool, prizes):
@@ -1908,9 +1711,8 @@ def show_draw_summary(player_draws, TEAMS, TEAM_ROSTERS, num_teams, total_pool, 
     summary_root.title("Tournament Draw & Prize Pool")
     summary_root.protocol("WM_DELETE_WINDOW", lambda: on_close(summary_root)) 
     
-    log_message("Displaying Draw Summary and Prize Pool.") # ADDED LOGGING
+    log_message("Displaying Draw Summary and Prize Pool.") 
     
-    # --- Draw Results ---
     draw_frame = tk.Frame(summary_root, padx=10, pady=10, bd=2, relief=tk.GROOVE)
     draw_frame.pack(fill='x', padx=10, pady=5)
     tk.Label(draw_frame, text="*** Player Draw Results ***", font=('Arial', 12, 'bold')).pack(pady=5)
@@ -1919,54 +1721,46 @@ def show_draw_summary(player_draws, TEAMS, TEAM_ROSTERS, num_teams, total_pool, 
         draw_text += f"Draw #{draw_num}: {player_name}\n"
     tk.Label(draw_frame, text=draw_text, justify=tk.LEFT, font=('Courier', 10)).pack()
     
-    # --- Team Roster Summary ---
     team_frame = tk.Frame(summary_root, padx=10, pady=10, bd=2, relief=tk.GROOVE)
     team_frame.pack(fill='x', padx=10, pady=5)
     tk.Label(team_frame, text="*** Team Roster & Seeding ***", font=('Arial', 12, 'bold')).pack(pady=5)
     team_text = ""
     for i, team_name in enumerate(TEAMS):
         roster = TEAM_ROSTERS.get(team_name, ["N/A", "N/A"])
-        # T1, T2 etc. corresponds to team_name "Team 1", "Team 2" etc.
         team_text += f"Team {i+1} (T{i+1}): {roster[0]} / {roster[1]}\n"
     tk.Label(team_frame, text=team_text, justify=tk.LEFT, font=('Courier', 10)).pack()
     
-    # --- Prize Pool Summary (PATCHED FOR FORMAT) ---
     prize_frame = tk.Frame(summary_root, padx=10, pady=10, bd=2, relief=tk.GROOVE)
     prize_frame.pack(fill='x', padx=10, pady=5)
     tk.Label(prize_frame, text="*** Prize Pool Calculation ***", font=('Arial', 12, 'bold')).pack(pady=5)
     
-    # Calculate per-player prizes
     per_player_1st = int(prizes.get('1st', 0) / 2)
     per_player_2nd = int(prizes.get('2nd', 0) / 2)
     
-    # Display format: Total Pool and then Nth Place Prize: $TOTAL ($PER_PLAYER per player)
     prize_text = f"Total Pool: ${total_pool}\n"
     prize_text += f"1st Place Prize: ${prizes.get('1st', 0)} (${per_player_1st} per player)\n"
     prize_text += f"2nd Place Prize: ${prizes.get('2nd', 0)} (${per_player_2nd} per player)\n"
     
-    # Ensure 3rd place is shown if it exists in the prize dictionary, even if 0
     if prizes.get('3rd') is not None:
         per_player_3rd = int(prizes.get('3rd', 0) / 2)
         prize_text += f"3rd Place Prize: ${prizes.get('3rd', 0)} (${per_player_3rd} per player)\n"
         
     tk.Label(prize_frame, text=prize_text, justify=tk.LEFT, font=('Courier', 10)).pack()
     
-    # --- Confirmation Button ---
     start_button = tk.Button(summary_root, text="BEGIN TOURNAMENT", 
                              command=summary_root.quit, 
                              bg='#4CAF50', fg='white', font=('Arial', 12, 'bold'), height=2)
     start_button.pack(fill='x', padx=10, pady=10)
     
-    summary_root.mainloop() # Blocks execution until button is pressed
+    summary_root.mainloop() 
     summary_root.destroy()
-    log_message("Draw Summary window closed. Proceeding to main GUI.") # ADDED LOGGING
+    log_message("Draw Summary window closed. Proceeding to main GUI.") 
     return
 
 def generate_dynamic_bracket(teams, config=None):
     """
     Loads the bracket structure from the config file, initializes TOURNAMENT_STATE,
     and seeds the starting matches with teams (T1, T2, etc.).
-    PATCHED: Added safety check for NoneType teams to prevent regex crash on GF/GGF.
     """
     global TOURNAMENT_STATE
     TOURNAMENT_STATE.clear()
@@ -1981,50 +1775,40 @@ def generate_dynamic_bracket(teams, config=None):
             messagebox.showerror("Configuration Error", str(e))
             return
         
-    # 1. Initialize TOURNAMENT_STATE based on parsed configuration
     for match_id, match_config in config.items():
-        # Store configuration for reference
         TOURNAMENT_STATE[match_id] = {
             'config': {
                 'W_next': match_config['W_next'],
                 'L_next': match_config['L_next'],
-                # Persist round info if available, helpful for logic
                 'M_round': match_config.get('M_round', 0),
                 'L_round': match_config.get('L_round', 0)
             },
-            'teams': [None, None], # Teams are TBD initially
+            'teams': [None, None], 
             'winner': None,
             'winner_color': None,
-            'is_reset': match_id == 'GGF' # Mark GGF as reset game if applicable
+            'is_reset': match_id == 'GGF' 
         }
         
-    # 2. Seed the starting teams into the correct matches
     for match_id, match_data in config.items():
         if match_id.startswith('G'):
             for i in range(2):
-                # Safety check: Match data might be sparse or malformed
                 if 'teams' not in match_data: continue
                 
                 team_slot_id = match_data['teams'][i]
                 
-                # --- PATCH START: Check for None before Regex ---
                 if not team_slot_id: 
                     continue
-                # --- PATCH END ---
                 
-                # Check if the slot is a team placeholder (T1, T2, T3, etc.)
                 match_t_id = re.match(r'T(\d+)', str(team_slot_id))
                 
                 if match_t_id:
-                    t_num = int(match_t_id.group(1)) - 1 # T1 is index 0
+                    t_num = int(match_t_id.group(1)) - 1 
                     if t_num < len(teams):
-                        # Assign the actual team name based on the draw/seeding
                         TOURNAMENT_STATE[match_id]['teams'][i] = teams[t_num]
                         log_message(f"Seeded {teams[t_num]} into {match_id} [Slot {i}].") 
                     else:
                         TOURNAMENT_STATE[match_id]['teams'][i] = None 
 
-    # 3. Set initial active match
     initial_active_match = find_next_active_match()
     TOURNAMENT_STATE['active_match_id'] = initial_active_match
     log_message(f"Bracket generation complete. Initial active match: {initial_active_match}")
@@ -2037,17 +1821,14 @@ def toggle_log_game(log_var):
     LOG_GAME_TO_FILE = log_var.get()
     
     if LOG_GAME_TO_FILE:
-        # Ensure logs directory exists
         log_dir = 'logs'
         if not os.path.exists(log_dir):
             os.makedirs(log_dir)
         
-        # Format: logs/shuffleboard_$(date +%Y-%m-%d_%H-%M-%S).log
         timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         filename = os.path.join(log_dir, f"shuffleboard_{timestamp}.log")
         
         try:
-            # Open with line buffering (buffering=1) for immediate write
             LOG_FILE_HANDLE = open(filename, 'a', buffering=1)
             log_message(f"Starting file logging to: {filename}")
         except Exception as e:
@@ -2063,57 +1844,42 @@ def toggle_log_game(log_var):
 def get_multi_line_input(parent, title, prompt, num_required):
     """
     Custom function for individual player input boxes using a Toplevel dialog.
-    MODIFIED: Uses a standard tk.Frame instead of a scrollable Canvas,
-    and forces layout update after initial draw to fix the bug.
     """
-    log_message(f"Opening player input dialog for {num_required} players.") # ADDED LOGGING
+    log_message(f"Opening player input dialog for {num_required} players.") 
     
     dialog = tk.Toplevel(parent)
     dialog.title(title)
-    # Increased height to accommodate max players (20) without scrollbar
     dialog.geometry("550x850") 
     dialog.grab_set() 
     
-    # result will be a tuple: (is_manual_draw, list_of_player_data)
     result = None 
     is_manual_draw = tk.BooleanVar(value=False)
     log_game_var = tk.BooleanVar(value=LOG_GAME_TO_FILE)
     
-    # List to store references to the Entry widgets
     player_entries = [] 
 
     tk.Label(dialog, text=prompt, pady=5, justify=tk.LEFT).pack(padx=10, anchor='w')
     
-    # --- Auto/Manual Draw Control Frame ---
     control_frame = tk.Frame(dialog)
     control_frame.pack(padx=10, pady=5, fill='x')
     
-    # Forward declaration for the drawing function
     def toggle_draw_wrapper():
-        log_message(f"Toggling draw mode. Manual Draw: {is_manual_draw.get()}") # ADDED LOGGING
-        # Redraw the widgets in the simple frame
+        log_message(f"Toggling draw mode. Manual Draw: {is_manual_draw.get()}") 
         draw_input_widgets(is_manual_draw.get(), num_required, input_container, player_entries)
 
-    # Checkbox for Manual Draw
     check_manual = tk.Checkbutton(control_frame, text="Manual Draw (Assign Draw #)", variable=is_manual_draw, 
                                   command=toggle_draw_wrapper)
     check_manual.pack(side='left', padx=(0, 20))
-    # ADDED: Log Game Checkbox
     check_log = tk.Checkbutton(control_frame, text="Log Game", variable=log_game_var, command=lambda: toggle_log_game(log_game_var))
     check_log.pack(side='right', padx=(20, 0))    
-    # --- Input Container (Simple Frame) ---
     input_container = tk.Frame(dialog)
-    # Use fill='both' and expand=True to let it use the available space
     input_container.pack(side='top', fill='both', expand=True, padx=10, pady=5)
     
-    # --- Internal function to draw/redraw the widgets ---
     def draw_input_widgets(manual_mode, req, container, entries_list):
-        # 1. Clear previous widgets and list
         for widget in container.winfo_children():
             widget.destroy()
         entries_list.clear()
 
-        # Add instructions based on mode
         if manual_mode:
             tk.Label(container, text=f"** Draw Numbers must be unique and between 1 and {req} **", 
                      fg='darkred', font=('Arial', 9, 'bold')).pack(pady=(5, 0), anchor='w', padx=5)
@@ -2121,53 +1887,44 @@ def get_multi_line_input(parent, title, prompt, num_required):
              tk.Label(container, text=f"** Enter Player Names. Draw numbers will be assigned automatically **", 
                      fg='blue', font=('Arial', 9, 'bold')).pack(pady=(5, 0), anchor='w', padx=5)
             
-        # 2. Draw new widgets
         for i in range(req):
             frame = tk.Frame(container)
             frame.pack(fill='x', padx=5, pady=2)
             
             player_num = i + 1
             
-            # Common Label
             tk.Label(frame, text=f"Player {player_num} Name:", width=15, anchor='w').pack(side='left')
 
             if manual_mode:
-                # Manual: Draw Entry + Name Entry
                 
-                # Draw Number Entry (Width 5 for 3-4 digits/chars + padding)
                 draw_entry = tk.Entry(frame, width=5, justify='center', font=('Arial', 10, 'bold')) 
                 draw_entry.pack(side='left', padx=(0, 5))
                 
                 tk.Label(frame, text="|").pack(side='left', padx=(0, 5))
                 
-                # Name Entry (Shorter)
                 name_entry = tk.Entry(frame, width=30)
                 name_entry.pack(side='left', fill='x', expand=True)
                 
                 entries_list.append((draw_entry, name_entry))
                 
-                # Pre-fill example
                 draw_entry.insert(0, str(player_num))
                 name_entry.insert(0, f"Player {player_num}")
                 
             else:
-                # Auto: Only Name Entry (Full width)
                 name_entry = tk.Entry(frame)
                 name_entry.pack(side='left', fill='x', expand=True)
                 entries_list.append((name_entry,))
                 name_entry.insert(0, f"Player {player_num}")
         
-        # Ensure the new widgets are rendered for correct sizing
         container.update_idletasks()
 
-    # --- ON OK Function ---
     def on_ok():
         nonlocal result
         player_data_list = []
         is_manual = is_manual_draw.get()
         num_inputs = len(player_entries)
         
-        log_message(f"OK button pressed. Manual Draw: {is_manual}. Validating input.") # ADDED LOGGING
+        log_message(f"OK button pressed. Manual Draw: {is_manual}. Validating input.") 
         
         if num_inputs != num_required:
              messagebox.showerror("Internal Error", "Widget count mismatch. Cannot proceed.")
@@ -2181,63 +1938,56 @@ def get_multi_line_input(parent, title, prompt, num_required):
                 
                 if not raw_draw_num or not player_name:
                      messagebox.showerror("Input Error", f"Manual Draw Error (Line {i+1}): Both Draw # and Player Name must be filled.")
-                     log_message(f"Input Error: Missing data on line {i+1} (Manual Draw).") # ADDED LOGGING
+                     log_message(f"Input Error: Missing data on line {i+1} (Manual Draw).") 
                      return
                      
                 try:
                     draw_num = int(raw_draw_num)
                 except ValueError:
                     messagebox.showerror("Input Error", f"Manual Draw Error (Line {i+1}): Draw number '{raw_draw_num}' is not a valid integer.")
-                    log_message(f"Input Error: Invalid draw number '{raw_draw_num}' on line {i+1}.") # ADDED LOGGING
+                    log_message(f"Input Error: Invalid draw number '{raw_draw_num}' on line {i+1}.") 
                     return
                 
                 if draw_num < 1 or draw_num > num_required:
                     messagebox.showerror("Input Error", f"Manual Draw Error (Line {i+1}): Draw number {draw_num} is out of range (1-{num_required}).")
-                    log_message(f"Input Error: Draw number {draw_num} out of range on line {i+1}.") # ADDED LOGGING
+                    log_message(f"Input Error: Draw number {draw_num} out of range on line {i+1}.") 
                     return
                 if draw_num in assigned_draws:
                     messagebox.showerror("Input Error", f"Manual Draw Error (Line {i+1}): Draw number {draw_num} is assigned multiple times.")
-                    log_message(f"Input Error: Duplicate draw number {draw_num} on line {i+1}.") # ADDED LOGGING
+                    log_message(f"Input Error: Duplicate draw number {draw_num} on line {i+1}.") 
                     return
                     
                 assigned_draws.add(draw_num)
                 player_data_list.append((draw_num, player_name))
                 
-            # Final check for missing draws
             if len(assigned_draws) != num_required:
                 missing_draws = [i for i in range(1, num_required + 1) if i not in assigned_draws]
                 messagebox.showerror("Input Error", f"Manual Draw Error: The following draw numbers are missing: {', '.join(map(str, missing_draws))}")
-                log_message(f"Input Error: Missing draw numbers {missing_draws}.") # ADDED LOGGING
+                log_message(f"Input Error: Missing draw numbers {missing_draws}.") 
                 return
 
-        else: # Auto Draw
+        else: 
             for i, (name_entry,) in enumerate(player_entries):
                 player_name = name_entry.get().strip()
                 if not player_name:
                     messagebox.showerror("Input Error", f"Auto Draw Error (Line {i+1}): Player Name must be filled.")
-                    log_message(f"Input Error: Missing player name on line {i+1} (Auto Draw).") # ADDED LOGGING
+                    log_message(f"Input Error: Missing player name on line {i+1} (Auto Draw).") 
                     return
-                # Draw_num is None for auto draw
                 player_data_list.append((None, player_name)) 
                 
         result = (is_manual, player_data_list)
-        log_message("Player input successfully validated.") # ADDED LOGGING
+        log_message("Player input successfully validated.") 
         dialog.destroy()
 
     def on_cancel():
         nonlocal result
-        # ADDED: If the user cancels setup, ensure file logging is stopped and handle is closed
         if LOG_GAME_TO_FILE:
-             # Force logging off, cleaning up the file handle (passing False)
              toggle_log_game(tk.BooleanVar(value=False))
              
         dialog.destroy()
 
-    # --- Initial draw and Button setup ---
     draw_input_widgets(is_manual_draw.get(), num_required, input_container, player_entries)
 
-    # FIX: Force the dialog to update its layout properties after the initial draw.
-    # This prevents the initial incomplete rendering bug.
     dialog.update_idletasks() 
     
     button_frame = tk.Frame(dialog)
@@ -2254,12 +2004,12 @@ def get_multi_line_input(parent, title, prompt, num_required):
 
 def start_tournament():
     """Prompts for players, sets up teams, generates the bracket, and launches the GUI. MODIFIED for file-driven prizes and new draw logic."""
+    global REPLAY_FILEPATH # Needs global access to set the path for the new game
+
+    log_message("Starting tournament initialization process.") 
     
-    log_message("Starting tournament initialization process.") # ADDED LOGGING
-    
-    # Use a temporary root window for dialogs
     dialog_root = tk.Tk()
-    dialog_root.withdraw() # Hide the main window
+    dialog_root.withdraw() 
     
     num_players = None
     while num_players is None:
@@ -2269,19 +2019,18 @@ def start_tournament():
                                                 minvalue=MIN_PLAYERS, maxvalue=MAX_PLAYERS, parent=dialog_root)
             if num_players is None: 
                 dialog_root.destroy()
-                log_message("Tournament setup canceled at player count prompt.") # ADDED LOGGING
+                log_message("Tournament setup canceled at player count prompt.") 
                 return
             if num_players % 2 != 0:
                 messagebox.showerror("Error", "The total number of players must be even!")
-                num_players = None # Loop again
-                log_message(f"Input Error: Player count {num_players} is odd.") # ADDED LOGGING
+                num_players = None 
+                log_message(f"Input Error: Player count {num_players} is odd.") 
                 continue
             break
         except Exception:
             pass
-    log_message(f"Total number of players set to: {num_players}") # ADDED LOGGING
+    log_message(f"Total number of players set to: {num_players}") 
 
-    # --- MODIFIED: Use the new return format from get_multi_line_input ---
     player_input_result = None
     while player_input_result is None:
         player_input_result = get_multi_line_input(dialog_root, "Player Names & Draw Input", 
@@ -2289,13 +2038,13 @@ def start_tournament():
                                             num_players)
         if player_input_result is None:
             dialog_root.destroy()
-            log_message("Tournament setup canceled at player input stage.") # ADDED LOGGING
+            log_message("Tournament setup canceled at player input stage.") 
             return
         
-    dialog_root.destroy() # Close the temporary dialog root
+    dialog_root.destroy() 
 
     is_manual_draw, player_data_list = player_input_result
-    log_message(f"Player data received. Manual Draw: {is_manual_draw}") # ADDED LOGGING
+    log_message(f"Player data received. Manual Draw: {is_manual_draw}") 
 
     # --- 1. Process Draw and Team Setup ---
     
@@ -2304,10 +2053,8 @@ def start_tournament():
     TEAM_ROSTERS.clear()
     
     if is_manual_draw:
-        # Player data is already (draw_num, player_name), just sort by draw number
         player_draws = sorted(player_data_list, key=lambda x: x[0]) 
     else:
-        # Player data is (None, player_name), assign random draw numbers
         player_names = [data[1] for data in player_data_list]
         draw_numbers = list(range(1, num_players + 1))
         random.shuffle(draw_numbers)
@@ -2318,7 +2065,7 @@ def start_tournament():
             player_draws.append((draw_num, player_name))
         
         player_draws.sort(key=lambda x: x[0]) 
-        log_message(f"Auto-draw complete. {num_players} players drawn.") # ADDED LOGGING
+        log_message(f"Auto-draw complete. {num_players} players drawn.") 
     
     num_teams = num_players // 2
     for i in range(num_teams):
@@ -2328,38 +2075,40 @@ def start_tournament():
         
         TEAMS.append(team_name)
         TEAM_ROSTERS[team_name] = [player1, player2]
-        log_message(f"Created team {team_name}: {player1} / {player2} (Draws #{player_draws[i*2][0]} & #{player_draws[i*2+1][0]})") # ADDED LOGGING
+        log_message(f"Created team {team_name}: {player1} / {player2} (Draws #{player_draws[i*2][0]} & #{player_draws[i*2+1][0]})") 
         
-    # --- 2. Load Bracket Config and Prizes (Unchanged) ---
+    # --- 2. Load Bracket Config and Prizes ---
     
     try:
-        # Load config and get the file prizes
         config, prizes_from_file = load_bracket_config(num_teams, 'D')
     except Exception as e:
         messagebox.showerror("Configuration Error", str(e))
         return
 
-    # Use prizes read from file, calculating the total pool from them
     prizes = prizes_from_file
     
-    # Ensure all prize ranks exist, defaulting to 0 if missing from the file
     prizes['1st'] = prizes.get('1st', 0)
     prizes['2nd'] = prizes.get('2nd', 0)
     prizes['3rd'] = prizes.get('3rd', 0)
     
-    # Calculate Total Pool by summing the prizes read from the file
     total_pool = prizes['1st'] + prizes['2nd'] + prizes['3rd']
-    log_message(f"Loaded prizes: {prizes}. Total Pool: ${total_pool}") # ADDED LOGGING
+    log_message(f"Loaded prizes: {prizes}. Total Pool: ${total_pool}") 
         
-    # --- 3. Show Draw Summary (Unchanged) ---
+    # --- 3. Show Draw Summary ---
     show_draw_summary(player_draws, TEAMS, TEAM_ROSTERS, num_teams, total_pool, prizes)
     
-    # --- 4. Generate Bracket and Launch Main Game (Unchanged) ---
+    # --- 4. Generate Bracket ---
     generate_dynamic_bracket(TEAMS, config)
     
     if not TOURNAMENT_STATE:
-        log_message("Error: TOURNAMENT_STATE is empty after generation.") # ADDED LOGGING
+        log_message("Error: TOURNAMENT_STATE is empty after generation.") 
         return
+
+    # --- 5. Rule 4 & 5: Create Replay File NOW (After Setup, Before Game) ---
+    os.makedirs("replays", exist_ok=True)
+    REPLAY_FILEPATH = f"replays/game_{int(time.time())}.json"
+    log_message(f"Created new replay file at: {REPLAY_FILEPATH}")
+    append_snapshot_to_file(REPLAY_FILEPATH) # Write first snapshot immediately
 
     root = tk.Tk()
     
@@ -2370,20 +2119,18 @@ def start_tournament():
         on_close(root)
 
 def declare_winner(color):
-    # ... (function body remains unchanged) ...
     """Handles the conclusion of a match by declaring the winner based on button click."""
     global TOURNAMENT_STATE, match_res_frame, match_input_frame, current_match_teams, match_details_frame, switch_frame_ref
     
-    # BUG FIX: Capture the ID of the match that *just* finished before showing the confirmation UI.
     match_id_to_confirm = TOURNAMENT_STATE['active_match_id']
 
     winner = current_match_teams[color]
     loser = current_match_teams['blue'] if color == 'red' else current_match_teams['red']
     
-    log_message(f"Winner declared for {match_id_to_confirm}: {winner} ({color}). Waiting for confirmation.") # ADDED LOGGING
+    log_message(f"Winner declared for {match_id_to_confirm}: {winner} ({color}). Waiting for confirmation.") 
 
     match_input_frame.pack_forget()
-    if switch_frame_ref: switch_frame_ref.pack_forget() # HIDE SWITCH BUTTON
+    if switch_frame_ref: switch_frame_ref.pack_forget() 
     match_details_frame.pack_forget() 
 
     match_res_frame.pack(fill='x', padx=10, pady=10) 
@@ -2395,7 +2142,6 @@ def declare_winner(color):
         widget.destroy()
     current_match_res_buttons.clear()
     
-    # Pass winning color and the specific match ID to the confirm function
     confirm_btn = tk.Button(match_res_frame, text=f"CONFIRM: {winner} won and advance bracket", bg='#4CAF50', fg='white', 
                             font=('Arial', 11, 'bold'),
                             command=lambda w=winner, l=loser, c=color, mid=match_id_to_confirm: confirm_match_resolution(w, l, c, mid))
@@ -2409,23 +2155,19 @@ def declare_winner(color):
     current_match_res_buttons.append(go_back_btn)
 
 def confirm_match_resolution(winner, loser, winning_color, match_id):
-    # ... (function body remains unchanged) ...
     """Processes the confirmed match result and updates the tournament state."""
     global match_res_frame, current_match_res_buttons
 
-    log_message(f"Confirmation received for match {match_id}. Processing result...") # ADDED LOGGING
+    log_message(f"Confirmation received for match {match_id}. Processing result...") 
 
-    # BUG FIX: Call handle_match_resolution with the confirmed match_id
     handle_match_resolution(winner, loser, winning_color, match_id)
 
     match_res_frame.pack_forget()
     current_match_res_buttons = []
 
-    # Reset game will now load the new active match ID found in handle_match_resolution
     reset_game()
     
 def load_match_data_and_teams():
-    # ... (function body remains unchanged) ...
     """
     Loads the match data for the current active match, assigns default colors (if new match),
     and triggers the UI update.
@@ -2434,16 +2176,14 @@ def load_match_data_and_teams():
     global bracket_info_frame_ref, team_info_frame_ref, rankings_label_ref, switch_frame_ref, final_control_frame_ref, rankings_display_frame_ref
     
     match_id = TOURNAMENT_STATE.get('active_match_id', 'TOURNAMENT_OVER')
-    log_message(f"Loading match data for new active match: {match_id}") # ADDED LOGGING
+    log_message(f"Loading match data for new active match: {match_id}") 
     
-    # Hide final control frame and ranking frame if they were shown
     if final_control_frame_ref:
         final_control_frame_ref.pack_forget()
     if rankings_display_frame_ref:
         rankings_display_frame_ref.pack_forget()
     
     if match_id == 'TOURNAMENT_OVER':
-        # --- Handle Tournament Over UI ---
         champion = None
         for data in TOURNAMENT_STATE.values():
             if isinstance(data, dict) and data.get('champion'):
@@ -2451,24 +2191,19 @@ def load_match_data_and_teams():
                 break
         
         if champion:
-             display_final_rankings(champion) # New function call
+             display_final_rankings(champion) 
         else:
             status_label.config(text=f"TOURNAMENT OVER! No champion declared. (Error State)", fg='dark red')
-            log_message("Error State: TOURNAMENT_OVER with no champion declared.") # ADDED LOGGING
+            log_message("Error State: TOURNAMENT_OVER with no champion declared.") 
             
         match_input_frame.pack_forget()
         if match_details_frame: match_details_frame.pack_forget()
         if switch_frame_ref: switch_frame_ref.pack_forget()
         return
 
-    # --- Standard Match UI Setup ---
-    
-    # NEW: Pack switch frame first
-    # FIX: Added padding to pack call
     if switch_frame_ref: 
         switch_frame_ref.pack(fill='x', padx=10, pady=(0, 5))
 
-    # Ensure relevant frames are visible again for the next match
     if match_details_frame: 
         match_details_frame.pack(fill='x', padx=10, pady=(5, 0))
         
@@ -2485,29 +2220,24 @@ def load_match_data_and_teams():
         current_match_teams['blue'] = team_B
         
         last_assigned_match_id = match_id
-        log_message(f"New match {match_id} loaded. Red={team_A}, Blue={team_B}.") # ADDED LOGGING
+        log_message(f"New match {match_id} loaded. Red={team_A}, Blue={team_B}.") 
     
     update_scoreboard_display()
 
 
-# --- Main Program Entry Point (MODIFIED) ---
+# --- Main Program Entry Point ---
 
 if __name__ == '__main__':
     
-    log_message("Script starting.") # ADDED LOGGING
+    log_message("Script starting.") 
     
-    # Ensure the 'data' directory exists for configuration files
     if not os.path.exists('data'):
         os.makedirs('data')
-        log_message("Created 'data' directory.") # ADDED LOGGING
-        
-    check_cli_for_replay()
-    os.makedirs("replays", exist_ok=True)
-    REPLAY_FILEPATH = f"replays/game_{int(time.time())}.json"
-    append_snapshot_to_file(REPLAY_FILEPATH)
+        log_message("Created 'data' directory.") 
+    
+    # Rule 1 & 2: Clean main block. No automatic replay file creation here.
+    # Rule 12: Replay creation logic moved inside start_tournament (new game flow).
     
     show_title_screen()
-    # start_tournament handles creating and destroying the necessary Tk instances now
-    start_tournament()
 
-    log_message("Script finished execution.") # ADDED LOGGING
+    log_message("Script finished execution.")
