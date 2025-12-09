@@ -346,7 +346,7 @@ def sort_match_keys(k):
         # First final match
         return 99
     
-    if k == 'GGF' or k == 'GFF':
+    if k == 'GGF':
         # Grand Finals Reset
         return 100
 
@@ -1123,7 +1123,7 @@ def handle_match_resolution(winner, loser, winning_color, match_id):
         if winner != wb_finalist and not match_data.get('is_reset', False): 
             match_data['is_reset'] = True 
             
-            reset_game_id = next((k for k in TOURNAMENT_STATE if k == 'GGF' or k == 'GFF'), 'GGF')
+            reset_game_id = next((k for k in TOURNAMENT_STATE if k == 'GGF'), 'GGF')
             
             if reset_game_id in TOURNAMENT_STATE:
                 TOURNAMENT_STATE[reset_game_id]['teams'] = [winner, loser]
@@ -1155,7 +1155,7 @@ def handle_match_resolution(winner, loser, winning_color, match_id):
             reset_game() 
             return 
 
-    elif match_id == 'GGF' or match_id == 'GFF':
+    elif match_id == 'GGF':
         # Case 3: GGF is played -> TOURNAMENT OVER
         TOURNAMENT_STATE[match_id]['champion'] = winner
         TOURNAMENT_RANKINGS['1ST'] = winner
@@ -1243,7 +1243,7 @@ def draw_small_bracket_view(canvas, state):
     for match_id in sorted_match_keys:
         match_data = state.get(match_id)
         
-        if match_id in ['GF', 'GGF', 'GFF']:
+        if match_id in ['GF', 'GGF']:
             final_matches.append(match_id)
             continue
             
@@ -1354,7 +1354,7 @@ def get_team_record(team_name):
         winner = match_data.get('winner')
         
         if match_id == 'GF' and match_data.get('is_reset') and winner is None:
-            ggf_data = TOURNAMENT_STATE.get('GGF') or TOURNAMENT_STATE.get('GFF')
+            ggf_data = TOURNAMENT_STATE.get('GGF')
             if ggf_data and ggf_data.get('teams'):
                  winner = ggf_data['teams'][0]
 
