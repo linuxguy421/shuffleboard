@@ -2166,6 +2166,8 @@ def confirm_match_resolution(winner, loser, winning_color, match_id):
     match_res_frame.pack_forget()
     current_match_res_buttons = []
 
+    append_snapshot_to_file(REPLAY_FILEPATH)
+
     reset_game()
     
 def load_match_data_and_teams():
