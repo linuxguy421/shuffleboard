@@ -1140,7 +1140,7 @@ def handle_match_resolution(winner, loser, winning_color, match_id):
             TOURNAMENT_STATE['active_match_id'] = reset_game_id
             log_message(f"Match GF resulted in Bracket Reset. Next active match: {reset_game_id} ({winner} vs {loser})") 
 
-            append_snapshot_to_file(REPLAY_FILEPATH)
+            
             
             reset_game() 
             return # EXIT after reset handling
@@ -1164,7 +1164,7 @@ def handle_match_resolution(winner, loser, winning_color, match_id):
         
         TOURNAMENT_STATE['active_match_id'] = 'TOURNAMENT_OVER'
         log_message(f"Match {match_id} (Reset) completed. 1ST={winner}, 2ND={gfgf_loser}. Tournament is over.") 
-        append_snapshot_to_file(REPLAY_FILEPATH)
+        
         reset_game() 
         return 
         
@@ -1206,13 +1206,6 @@ def handle_match_resolution(winner, loser, winning_color, match_id):
     log_message(f"Standard Match Resolution complete. New active match: {TOURNAMENT_STATE['active_match_id']}") 
     
     reset_game(update_teams=False)
-
-    try:
-        append_snapshot_to_file(REPLAY_FILEPATH)
-    except Exception as e:
-        log_message(f"[Replay] Error writing snapshot after match resolution: {e}")
-
-    append_snapshot_to_file(REPLAY_FILEPATH)
 
 def draw_small_bracket_view(canvas, state):
     """
