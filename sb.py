@@ -1134,12 +1134,13 @@ def handle_match_resolution(winner, loser, winning_color, match_id):
             
             w_roster = "/".join(TEAM_ROSTERS.get(winner, ["P1", "P2"]))
             l_roster = "/".join(TEAM_ROSTERS.get(loser, ["P3", "P4"]))
-            append_snapshot_to_file(REPLAY_FILEPATH)
             messagebox.showinfo("Final Round!", 
                                 f"{w_roster} have defeated the previously undefeated team {l_roster}! So for the marbles...")
             
             TOURNAMENT_STATE['active_match_id'] = reset_game_id
             log_message(f"Match GF resulted in Bracket Reset. Next active match: {reset_game_id} ({winner} vs {loser})") 
+
+            append_snapshot_to_file(REPLAY_FILEPATH)
             
             reset_game() 
             return # EXIT after reset handling
