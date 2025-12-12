@@ -112,7 +112,7 @@ def run_replay_mode(path):
     except Exception as e:
         print(f"Replay error: {e}")
         messagebox.showerror("Replay Error", f"Could not load file: {e}")
-        return # Return to title screen logic if possible, or exit
+        return
 
     if not snap:
         print("Replay file contains no SNAPSHOT entries.")
@@ -125,22 +125,21 @@ def run_replay_mode(path):
             print(f"Snapshot missing required field '{key}'. Cannot continue.")
             sys.exit(1)
 
-    # -----------------------------
-    # Load the snapshot into state
-    # -----------------------------
+    # Load tournament basic data
     TEAMS[:] = snap.get("teams", [])
     TEAM_ROSTERS.clear()
     TEAM_ROSTERS.update(snap.get("rosters", {}))
     TOURNAMENT_RANKINGS.clear()
     TOURNAMENT_RANKINGS.update(snap.get("rankings", {}))
 
-    # Restore match state
+    # Restore match-level state including champion
     TOURNAMENT_STATE.clear()
     raw_state = snap.get("state", {})
     for mid, m in raw_state.items():
         config = {}
         raw_cfg = m.get("config", {})
 
+        # restore config tuples
         for ck, cv in raw_cfg.items():
             if isinstance(cv, list) and len(cv) == 2:
                 config[ck] = (cv[0], int(cv[1]))
@@ -152,27 +151,29 @@ def run_replay_mode(path):
             "winner": m.get("winner"),
             "winner_color": m.get("winner_color"),
             "is_reset": m.get("is_reset", False),
+            "champion": m.get("champion"),      # ADDED RESTORE
             "config": config,
         }
 
-    # Active match
+    # Restore active match
     active = snap.get("active_match_id")
     TOURNAMENT_STATE["active_match_id"] = active
 
+    # Determine if tournament completed
     is_complete = (
-        active == "TOURNAMENT_OVER" 
+        active == "TOURNAMENT_OVER"
         or "1ST" in TOURNAMENT_RANKINGS
     )
 
     # -----------------------------
-    # VIEW-ONLY MODE (Finished Game)
+    # VIEW-ONLY MODE FOR FINISHED GAME
     # -----------------------------
     if is_complete:
         REPLAY_VIEW_ONLY = True
-        REPLAY_FILEPATH = None # Rule 10: Do not write snapshots for finished games
+        REPLAY_FILEPATH = None
 
         log_message("Replay loaded: Tournament Finished. Entering View-Only Mode.")
-        
+
         root = tk.Tk()
         root.title("Moose Lodge Shuffleboard — Replay (VIEW ONLY)")
         root.withdraw()
@@ -187,11 +188,11 @@ def run_replay_mode(path):
         sys.exit(0)
 
     # -----------------------------
-    # CONTINUE MODE (Unfinished Game)
+    # CONTINUE MODE (unfinished)
     # -----------------------------
     REPLAY_VIEW_ONLY = False
-    REPLAY_FILEPATH = path # Rule 9: Resume appending to the existing file
-    
+    REPLAY_FILEPATH = path
+
     log_message(f"Replay loaded: Resuming tournament. Appending to {path}")
 
     root = tk.Tk()
@@ -206,7 +207,6 @@ def run_replay_mode(path):
         tB = TEAMS[1] if len(TEAMS) > 1 else None
 
     setup_scoreboard(root, tA, tB)
-
     update_roster_seeding_display()
     update_scoreboard_display()
 
@@ -699,95 +699,129 @@ def on_full_bracket_close():
 
 def draw_large_bracket(canvas):
     """
-    Draws the bracket with FIXED scaling and 45-degree styled lines.
+    Draws the large full bracket and adds GF-winner reconstruction
+    in strict view-only mode.
     """
+    global TEAM_ROSTERS, REPLAY_VIEW_ONLY, TOURNAMENT_RANKINGS
+
     canvas.delete('all')
-    
-    H_SCALE_PX = 14  
-    V_SCALE_PX = 7  
-    
-    MATCH_W_U = 12   
-    MATCH_H_U = 6    
-    
+
+    H_SCALE_PX = 14
+    V_SCALE_PX = 7
+
+    MATCH_W_U = 12
+    MATCH_H_U = 6
+
     match_w = MATCH_W_U * H_SCALE_PX
     match_h = MATCH_H_U * V_SCALE_PX
-    
+
+    # Calculate coords
     match_coords = calculate_dynamic_coords(TOURNAMENT_STATE)
-    if not match_coords: return
+    if not match_coords:
+        return
 
     max_x_u = 0
     max_y_u = 0
     for (mx, my) in match_coords.values():
-        if mx > max_x_u: max_x_u = mx
-        if my > max_y_u: max_y_u = my
-        
+        max_x_u = max(max_x_u, mx)
+        max_y_u = max(max_y_u, my)
+
     total_width = (max_x_u + MATCH_W_U + 5) * H_SCALE_PX
     total_height = (max_y_u + MATCH_H_U + 5) * V_SCALE_PX
-    
     canvas.config(scrollregion=(0, 0, total_width, total_height))
-    
+
     H_PAD = 20
     V_PAD = 20
-    
+
     def get_coords(match_id):
-        if match_id not in match_coords: return 0, 0
+        if match_id not in match_coords:
+            return 0, 0
         u_x, u_y = match_coords[match_id]
-        x = u_x * H_SCALE_PX + H_PAD
-        y = u_y * V_SCALE_PX + V_PAD
-        return x, y
+        return u_x * H_SCALE_PX + H_PAD, u_y * V_SCALE_PX + V_PAD
 
-    draw_angled_lines(canvas, TOURNAMENT_STATE, match_coords, match_w, match_h, H_SCALE_PX, V_SCALE_PX, H_PAD, V_PAD)
+    # Draw lines
+    draw_angled_lines(canvas, TOURNAMENT_STATE, match_coords,
+                      match_w, match_h, H_SCALE_PX, V_SCALE_PX, H_PAD, V_PAD)
 
-    font_team_size = 10
     font_roster_size = 8
-    
+
     for match_id, match_data in TOURNAMENT_STATE.items():
-        if not isinstance(match_data, dict) or 'teams' not in match_data: continue
-        if match_id not in match_coords: continue
-            
+        if not isinstance(match_data, dict) or 'teams' not in match_data:
+            continue
+        if match_id not in match_coords:
+            continue
+
         x, y = get_coords(match_id)
 
+        # Determine background
         fill_color = 'white'
-        if match_data.get('champion'): fill_color = 'gold'
-        elif match_id == TOURNAMENT_STATE.get('active_match_id') and match_data['winner'] is None: fill_color = '#FFFFCC'
-        elif match_data.get('winner_color') == 'red': fill_color = '#FFCCCC' 
-        elif match_data.get('winner_color') == 'blue': fill_color = '#CCE5FF' 
+        if match_data.get('champion'):
+            fill_color = 'gold'
+        elif match_id == TOURNAMENT_STATE.get('active_match_id') and match_data['winner'] is None:
+            fill_color = '#FFFFCC'
+        elif match_data.get('winner_color') == 'red':
+            fill_color = '#FFCCCC'
+        elif match_data.get('winner_color') == 'blue':
+            fill_color = '#CCE5FF'
 
-        canvas.create_rectangle(x, y, x + match_w, y + match_h, fill=fill_color, outline='black', width=2)
-        canvas.create_text(x + 5, y + 5, text=f"{match_id}", anchor='w', fill='#000000', font=('Arial', 8, 'bold'))
+        canvas.create_rectangle(x, y, x + match_w, y + match_h,
+                                fill=fill_color, outline='black', width=2)
+        canvas.create_text(x + 5, y + 5, text=f"{match_id}",
+                           anchor='w', fill='#000000',
+                           font=('Arial', 8, 'bold'))
 
-        if match_data['winner'] or match_data.get('champion'):
-            winner_team = match_data.get('champion') or match_data['winner']
-            roster = TEAM_ROSTERS.get(winner_team, ['?', '?'])
-            roster_str = f"{roster[0]} / {roster[1]}"
-            
-            canvas.create_text(x + match_w/2, y + match_h/2 - 5, text=roster_str, font=('Arial', font_team_size, 'bold'))
-            canvas.create_text(x + match_w/2, y + match_h/2 + 10, text=winner_team, font=('Arial', font_roster_size))
-        else:
-            tA = match_data['teams'][0]
-            if tA and not tA.startswith('W:'): 
-                roster_A = TEAM_ROSTERS.get(tA, ['?','?'])
-                txt_A = f"{tA} ({roster_A[0]}/{roster_A[1]})"
-            elif tA:
-                txt_A = tA
+        # Determine winner or champion
+        winner = match_data.get('winner') or match_data.get('champion')
+
+        # -----------------------------
+        # GF Reconstruction (strict view-only)
+        # -----------------------------
+        if REPLAY_VIEW_ONLY and match_id == 'GF' and not winner:
+            # Reconstruct from rankings if available
+            winner = TOURNAMENT_RANKINGS.get('1ST')
+
+        # Render teams
+        team_A = match_data['teams'][0]
+        team_B = match_data['teams'][1]
+
+        # Team A
+        txt_A = "TBD"
+        font_A = ('Arial', font_roster_size)
+        if team_A:
+            if not team_A.startswith('W:'):
+                roster_A = TEAM_ROSTERS.get(team_A, ['?','?'])
+                txt_A = f"{team_A} ({roster_A[0]}/{roster_A[1]})"
             else:
-                txt_A = "TBD"
-                
-            canvas.create_text(x + 5, y + match_h/4 + 5, text=txt_A, anchor='w', font=('Arial', font_roster_size))
-            
-            canvas.create_line(x, y + match_h/2, x + match_w, y + match_h/2, fill='#CCCCCC')
-            
-            tB = match_data['teams'][1]
-            if tB and not tB.startswith('W:'):
-                roster_B = TEAM_ROSTERS.get(tB, ['?','?'])
-                txt_B = f"{tB} ({roster_B[0]}/{roster_B[1]})"
-            elif tB:
-                txt_B = tB
+                txt_A = team_A
+
+            if winner and team_A == winner:
+                txt_A += " \u2713"
+                font_A = ('Arial', font_roster_size, 'bold')
+
+        canvas.create_text(x + 5, y + match_h/4 + 5,
+                           text=txt_A, anchor='w', font=font_A)
+
+        canvas.create_line(x, y + match_h/2,
+                           x + match_w, y + match_h/2,
+                           fill='#CCCCCC')
+
+        # Team B
+        txt_B = "TBD"
+        font_B = ('Arial', font_roster_size)
+        if team_B:
+            if not team_B.startswith('W:'):
+                roster_B = TEAM_ROSTERS.get(team_B, ['?','?'])
+                txt_B = f"{team_B} ({roster_B[0]}/{roster_B[1]})"
             else:
-                txt_B = "TBD"
-                
-            canvas.create_text(x + 5, y + 3*match_h/4, text=txt_B, anchor='w', font=('Arial', font_roster_size))
-            
+                txt_B = team_B
+
+            if winner and team_B == winner:
+                txt_B += " \u2713"
+                font_B = ('Arial', font_roster_size, 'bold')
+
+        canvas.create_text(x + 5, y + 3*match_h/4,
+                           text=txt_B, anchor='w', font=font_B)
+        
 def open_full_bracket():
     """Opens (or lifts) the large scrollable bracket window, adding an exit button in View Only mode."""
     global full_bracket_root, full_bracket_canvas, REPLAY_VIEW_ONLY
@@ -1022,6 +1056,7 @@ def _serialize_match_for_snapshot(match_data):
 def serialize_snapshot():
     """
     Produce the minimal tournament snapshot to support replay.
+    Now includes champion to preserve finals resolution across view-only mode.
     """
     snapshot = {
         "type": "SNAPSHOT",
@@ -1034,7 +1069,7 @@ def serialize_snapshot():
         "active_match_id": TOURNAMENT_STATE.get("active_match_id"),
     }
 
-    # Serialize match-level state.
+    # Serialize match-level state including champion.
     for mid, match_data in TOURNAMENT_STATE.items():
         if isinstance(match_data, dict):
             snapshot["state"][mid] = {
@@ -1042,6 +1077,7 @@ def serialize_snapshot():
                 "winner": match_data.get("winner"),
                 "winner_color": match_data.get("winner_color"),
                 "is_reset": match_data.get("is_reset", False),
+                "champion": match_data.get("champion"),  # ADDED
                 "config": {
                     k: (list(v) if isinstance(v, tuple) else v)
                     for k, v in match_data.get("config", {}).items()
@@ -1209,118 +1245,130 @@ def handle_match_resolution(winner, loser, winning_color, match_id):
 
 def draw_small_bracket_view(canvas, state):
     """
-    Draws a simplified view of the tournament bracket that scales to fit the window.
+    Simplified bracket view that now reconstructs GF winner in strict
+    view-only mode for visual consistency.
     """
+    global REPLAY_VIEW_ONLY, TOURNAMENT_RANKINGS
+
     canvas.delete('all')
-    
+
     canvas.update_idletasks()
-    W_canvas = canvas.winfo_width()
-    H_canvas = canvas.winfo_height()
-    
-    if W_canvas < 50: W_canvas = 400
-    if H_canvas < 50: H_canvas = 100
+    W = canvas.winfo_width()
+    H = canvas.winfo_height()
+
+    if W < 50:
+        W = 400
+    if H < 50:
+        H = 100
 
     sorted_match_keys = sorted(
-        [k for k in state.keys() if k.startswith('G') or k == 'GF' or k == 'GGF'], 
+        [k for k in state.keys() if k.startswith('G') or k in ('GF','GGF')],
         key=sort_match_keys
     )
-    
+
     if not sorted_match_keys:
         return
 
-    # --- 1. Categorize Matches ---
+    # categorize matches
     wb_matches = []
     lb_matches = []
     final_matches = []
 
-    for match_id in sorted_match_keys:
-        match_data = state.get(match_id)
-        
-        if match_id in ['GF', 'GGF']:
-            final_matches.append(match_id)
+    for mid in sorted_match_keys:
+        data = state.get(mid)
+        if mid in ('GF','GGF'):
+            final_matches.append(mid)
             continue
-            
-        l_next = match_data['config'].get('L_next')
-        if isinstance(l_next, tuple):
-            wb_matches.append(match_id)
-        elif l_next and 'ELIMINATED' in str(l_next):
-            lb_matches.append(match_id)
-        else:
-            wb_matches.append(match_id)
 
-    # --- 2. Calculate Layout Metrics ---
+        l_next = data['config'].get('L_next')
+        if isinstance(l_next, tuple):
+            wb_matches.append(mid)
+        elif l_next and 'ELIMINATED' in str(l_next):
+            lb_matches.append(mid)
+        else:
+            wb_matches.append(mid)
+
+    # layout
     num_cols = max(len(wb_matches), len(lb_matches)) + len(final_matches)
-    if num_cols < 1: num_cols = 1
-    
+    if num_cols < 1:
+        num_cols = 1
+
     padding_x = 10
-    available_w = W_canvas - (2 * padding_x)
-    
+    available_w = W - (2 * padding_x)
     col_width = available_w / num_cols
-    W_box = min(60, col_width - 5) 
+
+    W_box = min(60, col_width - 5)
     H_box = 20
-    
-    Y_TOP = H_canvas * 0.25
-    Y_MID = H_canvas * 0.50
-    Y_BOT = H_canvas * 0.75
-    
-    y_top_start = Y_TOP - (H_box / 2)
-    y_mid_start = Y_MID - (H_box / 2)
-    y_bot_start = Y_BOT - (H_box / 2)
+
+    Y_TOP = H * 0.25
+    Y_MID = H * 0.50
+    Y_BOT = H * 0.75
+
+    y_top = Y_TOP - H_box/2
+    y_mid = Y_MID - H_box/2
+    y_bot = Y_BOT - H_box/2
 
     coords = {}
-    
-    # --- 3. Assign Coordinates ---
+
+    # WB
     for i, mid in enumerate(wb_matches):
-        center_of_col = padding_x + (i * col_width) + (col_width / 2)
-        x = center_of_col - (W_box / 2)
-        coords[mid] = (x, y_top_start)
-        
+        cx = padding_x + i * col_width + col_width/2
+        coords[mid] = (cx - W_box/2, y_top)
+
+    # LB
     for i, mid in enumerate(lb_matches):
-        center_of_col = padding_x + (i * col_width) + (col_width / 2)
-        x = center_of_col - (W_box / 2)
-        coords[mid] = (x, y_bot_start)
+        cx = padding_x + i * col_width + col_width/2
+        coords[mid] = (cx - W_box/2, y_bot)
 
-    start_finals_col_idx = max(len(wb_matches), len(lb_matches))
+    # Finals
+    start_fcol = max(len(wb_matches), len(lb_matches))
     for i, mid in enumerate(final_matches):
-        col_idx = start_finals_col_idx + i
-        center_of_col = padding_x + (col_idx * col_width) + (col_width / 2)
-        x = center_of_col - (W_box / 2)
-        coords[mid] = (x, y_mid_start)
+        cx = padding_x + (start_fcol + i) * col_width + col_width/2
+        coords[mid] = (cx - W_box/2, y_mid)
 
-    # --- 4. Draw ---
     active_id = state.get('active_match_id')
 
     for match_id, (x, y) in coords.items():
         data = state.get(match_id)
-        
+        if not isinstance(data, dict):
+            continue
+
         fill_color = 'white'
-        outline_color = '#333333'
+        outline = '#333333'
         text_color = 'black'
-        
-        if not isinstance(data, dict): continue 
-            
-        if data and data.get('champion'):
+
+        if data.get('champion'):
             fill_color = 'gold'
             text_color = 'white'
-        elif match_id == active_id and data and data.get('winner') is None:
+        elif match_id == active_id and data.get('winner') is None:
             fill_color = 'yellow'
-        elif data and data.get('is_reset', False) and data.get('winner') is None:
-             fill_color = 'orange'
-        elif data and data.get('winner') is not None:
-             w_color = data.get('winner_color')
-             if w_color == 'red':
-                 fill_color = '#FF5555' 
-             elif w_color == 'blue':
-                 fill_color = '#55AAFF' 
-             else:
-                 fill_color = 'lightgreen' 
-        
-        canvas.create_rectangle(x, y, x + W_box, y + H_box, fill=fill_color, outline=outline_color)
-        
+        elif data.get('is_reset') and data.get('winner') is None:
+            fill_color = 'orange'
+        elif data.get('winner'):
+            wc = data.get('winner_color')
+            if wc == 'red':
+                fill_color = '#FF5555'
+            elif wc == 'blue':
+                fill_color = '#55AAFF'
+            else:
+                fill_color = 'lightgreen'
+
+        # Determine winner
+        winner = data.get('winner') or data.get('champion')
+
+        # -----------------------------
+        # GF reconstruction
+        # -----------------------------
+        if REPLAY_VIEW_ONLY and match_id == 'GF' and not winner:
+            winner = TOURNAMENT_RANKINGS.get('1ST')
+
+        canvas.create_rectangle(x, y, x + W_box, y + H_box,
+                                fill=fill_color, outline=outline)
         text_id = match_id.replace('G', '')
-        canvas.create_text(x + W_box/2, y + H_box/2, text=text_id, font=('Arial', 7, 'bold'), fill=text_color)
-                
-# --- Helper Functions (RETAINED) ---
+        canvas.create_text(x + W_box/2, y + H_box/2,
+                           text=text_id,
+                           font=('Arial', 7, 'bold'),
+                           fill=text_color)
 
 def format_destination(dest):
     """Converts the parsed destination tuple/string into a user-readable string."""
