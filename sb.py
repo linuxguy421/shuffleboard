@@ -1905,9 +1905,42 @@ def get_multi_line_input(parent, title, prompt, num_required):
     control_frame = tk.Frame(dialog)
     control_frame.pack(padx=10, pady=5, fill='x')
     
+    # --- Duplicate Checker Function ---
+    def check_duplicate_names(event=None):
+        """Checks for duplicate names and highlights fields red."""
+        current_names = []
+        # Gather all names first
+        for entry_tuple in player_entries:
+            # Name entry is always the last item in the tuple for both Manual and Auto modes
+            name_widget = entry_tuple[-1]
+            val = name_widget.get().strip()
+            current_names.append(val)
+        
+        # Determine frequency
+        from collections import Counter
+        counts = Counter(current_names)
+        
+        has_duplicates = False
+        
+        # Apply colors
+        for entry_tuple in player_entries:
+            name_widget = entry_tuple[-1]
+            val = name_widget.get().strip()
+            
+            # If value is not empty and appears more than once, mark red
+            if val and counts[val] > 1:
+                name_widget.config(bg='#FFCCCC') # Light Red
+                has_duplicates = True
+            else:
+                name_widget.config(bg='white')
+                
+        return has_duplicates
+
     def toggle_draw_wrapper():
         log_message(f"Toggling draw mode. Manual Draw: {is_manual_draw.get()}") 
         draw_input_widgets(is_manual_draw.get(), num_required, input_container, player_entries)
+        # Re-check duplicates after redraw
+        check_duplicate_names()
 
     check_manual = tk.Checkbutton(control_frame, text="Manual Draw (Assign Draw #)", variable=is_manual_draw, 
                                   command=toggle_draw_wrapper)
@@ -1947,6 +1980,9 @@ def get_multi_line_input(parent, title, prompt, num_required):
                 name_entry = tk.Entry(frame, width=30)
                 name_entry.pack(side='left', fill='x', expand=True)
                 
+                # Bind key release to check duplicates
+                name_entry.bind('<KeyRelease>', check_duplicate_names)
+
                 entries_list.append((draw_entry, name_entry))
                 
                 draw_entry.insert(0, str(player_num))
@@ -1955,6 +1991,10 @@ def get_multi_line_input(parent, title, prompt, num_required):
             else:
                 name_entry = tk.Entry(frame)
                 name_entry.pack(side='left', fill='x', expand=True)
+                
+                # Bind key release to check duplicates
+                name_entry.bind('<KeyRelease>', check_duplicate_names)
+
                 entries_list.append((name_entry,))
                 name_entry.insert(0, f"Player {player_num}")
         
@@ -1971,7 +2011,12 @@ def get_multi_line_input(parent, title, prompt, num_required):
         if num_inputs != num_required:
              messagebox.showerror("Internal Error", "Widget count mismatch. Cannot proceed.")
              return
-             
+        
+        # Final Duplicate Check
+        if check_duplicate_names():
+            messagebox.showerror("Input Error", "Duplicate player names detected. Please ensure all names are unique (highlighted in red).")
+            return
+
         if is_manual:
             assigned_draws = set()
             for i, (draw_entry, name_entry) in enumerate(player_entries):
@@ -2041,6 +2086,9 @@ def get_multi_line_input(parent, title, prompt, num_required):
     cancel_button = tk.Button(button_frame, text="Cancel", command=on_cancel)
     cancel_button.pack(side='right')
     
+    # Run an initial check (e.g., if re-opening or pre-filled data exists)
+    check_duplicate_names()
+
     dialog.wait_window()
     return result
 
