@@ -1883,269 +1883,244 @@ def toggle_log_game(log_var):
             LOG_FILE_HANDLE = None
             print("[Log Manager] File logging stopped.")
 
-def get_multi_line_input(parent, title, prompt, num_required):
+def get_player_setup_dialog(parent):
     """
-    Custom function for individual player input boxes using a Toplevel dialog.
+    Combined dialog for selecting player count and entering names/draw numbers.
+    Maintains player data (Names, Paid status, Draws) when toggling modes.
     """
-    log_message(f"Opening player input dialog for {num_required} players.") 
+    log_message("Opening unified player setup dialog.") 
     
     dialog = tk.Toplevel(parent)
-    dialog.title(title)
-    dialog.geometry("550x850") 
+    dialog.title("Tournament Setup - Player Entry")
+    dialog.geometry("650x800") 
     dialog.grab_set() 
     
     result = None 
     is_manual_draw = tk.BooleanVar(value=False)
     log_game_var = tk.BooleanVar(value=LOG_GAME_TO_FILE)
     
-    player_entries = [] 
+    # Internal state
+    current_player_count = MIN_PLAYERS 
+    player_entries = [] # List of tuples: (name_entry, paid_var, draw_entry_or_None)
 
-    tk.Label(dialog, text=prompt, pady=5, justify=tk.LEFT).pack(padx=10, anchor='w')
-    
-    control_frame = tk.Frame(dialog)
-    control_frame.pack(padx=10, pady=5, fill='x')
-    
-    # --- Duplicate Checker Function ---
-    def check_duplicate_names(event=None):
-        """Checks for duplicate names and highlights fields red."""
-        current_names = []
-        # Gather all names first
-        for entry_tuple in player_entries:
-            # Name entry is always the last item in the tuple for both Manual and Auto modes
-            name_widget = entry_tuple[-1]
-            val = name_widget.get().strip()
-            current_names.append(val)
-        
-        # Determine frequency
+    # --- Data Persistence Helpers ---
+    def save_current_data():
+        """Scrapes text and state from current widgets to prevent loss on re-render."""
+        data = []
+        for widgets in player_entries:
+            # (name_entry, paid_var, draw_entry)
+            name = widgets[0].get().strip()
+            paid = widgets[1].get()
+            draw = ""
+            if len(widgets) > 2 and widgets[2]:
+                draw = widgets[2].get().strip()
+            data.append({'name': name, 'paid': paid, 'draw': draw})
+        return data
+
+    def update_visuals(event=None):
+        """Red (Duplicate) > Orange (Not Paid) > White (OK)."""
+        current_names = [w[0].get().strip() for w in player_entries]
         from collections import Counter
         counts = Counter(current_names)
-        
         has_duplicates = False
         
-        # Apply colors
-        for entry_tuple in player_entries:
-            name_widget = entry_tuple[-1]
-            val = name_widget.get().strip()
+        for widgets in player_entries:
+            name_entry, paid_var = widgets[0], widgets[1]
+            val = name_entry.get().strip()
             
-            # If value is not empty and appears more than once, mark red
             if val and counts[val] > 1:
-                name_widget.config(bg='#FFCCCC') # Light Red
+                name_entry.config(bg='#FFCCCC') 
                 has_duplicates = True
+            elif not paid_var.get():
+                name_entry.config(bg='#FFD580') 
             else:
-                name_widget.config(bg='white')
-                
+                name_entry.config(bg='white')
         return has_duplicates
 
-    def toggle_draw_wrapper():
-        log_message(f"Toggling draw mode. Manual Draw: {is_manual_draw.get()}") 
-        draw_input_widgets(is_manual_draw.get(), num_required, input_container, player_entries)
-        # Re-check duplicates after redraw
-        check_duplicate_names()
+    # --- Dynamic Rendering Logic ---
+    def create_player_row(parent_frame, player_index, initial_data=None):
+        """Creates a row, populating with existing data if provided."""
+        row_frame = tk.Frame(parent_frame, bg="#f0f0f0")
+        row_frame.pack(fill='x', pady=2)
+        
+        p_num = player_index + 1
+        tk.Label(row_frame, text=f"P{p_num}:", width=4, anchor='w', bg="#f0f0f0").pack(side='left')
 
-    check_manual = tk.Checkbutton(control_frame, text="Manual Draw (Assign Draw #)", variable=is_manual_draw, 
-                                  command=toggle_draw_wrapper)
-    check_manual.pack(side='left', padx=(0, 20))
-    check_log = tk.Checkbutton(control_frame, text="Log Game", variable=log_game_var, command=lambda: toggle_log_game(log_game_var))
-    check_log.pack(side='right', padx=(20, 0))    
-    input_container = tk.Frame(dialog)
-    input_container.pack(side='top', fill='both', expand=True, padx=10, pady=5)
-    
-    def draw_input_widgets(manual_mode, req, container, entries_list):
+        draw_entry = None
+        if is_manual_draw.get():
+            draw_entry = tk.Entry(row_frame, width=5, justify='center')
+            draw_entry.pack(side='left', padx=(0,5))
+            # Restore draw or default to index
+            val = initial_data.get('draw') if initial_data else str(p_num)
+            draw_entry.insert(0, val if val else str(p_num))
+            tk.Label(row_frame, text="|", bg="#f0f0f0").pack(side='left', padx=(0,5))
+
+        name_entry = tk.Entry(row_frame)
+        name_entry.pack(side='left', fill='x', expand=True, padx=(0, 5))
+        # Restore name or default to "Player X"
+        name_val = initial_data.get('name') if initial_data else f"Player {p_num}"
+        name_entry.insert(0, name_val)
+        name_entry.bind('<KeyRelease>', update_visuals)
+
+        paid_var = tk.BooleanVar(value=initial_data.get('paid', False) if initial_data else False)
+        chk = tk.Checkbutton(row_frame, text="Paid", variable=paid_var, 
+                             bg="#f0f0f0", command=update_visuals)
+        chk.pack(side='right', padx=(5, 0))
+
+        return (name_entry, paid_var, draw_entry)
+
+    def render_inputs(container):
+        """Saves current state, wipes UI, and rebuilds."""
+        saved_data = save_current_data()
+        
         for widget in container.winfo_children():
             widget.destroy()
-        entries_list.clear()
+        player_entries.clear()
 
-        if manual_mode:
-            tk.Label(container, text=f"** Draw Numbers must be unique and between 1 and {req} **", 
-                     fg='darkred', font=('Arial', 9, 'bold')).pack(pady=(5, 0), anchor='w', padx=5)
-        else:
-             tk.Label(container, text=f"** Enter Player Names. Draw numbers will be assigned automatically **", 
-                     fg='blue', font=('Arial', 9, 'bold')).pack(pady=(5, 0), anchor='w', padx=5)
-            
-        for i in range(req):
-            frame = tk.Frame(container)
-            frame.pack(fill='x', padx=5, pady=2)
-            
-            player_num = i + 1
-            
-            tk.Label(frame, text=f"Player {player_num} Name:", width=15, anchor='w').pack(side='left')
+        instr = "Draw # unique" if is_manual_draw.get() else "Auto-Draw"
+        tk.Label(container, text=f"** {instr} | Orange=Unpaid | Red=Duplicate **", 
+                 fg='#555555', bg="#f0f0f0", font=('Arial', 9, 'bold')).pack(pady=(5, 5), anchor='w')
 
-            if manual_mode:
-                
-                draw_entry = tk.Entry(frame, width=5, justify='center', font=('Arial', 10, 'bold')) 
-                draw_entry.pack(side='left', padx=(0, 5))
-                
-                tk.Label(frame, text="|").pack(side='left', padx=(0, 5))
-                
-                name_entry = tk.Entry(frame, width=30)
-                name_entry.pack(side='left', fill='x', expand=True)
-                
-                # Bind key release to check duplicates
-                name_entry.bind('<KeyRelease>', check_duplicate_names)
-
-                entries_list.append((draw_entry, name_entry))
-                
-                draw_entry.insert(0, str(player_num))
-                name_entry.insert(0, f"Player {player_num}")
-                
-            else:
-                name_entry = tk.Entry(frame)
-                name_entry.pack(side='left', fill='x', expand=True)
-                
-                # Bind key release to check duplicates
-                name_entry.bind('<KeyRelease>', check_duplicate_names)
-
-                entries_list.append((name_entry,))
-                name_entry.insert(0, f"Player {player_num}")
+        for i in range(current_player_count):
+            existing = saved_data[i] if i < len(saved_data) else None
+            widgets = create_player_row(container, i, existing)
+            player_entries.append(widgets)
         
         container.update_idletasks()
+        canvas.configure(scrollregion=canvas.bbox("all"))
+        update_visuals()
+
+    # --- Controls ---
+    header_frame = tk.Frame(dialog)
+    header_frame.pack(fill='x', padx=10, pady=10)
+    tk.Label(header_frame, text="Configure Players", font=("Arial", 14, "bold")).pack(side='top', pady=(0, 10))
+
+    controls_frame = tk.Frame(header_frame)
+    controls_frame.pack(fill='x')
+
+    tk.Checkbutton(controls_frame, text="Manual Draw (Assign Draw #)", 
+                  variable=is_manual_draw, command=lambda: render_inputs(input_container)).pack(side='left')
+    tk.Checkbutton(controls_frame, text="Log Game to File", 
+                  variable=log_game_var, command=lambda: toggle_log_game(log_game_var)).pack(side='right')
+
+    # --- Scrollable Area ---
+    canvas_frame = tk.Frame(dialog, bd=1, relief="sunken")
+    canvas_frame.pack(fill='both', expand=True, padx=10, pady=5)
+    v_scrollbar = tk.Scrollbar(canvas_frame)
+    v_scrollbar.pack(side='right', fill='y')
+    canvas = tk.Canvas(canvas_frame, yscrollcommand=v_scrollbar.set, bg="#f0f0f0")
+    canvas.pack(side='left', fill='both', expand=True)
+    v_scrollbar.config(command=canvas.yview)
+    input_container = tk.Frame(canvas, bg="#f0f0f0")
+    canvas.create_window((0, 0), window=input_container, anchor="nw")
+    input_container.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+    canvas.bind_all("<MouseWheel>", lambda e: canvas.yview_scroll(int(-1*(e.delta/120)), "units"))
+
+    # --- Team Mgmt ---
+    mgmt_frame = tk.Frame(dialog, pady=10)
+    mgmt_frame.pack(fill='x')
+    lbl_count = tk.Label(mgmt_frame, text=f"Total Players: {current_player_count}", font=("Arial", 11, "bold"))
+    lbl_count.pack()
+
+    def update_count(delta):
+        nonlocal current_player_count
+        new_count = current_player_count + delta
+        if MIN_PLAYERS <= new_count <= MAX_PLAYERS:
+            current_player_count = new_count
+            render_inputs(input_container)
+            lbl_count.config(text=f"Total Players: {current_player_count}")
+        else:
+            messagebox.showwarning("Limit", f"Player count must be between {MIN_PLAYERS} and {MAX_PLAYERS}.")
+
+    btn_frame = tk.Frame(mgmt_frame)
+    btn_frame.pack()
+    tk.Button(btn_frame, text="+ Add Team", command=lambda: update_count(2), bg="#DDDDDD").pack(side='left', padx=10)
+    tk.Button(btn_frame, text="- Remove Team", command=lambda: update_count(-2), bg="#DDDDDD").pack(side='left', padx=10)
+
+    # --- Footer ---
+    action_frame = tk.Frame(dialog, pady=10, bd=1, relief='groove')
+    action_frame.pack(fill='x', side='bottom')
 
     def on_ok():
         nonlocal result
         player_data_list = []
-        is_manual = is_manual_draw.get()
-        num_inputs = len(player_entries)
-        
-        log_message(f"OK button pressed. Manual Draw: {is_manual}. Validating input.") 
-        
-        if num_inputs != num_required:
-             messagebox.showerror("Internal Error", "Widget count mismatch. Cannot proceed.")
-             return
-        
-        # Final Duplicate Check
-        if check_duplicate_names():
-            messagebox.showerror("Input Error", "Duplicate player names detected. Please ensure all names are unique (highlighted in red).")
+        unpaid_players = []
+        if update_visuals():
+            messagebox.showerror("Input Error", "Duplicate player names detected.")
             return
 
-        if is_manual:
-            assigned_draws = set()
-            for i, (draw_entry, name_entry) in enumerate(player_entries):
-                raw_draw_num = draw_entry.get().strip()
-                player_name = name_entry.get().strip()
-                
-                if not raw_draw_num or not player_name:
-                     messagebox.showerror("Input Error", f"Manual Draw Error (Line {i+1}): Both Draw # and Player Name must be filled.")
-                     log_message(f"Input Error: Missing data on line {i+1} (Manual Draw).") 
-                     return
-                     
-                try:
-                    draw_num = int(raw_draw_num)
-                except ValueError:
-                    messagebox.showerror("Input Error", f"Manual Draw Error (Line {i+1}): Draw number '{raw_draw_num}' is not a valid integer.")
-                    log_message(f"Input Error: Invalid draw number '{raw_draw_num}' on line {i+1}.") 
-                    return
-                
-                if draw_num < 1 or draw_num > num_required:
-                    messagebox.showerror("Input Error", f"Manual Draw Error (Line {i+1}): Draw number {draw_num} is out of range (1-{num_required}).")
-                    log_message(f"Input Error: Draw number {draw_num} out of range on line {i+1}.") 
-                    return
-                if draw_num in assigned_draws:
-                    messagebox.showerror("Input Error", f"Manual Draw Error (Line {i+1}): Draw number {draw_num} is assigned multiple times.")
-                    log_message(f"Input Error: Duplicate draw number {draw_num} on line {i+1}.") 
-                    return
-                    
-                assigned_draws.add(draw_num)
-                player_data_list.append((draw_num, player_name))
-                
-            if len(assigned_draws) != num_required:
-                missing_draws = [i for i in range(1, num_required + 1) if i not in assigned_draws]
-                messagebox.showerror("Input Error", f"Manual Draw Error: The following draw numbers are missing: {', '.join(map(str, missing_draws))}")
-                log_message(f"Input Error: Missing draw numbers {missing_draws}.") 
+        assigned_draws = set()
+        for i, (name_entry, paid_var, draw_entry) in enumerate(player_entries):
+            p_name = name_entry.get().strip()
+            if not p_name:
+                messagebox.showerror("Error", f"Player {i+1} name is empty.")
                 return
+            if not paid_var.get(): unpaid_players.append(p_name)
 
-        else: 
-            for i, (name_entry,) in enumerate(player_entries):
-                player_name = name_entry.get().strip()
-                if not player_name:
-                    messagebox.showerror("Input Error", f"Auto Draw Error (Line {i+1}): Player Name must be filled.")
-                    log_message(f"Input Error: Missing player name on line {i+1} (Auto Draw).") 
+            d_num = None
+            if is_manual_draw.get():
+                try:
+                    d_num = int(draw_entry.get().strip())
+                    if d_num < 1 or d_num > current_player_count or d_num in assigned_draws:
+                        raise ValueError
+                    assigned_draws.add(d_num)
+                except ValueError:
+                    messagebox.showerror("Error", f"Invalid/Duplicate draw for {p_name}.")
                     return
-                player_data_list.append((None, player_name)) 
-                
-        result = (is_manual, player_data_list)
-        log_message("Player input successfully validated.") 
+            player_data_list.append((d_num, p_name, paid_var.get()))
+
+        if unpaid_players:
+            messagebox.showerror("Payment Required", f"Unpaid players:\n" + "\n".join(unpaid_players[:10]))
+            return
+
+        result = (is_manual_draw.get(), player_data_list)
         dialog.destroy()
 
-    def on_cancel():
-        nonlocal result
-        if LOG_GAME_TO_FILE:
-             toggle_log_game(tk.BooleanVar(value=False))
-             
-        dialog.destroy()
+    tk.Button(action_frame, text="START TOURNAMENT", command=on_ok, bg='#4CAF50', fg='white', font=('Arial', 11, 'bold'), padx=20).pack(side='right', padx=20)
+    tk.Button(action_frame, text="Cancel", command=dialog.destroy).pack(side='right', padx=10)
 
-    draw_input_widgets(is_manual_draw.get(), num_required, input_container, player_entries)
-
-    dialog.update_idletasks() 
-    
-    button_frame = tk.Frame(dialog)
-    button_frame.pack(fill='x', padx=10, pady=10)
-    
-    ok_button = tk.Button(button_frame, text="OK", command=on_ok, bg='#4CAF50', fg='white', font=('Arial', 10, 'bold'))
-    ok_button.pack(side='left')
-    
-    cancel_button = tk.Button(button_frame, text="Cancel", command=on_cancel)
-    cancel_button.pack(side='right')
-    
-    # Run an initial check (e.g., if re-opening or pre-filled data exists)
-    check_duplicate_names()
-
+    render_inputs(input_container)
     dialog.wait_window()
     return result
 
 def start_tournament():
-    """Prompts for players, sets up teams, generates the bracket, and launches the GUI. MODIFIED for file-driven prizes and new draw logic."""
-    global REPLAY_FILEPATH # Needs global access to set the path for the new game
+    """
+    Prompts for players using the unified dialog, sets up teams, 
+    generates the bracket, and launches the GUI.
+    """
+    global REPLAY_FILEPATH, TEAMS, TEAM_ROSTERS
 
     log_message("Starting tournament initialization process.") 
     
     dialog_root = tk.Tk()
     dialog_root.withdraw() 
     
-    num_players = None
-    while num_players is None:
-        try:
-            num_players = simpledialog.askinteger("Player Setup", 
-                                                f"Enter the total number of players ({MIN_PLAYERS}-{MAX_PLAYERS}):",
-                                                minvalue=MIN_PLAYERS, maxvalue=MAX_PLAYERS, parent=dialog_root)
-            if num_players is None: 
-                dialog_root.destroy()
-                log_message("Tournament setup canceled at player count prompt.") 
-                return
-            if num_players % 2 != 0:
-                messagebox.showerror("Error", "The total number of players must be even!")
-                num_players = None 
-                log_message(f"Input Error: Player count {num_players} is odd.") 
-                continue
-            break
-        except Exception:
-            pass
-    log_message(f"Total number of players set to: {num_players}") 
-
-    player_input_result = None
-    while player_input_result is None:
-        player_input_result = get_multi_line_input(dialog_root, "Player Names & Draw Input", 
-                                            f"Enter the names and choose the draw method for {num_players} players:",
-                                            num_players)
-        if player_input_result is None:
-            dialog_root.destroy()
-            log_message("Tournament setup canceled at player input stage.") 
-            return
-        
-    dialog_root.destroy() 
-
-    is_manual_draw, player_data_list = player_input_result
-    log_message(f"Player data received. Manual Draw: {is_manual_draw}") 
-
-    # --- 1. Process Draw and Team Setup ---
+    # --- 1. Combined Player Setup Step ---
+    player_input_result = get_player_setup_dialog(dialog_root)
     
-    global TEAMS, TEAM_ROSTERS
+    if player_input_result is None:
+        dialog_root.destroy()
+        log_message("Tournament setup canceled.") 
+        return
+        
+    is_manual_draw, player_data_list = player_input_result
+    num_players = len(player_data_list)
+    
+    dialog_root.destroy() 
+    
+    # All players are paid now, enforced by the dialog
+    log_message(f"Player data received. Total: {num_players}. Manual Draw: {is_manual_draw}. All players paid.") 
+
+    # --- 2. Process Draw and Team Setup ---
     TEAMS.clear()
     TEAM_ROSTERS.clear()
     
     if is_manual_draw:
-        player_draws = sorted(player_data_list, key=lambda x: x[0]) 
+        # Sort by draw number (item 0)
+        player_draws = sorted([(d, n) for d, n, p in player_data_list], key=lambda x: x[0]) 
     else:
-        player_names = [data[1] for data in player_data_list]
+        # Extract names only
+        player_names = [n for d, n, p in player_data_list]
         draw_numbers = list(range(1, num_players + 1))
         random.shuffle(draw_numbers)
         
@@ -2167,8 +2142,7 @@ def start_tournament():
         TEAM_ROSTERS[team_name] = [player1, player2]
         log_message(f"Created team {team_name}: {player1} / {player2} (Draws #{player_draws[i*2][0]} & #{player_draws[i*2+1][0]})") 
         
-    # --- 2. Load Bracket Config and Prizes ---
-    
+    # --- 3. Load Bracket Config and Prizes ---
     try:
         config, prizes_from_file = load_bracket_config(num_teams, 'D')
     except Exception as e:
@@ -2176,7 +2150,6 @@ def start_tournament():
         return
 
     prizes = prizes_from_file
-    
     prizes['1st'] = prizes.get('1st', 0)
     prizes['2nd'] = prizes.get('2nd', 0)
     prizes['3rd'] = prizes.get('3rd', 0)
@@ -2184,24 +2157,24 @@ def start_tournament():
     total_pool = prizes['1st'] + prizes['2nd'] + prizes['3rd']
     log_message(f"Loaded prizes: {prizes}. Total Pool: ${total_pool}") 
         
-    # --- 3. Show Draw Summary ---
+    # --- 4. Show Draw Summary ---
     show_draw_summary(player_draws, TEAMS, TEAM_ROSTERS, num_teams, total_pool, prizes)
     
-    # --- 4. Generate Bracket ---
+    # --- 5. Generate Bracket ---
     generate_dynamic_bracket(TEAMS, config)
     
     if not TOURNAMENT_STATE:
         log_message("Error: TOURNAMENT_STATE is empty after generation.") 
         return
 
-    # --- 5. Rule 4 & 5: Create Replay File NOW (After Setup, Before Game) ---
+    # --- 6. Create Replay File ---
     os.makedirs("replays", exist_ok=True)
     REPLAY_FILEPATH = f"replays/game_{int(time.time())}.json"
     log_message(f"Created new replay file at: {REPLAY_FILEPATH}")
-    append_snapshot_to_file(REPLAY_FILEPATH) # Write first snapshot immediately
+    append_snapshot_to_file(REPLAY_FILEPATH) 
 
+    # --- 7. Launch Main Game GUI ---
     root = tk.Tk()
-    
     try:
         setup_main_gui(root)
         root.mainloop()
