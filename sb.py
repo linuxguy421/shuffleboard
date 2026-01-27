@@ -12,6 +12,9 @@ import datetime
 import time
 import json 
 
+# --- Version ---
+SHUF_VERSION = "1.44"
+
 # --- Console Logging Function ---
 def log_message(message):
     """Prints a timestamped message to the console and file (if enabled) for tracking."""
@@ -241,7 +244,7 @@ def show_title_screen():
     from PIL import Image, ImageTk
 
     splash = tk.Tk()
-    splash.title("Moose Lodge Shuffleboard (large_bracket)")
+    splash.title("Moose Lodge Shuffleboard ")
     splash.geometry("500x550") # Slightly taller for extra button
     splash.configure(bg="black")
 
@@ -251,7 +254,7 @@ def show_title_screen():
         logo = ImageTk.PhotoImage(img)
         tk.Label(splash, image=logo, bg="black").pack(pady=20)
     except Exception as e:
-        tk.Label(splash, text="Moose Lodge Shuffleboard (large_bracket)", fg="white", bg="black", font=("Arial", 20, "bold")).pack(pady=60)
+        tk.Label(splash, text="Moose Lodge Shuffleboard ", fg="white", bg="black", font=("Arial", 20, "bold")).pack(pady=60)
         print(f"[Title Screen] Could not load image: {e}")
 
     tk.Label(
@@ -1734,7 +1737,7 @@ def setup_main_gui(root):
     """Sets up the main windows and calls component initialization."""
     global main_root
     main_root = root
-    root.title("Moose Lodge Shuffleboard (large_bracket)")
+    root.title("Moose Lodge Shuffleboard")
     root.protocol("WM_DELETE_WINDOW", lambda: on_close(root)) 
     
     root.geometry("470x500") 
