@@ -259,7 +259,7 @@ def show_title_screen():
 
     tk.Label(
         splash,
-        text="Ms. Ethels Moose Shuffleboard Tournament",
+        text="Ms. Ethel's Moose Shuffleboard Tournament",
         fg="white", bg="black",
         font=("Arial", 20)
     ).pack(pady=10)
