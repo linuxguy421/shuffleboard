@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 import tkinter as tk
-from tkinter import messagebox, simpledialog, filedialog # Added filedialog
+from tkinter import messagebox, simpledialog, filedialog
 from math import log2, ceil
 import sys
 import re 
@@ -13,7 +13,26 @@ import time
 import json 
 
 # --- Version ---
-SHUF_VERSION = "1.44"
+SHUF_VERSION = "1.45-Theme"
+
+# --- Theme Configuration ---
+THEME = {
+    'bg_main': '#263238',       # Dark Blue-Grey
+    'bg_card': '#37474F',       # Lighter Blue-Grey for frames
+    'bg_canvas': '#455A64',     # Slate for Bracket Background
+    'fg_primary': '#ECEFF1',    # White-ish text
+    'fg_secondary': '#B0BEC5',  # Light Grey text
+    'red_team': '#E53935',      # Vermilion Red
+    'blue_team': '#1E88E5',     # Dodger Blue
+    'accent_gold': '#FFD700',   # Gold for winners/champs
+    'btn_default': '#546E7A',   # Blue-Grey Button
+    'btn_confirm': '#43A047',   # Green
+    'btn_cancel': '#D32F2F',    # Red
+    'font_main': ('Segoe UI', 10),
+    'font_bold': ('Segoe UI', 10, 'bold'),
+    'font_header': ('Segoe UI', 14, 'bold'),
+    'font_title': ('Segoe UI', 18, 'bold'),
+}
 
 # --- Console Logging Function ---
 def log_message(message):
@@ -179,6 +198,7 @@ def run_replay_mode(path):
 
         root = tk.Tk()
         root.title("Moose Lodge Shuffleboard — Replay (VIEW ONLY)")
+        root.configure(bg=THEME['bg_main'])
         root.withdraw()
 
         main_root = root
@@ -200,6 +220,7 @@ def run_replay_mode(path):
 
     root = tk.Tk()
     root.title("Moose Lodge Shuffleboard — Replay Mode (Continue)")
+    root.configure(bg=THEME['bg_main'])
     main_root = root
 
     am = TOURNAMENT_STATE.get("active_match_id")
@@ -246,22 +267,22 @@ def show_title_screen():
     splash = tk.Tk()
     splash.title("Moose Lodge Shuffleboard ")
     splash.geometry("500x550") # Slightly taller for extra button
-    splash.configure(bg="black")
+    splash.configure(bg=THEME['bg_main'])
 
     try:
         img = Image.open("img/title.png")
         img = img.resize((480, 300), Image.LANCZOS)
         logo = ImageTk.PhotoImage(img)
-        tk.Label(splash, image=logo, bg="black").pack(pady=20)
+        tk.Label(splash, image=logo, bg=THEME['bg_main']).pack(pady=20)
     except Exception as e:
-        tk.Label(splash, text="Moose Lodge Shuffleboard ", fg="white", bg="black", font=("Arial", 20, "bold")).pack(pady=60)
+        tk.Label(splash, text="Moose Lodge Shuffleboard ", fg=THEME['fg_primary'], bg=THEME['bg_main'], font=("Arial", 20, "bold")).pack(pady=60)
         print(f"[Title Screen] Could not load image: {e}")
 
     tk.Label(
         splash,
         text="Ms. Ethel's Moose Shuffleboard Tournament",
-        fg="white", bg="black",
-        font=("Arial", 20)
+        fg=THEME['fg_primary'], bg=THEME['bg_main'],
+        font=THEME['font_title']
     ).pack(pady=10)
 
     # --- Button Logic ---
@@ -286,9 +307,11 @@ def show_title_screen():
         splash,
         text="Load Game",
         command=load_existing_game,
-        bg="#2196F3", fg="white", # Blue
-        font=("Arial", 14, "bold"),
-        height=2
+        bg=THEME['btn_default'], fg=THEME['fg_primary'],
+        font=THEME['font_bold'],
+        activebackground=THEME['bg_card'], activeforeground=THEME['fg_primary'],
+        relief='flat', padx=20, pady=10,
+        height=1
     ).pack(pady=(20, 10), fill="x", padx=50)
 
     # New Game Button
@@ -296,9 +319,11 @@ def show_title_screen():
         splash,
         text="Begin New Game",
         command=start_new_game,
-        bg="#4CAF50", fg="white", # Green
-        font=("Arial", 14, "bold"),
-        height=2
+        bg=THEME['btn_confirm'], fg='white',
+        font=THEME['font_bold'],
+        activebackground='#388E3C', activeforeground='white',
+        relief='flat', padx=20, pady=10,
+        height=1
     ).pack(pady=10, fill="x", padx=50)
 
     splash.mainloop()
@@ -632,7 +657,7 @@ def draw_angled_lines(canvas, state, coords, match_w, match_h, H_SCALE, V_SCALE,
 def draw_dynamic_lines(canvas, state, coords, match_w, match_h, H_SCALE, V_SCALE, H_PAD, V_PAD):
     """Draws all connection lines based on match configuration (W_next, L_next)."""
     
-    LINE_COLOR = '#888888' 
+    LINE_COLOR = '#90A4AE' 
     LINE_WIDTH = 2
     
     def get_pixel_coords(match_id):
@@ -708,6 +733,7 @@ def draw_large_bracket(canvas):
     global TEAM_ROSTERS, REPLAY_VIEW_ONLY, TOURNAMENT_RANKINGS
 
     canvas.delete('all')
+    canvas.configure(bg=THEME['bg_canvas'])
 
     H_SCALE_PX = 14
     V_SCALE_PX = 7
@@ -758,20 +784,21 @@ def draw_large_bracket(canvas):
 
         # Determine background
         fill_color = 'white'
+        outline = '#263238'
         if match_data.get('champion'):
-            fill_color = 'gold'
+            fill_color = THEME['accent_gold']
         elif match_id == TOURNAMENT_STATE.get('active_match_id') and match_data['winner'] is None:
-            fill_color = '#FFFFCC'
+            fill_color = '#FFF9C4' # Light Yellow
         elif match_data.get('winner_color') == 'red':
-            fill_color = '#FFCCCC'
+            fill_color = '#FFCDD2' # Light Red
         elif match_data.get('winner_color') == 'blue':
-            fill_color = '#CCE5FF'
+            fill_color = '#BBDEFB' # Light Blue
 
         canvas.create_rectangle(x, y, x + match_w, y + match_h,
-                                fill=fill_color, outline='black', width=2)
+                                fill=fill_color, outline=outline, width=2)
         canvas.create_text(x + 5, y + 5, text=f"{match_id}",
                            anchor='w', fill='#000000',
-                           font=('Arial', 8, 'bold'))
+                           font=('Segoe UI', 8, 'bold'))
 
         # Determine winner or champion
         winner = match_data.get('winner') or match_data.get('champion')
@@ -789,7 +816,7 @@ def draw_large_bracket(canvas):
 
         # Team A
         txt_A = "TBD"
-        font_A = ('Arial', font_roster_size)
+        font_A = ('Segoe UI', font_roster_size)
         if team_A:
             if not team_A.startswith('W:'):
                 roster_A = TEAM_ROSTERS.get(team_A, ['?','?'])
@@ -799,18 +826,18 @@ def draw_large_bracket(canvas):
 
             if winner and team_A == winner:
                 txt_A += " \u2713"
-                font_A = ('Arial', font_roster_size, 'bold')
+                font_A = ('Segoe UI', font_roster_size, 'bold')
 
         canvas.create_text(x + 5, y + match_h/4 + 5,
                            text=txt_A, anchor='w', font=font_A)
 
         canvas.create_line(x, y + match_h/2,
                            x + match_w, y + match_h/2,
-                           fill='#CCCCCC')
+                           fill='#B0BEC5')
 
         # Team B
         txt_B = "TBD"
-        font_B = ('Arial', font_roster_size)
+        font_B = ('Segoe UI', font_roster_size)
         if team_B:
             if not team_B.startswith('W:'):
                 roster_B = TEAM_ROSTERS.get(team_B, ['?','?'])
@@ -820,7 +847,7 @@ def draw_large_bracket(canvas):
 
             if winner and team_B == winner:
                 txt_B += " \u2713"
-                font_B = ('Arial', font_roster_size, 'bold')
+                font_B = ('Segoe UI', font_roster_size, 'bold')
 
         canvas.create_text(x + 5, y + 3*match_h/4,
                            text=txt_B, anchor='w', font=font_B)
@@ -839,24 +866,26 @@ def open_full_bracket():
     full_bracket_root = tk.Toplevel(main_root)
     full_bracket_root.title("Moose Lodge Shuffleboard Bracket")
     full_bracket_root.geometry("1000x700")
+    full_bracket_root.configure(bg=THEME['bg_main'])
     # This protocol is now the central exit point for the window
     full_bracket_root.protocol("WM_DELETE_WINDOW", on_full_bracket_close)
     
-    container = tk.Frame(full_bracket_root)
+    container = tk.Frame(full_bracket_root, bg=THEME['bg_main'])
     container.pack(fill='both', expand=True)
 
     if REPLAY_VIEW_ONLY:
         # Add an explicit exit button when in view-only mode
-        exit_frame = tk.Frame(container, bg='#1F1F1F')
+        exit_frame = tk.Frame(container, bg=THEME['bg_card'])
         exit_frame.pack(fill='x', pady=(0, 5))
         
         exit_btn = tk.Button(exit_frame, text="EXIT APPLICATION (View Only)", 
                              command=lambda: on_close(main_root),
-                             bg='#D32F2F', fg='white', font=('Arial', 12, 'bold'), height=2)
+                             bg=THEME['btn_cancel'], fg='white', font=THEME['font_bold'], height=2,
+                             relief='flat', padx=10, pady=5)
         exit_btn.pack(padx=10, pady=5, fill='x')
         
         # Place the canvas in a sub-container to separate it from the exit button
-        bracket_canvas_container = tk.Frame(container)
+        bracket_canvas_container = tk.Frame(container, bg=THEME['bg_main'])
         bracket_canvas_container.pack(fill='both', expand=True, padx=5, pady=5)
     else:
         bracket_canvas_container = container
@@ -864,9 +893,10 @@ def open_full_bracket():
     v_scroll = tk.Scrollbar(bracket_canvas_container, orient='vertical')
     h_scroll = tk.Scrollbar(bracket_canvas_container, orient='horizontal')
     
-    full_bracket_canvas = tk.Canvas(bracket_canvas_container, bg='#5E5E5E', 
+    full_bracket_canvas = tk.Canvas(bracket_canvas_container, bg=THEME['bg_canvas'], 
                                     yscrollcommand=v_scroll.set, 
-                                    xscrollcommand=h_scroll.set)
+                                    xscrollcommand=h_scroll.set,
+                                    highlightthickness=0)
     
     v_scroll.config(command=full_bracket_canvas.yview)
     h_scroll.config(command=full_bracket_canvas.xview)
@@ -944,21 +974,21 @@ def draw_bracket(canvas):
         fill_color = 'white'
         
         if match_id == TOURNAMENT_STATE.get('active_match_id') and match_data['winner'] is None:
-            fill_color = 'light yellow'
+            fill_color = '#FFF9C4'
         elif match_data.get('is_reset') and match_data.get('winner') is None:
-             fill_color = 'orange'
+             fill_color = '#FFCC80' # Orange-ish
         
         if match_data.get('champion'):
-             fill_color = 'gold'
+             fill_color = THEME['accent_gold']
         elif match_data.get('winner') is not None and match_data.get('winner_color') == 'red':
-             fill_color = '#FFCCCC' 
+             fill_color = '#FFCDD2' 
         elif match_data.get('winner') is not None and match_data.get('winner_color') == 'blue':
-             fill_color = '#CCE5FF' 
+             fill_color = '#BBDEFB' 
         
         canvas.create_rectangle(x, y, x + match_w, y + match_h, 
-                                fill=fill_color, outline='black', width=2, tags=match_id)
+                                fill=fill_color, outline='#263238', width=2, tags=match_id)
         
-        canvas.create_text(x + 5, y + 5, text=f"{match_id}", anchor='w', fill='gray', font=('Arial', font_id_size))
+        canvas.create_text(x + 5, y + 5, text=f"{match_id}", anchor='w', fill='#546E7A', font=('Segoe UI', font_id_size))
 
         if match_data['winner'] or match_data.get('champion'):
             winner_team = match_data.get('champion') or match_data['winner']
@@ -968,9 +998,9 @@ def draw_bracket(canvas):
             roster_str = f"({roster[0]} / {roster[1]})"
             
             canvas.create_text(x + match_w/2, y + match_h/2 - font_team_size/2, 
-                               text=winner_team, fill=color, font=('Arial', font_team_size, 'bold'))
+                               text=winner_team, fill=color, font=('Segoe UI', font_team_size, 'bold'))
             canvas.create_text(x + match_w/2, y + match_h/2 + font_roster_size*1.2, 
-                               text=roster_str, fill=color, font=('Arial', font_roster_size))
+                               text=roster_str, fill=color, font=('Segoe UI', font_roster_size))
 
         else:
             team_A = match_data['teams'][0]
@@ -980,12 +1010,12 @@ def draw_bracket(canvas):
                 p_A_roster_str = f"({roster_A[0]} / {roster_A[1]})"
                 text_A = f"{team_A} {p_A_roster_str}"
             else:
-                text_A = 'TBD (Waiting for Winner/Loser)'
-                text_fill_color_A = 'darkgrey'
+                text_A = 'TBD'
+                text_fill_color_A = '#90A4AE'
 
-            canvas.create_text(x + 5, y + match_h/4 + 3, text=text_A, anchor='w', font=('Arial', font_roster_size), fill=text_fill_color_A)
+            canvas.create_text(x + 5, y + match_h/4 + 3, text=text_A, anchor='w', font=('Segoe UI', font_roster_size), fill=text_fill_color_A)
 
-            canvas.create_line(x + 5, y + match_h/2, x + match_w - 5, y + match_h/2, fill='#CCCCCC')
+            canvas.create_line(x + 5, y + match_h/2, x + match_w - 5, y + match_h/2, fill='#B0BEC5')
 
             team_B = match_data['teams'][1]
             text_fill_color_B = 'black'
@@ -994,10 +1024,10 @@ def draw_bracket(canvas):
                 p_B_roster_str = f"({roster_B[0]} / {roster_B[1]})"
                 text_B = f"{team_B} {p_B_roster_str}"
             else:
-                text_B = 'TBD (Waiting for Winner/Loser)'
-                text_fill_color_B = 'darkgrey'
+                text_B = 'TBD'
+                text_fill_color_B = '#90A4AE'
             
-            canvas.create_text(x + 5, y + 3*match_h/4 - 3, text=text_B, anchor='w', font=('Arial', font_roster_size), fill=text_fill_color_B)
+            canvas.create_text(x + 5, y + 3*match_h/4 - 3, text=text_B, anchor='w', font=('Segoe UI', font_roster_size), fill=text_fill_color_B)
 
 
 # --- Utility to find the Next Active Match ---
@@ -1254,6 +1284,7 @@ def draw_small_bracket_view(canvas, state):
     global REPLAY_VIEW_ONLY, TOURNAMENT_RANKINGS
 
     canvas.delete('all')
+    canvas.configure(bg=THEME['bg_canvas'])
 
     canvas.update_idletasks()
     W = canvas.winfo_width()
@@ -1341,20 +1372,20 @@ def draw_small_bracket_view(canvas, state):
         text_color = 'black'
 
         if data.get('champion'):
-            fill_color = 'gold'
-            text_color = 'white'
+            fill_color = THEME['accent_gold']
+            text_color = 'black'
         elif match_id == active_id and data.get('winner') is None:
-            fill_color = 'yellow'
+            fill_color = '#FFF9C4'
         elif data.get('is_reset') and data.get('winner') is None:
-            fill_color = 'orange'
+            fill_color = '#FFCC80'
         elif data.get('winner'):
             wc = data.get('winner_color')
             if wc == 'red':
-                fill_color = '#FF5555'
+                fill_color = '#FFCDD2'
             elif wc == 'blue':
-                fill_color = '#55AAFF'
+                fill_color = '#BBDEFB'
             else:
-                fill_color = 'lightgreen'
+                fill_color = '#C8E6C9'
 
         # Determine winner
         winner = data.get('winner') or data.get('champion')
@@ -1370,7 +1401,7 @@ def draw_small_bracket_view(canvas, state):
         text_id = match_id.replace('G', '')
         canvas.create_text(x + W_box/2, y + H_box/2,
                            text=text_id,
-                           font=('Arial', 7, 'bold'),
+                           font=('Segoe UI', 7, 'bold'),
                            fill=text_color)
 
 def format_destination(dest):
@@ -1418,8 +1449,8 @@ def update_winner_buttons():
     team_blue = current_match_teams.get('blue', 'BLUE TEAM')
     
     if btn_red and btn_blue:
-        btn_red.config(text=f"WINNERS: {team_red} (RED)")
-        btn_blue.config(text=f"WINNERS: {team_blue} (BLUE)")
+        btn_red.config(text=f"WINNERS: {team_red}")
+        btn_blue.config(text=f"WINNERS: {team_blue}")
     log_message(f"Updated winner buttons: Red={team_red}, Blue={team_blue}") 
 
 def swap_teams():
@@ -1453,7 +1484,8 @@ def go_back_to_selection():
     team_red = current_match_teams['red']
     team_blue = current_match_teams['blue']
     match_id = TOURNAMENT_STATE['active_match_id']
-    status_label.config(text=f"Active Match: {match_id} - {team_red} (RED) vs {team_blue} (BLUE)", fg='black')
+    status_label.config(text=f"Active Match: {match_id} - {team_red} (RED) vs {team_blue} (BLUE)", 
+                        fg=THEME['fg_primary'], bg=THEME['bg_card'])
 
 def update_scoreboard_display():
     global team_labels, player_labels_ref, TOURNAMENT_STATE, scoreboard_canvas_ref, status_label, current_match_teams
@@ -1498,7 +1530,7 @@ def update_scoreboard_display():
     team_info_labels['red'].config(text=f"Wins: {wins_red}\nLosses: {losses_red}")
     team_info_labels['blue'].config(text=f"Wins: {wins_blue}\nLosses: {losses_blue}")
     
-    status_label.config(text=f"Active Match: {match_id} - {team_red} (RED) vs {team_blue} (BLUE)", fg='black')
+    status_label.config(text=f"Active Match: {match_id}", fg=THEME['fg_primary'])
     update_winner_buttons()
     
     if bracket_info_canvas_ref:
@@ -1531,7 +1563,8 @@ def display_final_rankings(champion):
     if rankings_display_frame_ref:
         rankings_display_frame_ref.pack(fill='both', expand=True, padx=10, pady=5)
         
-    status_label.config(text=f"TOURNAMENT OVER! Champion: {champion}", font=('Arial', 14, 'bold'), fg='dark green')
+    status_label.config(text=f"TOURNAMENT OVER! Champion: {champion}", 
+                        font=THEME['font_header'], fg=THEME['accent_gold'], bg=THEME['bg_card'])
     
     first_place = TOURNAMENT_RANKINGS.get('1ST', 'N/A')
     second_place = TOURNAMENT_RANKINGS.get('2ND', 'N/A')
@@ -1548,13 +1581,13 @@ def display_final_rankings(champion):
     center_x = canvas.winfo_width() / 2
     name_x_1st, name_x_2nd = center_x - 110, center_x + 110
     
-    canvas.create_line(center_x, 5, center_x, 95, fill='#CCCCCC', width=1)
+    canvas.create_line(center_x, 5, center_x, 95, fill=THEME['fg_secondary'], width=1)
     
-    canvas.create_text(name_x_1st, 15, text=f"1ST PLACE (Team {first_team_num})", fill='gold', font=('Arial', 9, 'bold'))
-    canvas.create_text(name_x_1st, 40, text=f"{first_roster}", font=('Arial', 16, 'bold'), fill='gold')
+    canvas.create_text(name_x_1st, 15, text=f"1ST PLACE (Team {first_team_num})", fill='gold', font=('Segoe UI', 9, 'bold'))
+    canvas.create_text(name_x_1st, 40, text=f"{first_roster}", font=('Segoe UI', 16, 'bold'), fill='gold')
 
-    canvas.create_text(name_x_2nd, 15, text=f"2ND PLACE (Team {second_team_num})", fill='#333333', font=('Arial', 9, 'bold'))
-    canvas.create_text(name_x_2nd, 40, text=f"{second_roster}", font=('Arial', 16, 'bold'), fill='#333333')
+    canvas.create_text(name_x_2nd, 15, text=f"2ND PLACE (Team {second_team_num})", fill=THEME['fg_secondary'], font=('Segoe UI', 9, 'bold'))
+    canvas.create_text(name_x_2nd, 40, text=f"{second_roster}", font=('Segoe UI', 16, 'bold'), fill=THEME['fg_secondary'])
 
     rankings_text = "--- Remaining Tournament Rankings ---\n\n"
     
@@ -1578,7 +1611,8 @@ def display_final_rankings(champion):
     log_message(f"Final Rankings: {dict(TOURNAMENT_RANKINGS)}") 
             
     if rankings_label_ref:
-        rankings_label_ref.config(text=rankings_text, justify=tk.LEFT, fg='black', bg='#F0F0F0', font=('Arial', 10, 'bold'))
+        rankings_label_ref.config(text=rankings_text, justify=tk.LEFT, 
+                                  fg=THEME['fg_primary'], bg=THEME['bg_card'], font=('Segoe UI', 10))
     
     for widget in final_control_frame_ref.winfo_children():
         widget.destroy()
@@ -1586,7 +1620,8 @@ def display_final_rankings(champion):
     final_control_frame_ref.pack(fill='x', pady=10)
     
     quit_btn = tk.Button(final_control_frame_ref, text="QUIT", command=lambda: on_close(main_root), 
-                         bg='#D32F2F', fg='white', font=('Arial', 12, 'bold'), height=2)
+                         bg=THEME['btn_cancel'], fg='white', font=('Segoe UI', 12, 'bold'), height=2,
+                         relief='flat', padx=20)
     quit_btn.pack(padx=10, pady=10, fill='x')
 
 def reset_game(update_teams=True):
@@ -1607,18 +1642,18 @@ def update_roster_seeding_display():
     for widget in roster_seeding_frame_ref.winfo_children():
         widget.destroy()
 
-    teams_inner_frame = tk.Frame(roster_seeding_frame_ref, bg='#EEEEEE')
+    teams_inner_frame = tk.Frame(roster_seeding_frame_ref, bg=THEME['bg_card'])
     teams_inner_frame.pack(side='top', padx=5, pady=(0, 5))
 
     for team_name in TEAMS:
         roster = TEAM_ROSTERS.get(team_name, ["N/A", "N/A"])
         players_str = f"{roster[0]} / {roster[1]}"
         
-        team_container = tk.Frame(teams_inner_frame, bg='#DDDDDD', bd=1, relief=tk.RIDGE)
+        team_container = tk.Frame(teams_inner_frame, bg=THEME['bg_main'], bd=0)
         team_container.pack(side=tk.LEFT, padx=5, pady=2) 
         
-        tk.Label(team_container, text=f"{team_name}: {players_str}", font=('Courier', 9), 
-                 bg='#DDDDDD', fg='black').pack(padx=5, pady=2)
+        tk.Label(team_container, text=f"{team_name}: {players_str}", font=('Consolas', 9), 
+                 bg=THEME['bg_main'], fg=THEME['fg_secondary']).pack(padx=5, pady=2)
 
 def setup_scoreboard(root, team_red_placeholder, team_blue_placeholder):
     """Initializes the scoreboard canvas and widgets with the new UI."""
@@ -1628,108 +1663,116 @@ def setup_scoreboard(root, team_red_placeholder, team_blue_placeholder):
     
     log_message("Initializing scoreboard and UI components.") 
     
-    header_frame = tk.Frame(root, bg='#333333')
-    header_frame.pack(fill='x')
+    header_frame = tk.Frame(root, bg=THEME['bg_main'])
+    header_frame.pack(fill='x', pady=(10,0))
     
-    header_label = tk.Label(header_frame, text="Current Match Resolution", font=('Arial', 14, 'bold'), fg='white', bg='#333333', pady=5)
-    header_label.pack(fill='x')
+    # header_label = tk.Label(header_frame, text="Current Match", font=THEME['font_header'], fg=THEME['fg_primary'], bg=THEME['bg_main'], pady=5)
+    # header_label.pack(fill='x')
     
-    status_label = tk.Label(root, text="Tournament Initialized.", font=('Arial', 10, 'bold'), pady=5, bd=1, relief='sunken')
-    status_label.pack(fill='x')
+    status_label = tk.Label(root, text="Tournament Initialized.", font=('Segoe UI', 11, 'bold'), 
+                            pady=8, bg=THEME['bg_card'], fg=THEME['fg_primary'])
+    status_label.pack(fill='x', padx=10, pady=5)
     
     scoreboard_canvas_ref = tk.Canvas(root, width=450, height=100, bg='white', highlightthickness=0)
+    # Canvas background is white to keep text rendering simple, or we can make it thematic
+    scoreboard_canvas_ref.configure(bg=THEME['bg_card'])
     scoreboard_canvas_ref.pack(fill='x', padx=10, pady=5)
 
-    roster_outer_frame = tk.Frame(root, padx=10, pady=2, bd=1, relief=tk.GROOVE, bg='#EEEEEE')
+    roster_outer_frame = tk.Frame(root, padx=10, pady=2, bd=0, bg=THEME['bg_main'])
     roster_outer_frame.pack(fill='x', padx=10, pady=2) 
 
     h_scrollbar = tk.Scrollbar(roster_outer_frame, orient=tk.HORIZONTAL)
     h_scrollbar.pack(side=tk.BOTTOM, fill=tk.X)
 
-    roster_canvas_ref = tk.Canvas(roster_outer_frame, bg='#666666', height=35, xscrollcommand=h_scrollbar.set, highlightthickness=0)
+    roster_canvas_ref = tk.Canvas(roster_outer_frame, bg=THEME['bg_card'], height=35, xscrollcommand=h_scrollbar.set, highlightthickness=0)
     roster_canvas_ref.pack(side=tk.TOP, fill=tk.X, expand=True)
 
     h_scrollbar.config(command=roster_canvas_ref.xview)
 
-    roster_seeding_frame_ref = tk.Frame(roster_canvas_ref, bg='#EEEEEE')
+    roster_seeding_frame_ref = tk.Frame(roster_canvas_ref, bg=THEME['bg_card'])
     roster_canvas_ref.create_window((0, 0), window=roster_seeding_frame_ref, anchor="nw")
     roster_seeding_frame_ref.bind("<Configure>", lambda e: roster_canvas_ref.configure(scrollregion=roster_canvas_ref.bbox("all")))
     
     update_roster_seeding_display()
 
-    match_details_frame = tk.Frame(root, padx=10, pady=5, bd=1, relief=tk.SUNKEN)
+    match_details_frame = tk.Frame(root, padx=10, pady=5, bg=THEME['bg_main'])
     match_details_frame.pack(fill='x', padx=10, pady=5)
     
     center_x = 225
     name_x_red, name_x_blue = 110, 340 
     
-    scoreboard_canvas_ref.create_line(center_x, 5, center_x, 95, fill='#CCCCCC', width=1)
+    scoreboard_canvas_ref.create_line(center_x, 5, center_x, 95, fill=THEME['fg_secondary'], width=1)
     
-    team_labels['red'] = scoreboard_canvas_ref.create_text(name_x_red, 40, text=f"{team_red_placeholder}", font=('Arial', 16, 'bold'), fill='#CC0000')
-    player_labels_ref['red'] = scoreboard_canvas_ref.create_text(name_x_red, 70, text="Team X / (P1, P2)", font=('Arial', 9), width=200)
+    team_labels['red'] = scoreboard_canvas_ref.create_text(name_x_red, 40, text=f"{team_red_placeholder}", font=('Segoe UI', 16, 'bold'), fill=THEME['red_team'])
+    player_labels_ref['red'] = scoreboard_canvas_ref.create_text(name_x_red, 70, text="Team X / (P1, P2)", font=('Segoe UI', 9), width=200, fill=THEME['fg_primary'])
 
-    team_labels['blue'] = scoreboard_canvas_ref.create_text(name_x_blue, 40, text=f"{team_blue_placeholder}", font=('Arial', 16, 'bold'), fill='#0066CC')
-    player_labels_ref['blue'] = scoreboard_canvas_ref.create_text(name_x_blue, 70, text="Team Y / (P3, P4)", font=('Arial', 9), width=200)
+    team_labels['blue'] = scoreboard_canvas_ref.create_text(name_x_blue, 40, text=f"{team_blue_placeholder}", font=('Segoe UI', 16, 'bold'), fill=THEME['blue_team'])
+    player_labels_ref['blue'] = scoreboard_canvas_ref.create_text(name_x_blue, 70, text="Team Y / (P3, P4)", font=('Segoe UI', 9), width=200, fill=THEME['fg_primary'])
 
-    switch_frame_ref = tk.Frame(root) 
+    switch_frame_ref = tk.Frame(root, bg=THEME['bg_main']) 
     
-    btn_switch = tk.Button(switch_frame_ref, text="SWITCH RED/BLUE", command=swap_teams, 
-                           bg='#EEEEEE', fg='black', font=('Arial', 10), height=1)
+    btn_switch = tk.Button(switch_frame_ref, text="🔄 SWITCH SIDES", command=swap_teams, 
+                           bg=THEME['btn_default'], fg='white', font=('Segoe UI', 9, 'bold'), height=1,
+                           relief='flat', activebackground=THEME['bg_card'])
     btn_switch.pack(side=tk.LEFT, fill='x', expand=True, padx=(0, 2))
     
-    btn_bracket = tk.Button(switch_frame_ref, text="FULL BRACKET", command=open_full_bracket,
-                            bg='#DDDDDD', fg='black', font=('Arial', 10, 'bold'), height=1)
+    btn_bracket = tk.Button(switch_frame_ref, text="📜 FULL BRACKET", command=open_full_bracket,
+                            bg=THEME['btn_default'], fg='white', font=('Segoe UI', 9, 'bold'), height=1,
+                            relief='flat', activebackground=THEME['bg_card'])
     btn_bracket.pack(side=tk.LEFT, fill='x', expand=True, padx=(2, 0))    
     
-    match_details_frame = tk.Frame(root, padx=10, pady=5)
+    match_details_frame = tk.Frame(root, padx=10, pady=5, bg=THEME['bg_main'])
     
-    bracket_info_frame = tk.Frame(match_details_frame, bd=1, relief='sunken')
+    bracket_info_frame = tk.Frame(match_details_frame, bd=0, bg=THEME['bg_main'])
     bracket_info_frame.pack(fill='x', pady=(0, 5))
     bracket_info_frame_ref = bracket_info_frame 
     
-    bracket_info_canvas = tk.Canvas(bracket_info_frame, height=80, bg='white')
+    bracket_info_canvas = tk.Canvas(bracket_info_frame, height=80, bg=THEME['bg_canvas'], highlightthickness=0)
     bracket_info_canvas.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
     
     bracket_info_canvas.bind("<Configure>", lambda event: draw_small_bracket_view(bracket_info_canvas, TOURNAMENT_STATE))
 
     bracket_info_canvas_ref = bracket_info_canvas 
     
-    rankings_display_frame_ref = tk.Frame(root, padx=10, pady=5, bd=1, relief='solid', bg='#F0F0F0')
+    rankings_display_frame_ref = tk.Frame(root, padx=10, pady=5, bd=0, bg=THEME['bg_card'])
     
     game_routing_label = tk.Label(match_details_frame, text="Game ID: G#\nWinner Advances To: TBD\nLoser Drops To: TBD", 
-                                  justify=tk.LEFT, font=('Arial', 9), bd=1, relief='solid', padx=5, pady=5, bg='#f0f0f0')
+                                  justify=tk.LEFT, font=('Segoe UI', 9), bd=0, padx=5, pady=5, 
+                                  bg=THEME['bg_card'], fg=THEME['fg_secondary'])
     game_routing_label.pack(fill='x', pady=(0, 5))
     
     rankings_label_ref = tk.Label(rankings_display_frame_ref, 
                                   text="--- Remaining Tournament Rankings ---", 
-                                  justify=tk.LEFT, fg='black', bg='#F0F0F0', font=('Arial', 10, 'bold'), padx=5, pady=5)
+                                  justify=tk.LEFT, fg=THEME['fg_primary'], bg=THEME['bg_card'], font=('Segoe UI', 10, 'bold'), padx=5, pady=5)
     rankings_label_ref.pack(fill='both', expand=True)
     
-    team_info_frame = tk.Frame(match_details_frame)
+    team_info_frame = tk.Frame(match_details_frame, bg=THEME['bg_main'])
     team_info_frame.pack(fill='x')
     team_info_frame_ref = team_info_frame
     
     team_info_labels['red'] = tk.Label(team_info_frame, text="Team: Team X\nPlayers: P1, P2 (Active)", 
-                                       justify=tk.LEFT, font=('Arial', 9), fg='#CC0000')
+                                       justify=tk.LEFT, font=('Segoe UI', 9), fg=THEME['red_team'], bg=THEME['bg_main'])
     team_info_labels['red'].pack(side=tk.LEFT, expand=True, padx=5)
     
     team_info_labels['blue'] = tk.Label(team_info_frame, text="Team: Team Y\nPlayers: P3, P4 (Active)", 
-                                        justify=tk.LEFT, font=('Arial', 9), fg='#0066CC')
+                                        justify=tk.LEFT, font=('Segoe UI', 9), fg=THEME['blue_team'], bg=THEME['bg_main'])
     team_info_labels['blue'].pack(side=tk.LEFT, expand=True, padx=5)
     
-    match_input_frame = tk.Frame(root, padx=10, pady=5)
+    match_input_frame = tk.Frame(root, padx=10, pady=5, bg=THEME['bg_main'])
 
-    match_input_frame = tk.Frame(root, padx=10, pady=5)
-
-    btn_red = tk.Button(match_input_frame, text="RED TEAM WINS", command=lambda: declare_winner('red'), bg='#FF5555', fg='black', font=('Arial', 12, 'bold'), height=2)
-    btn_red.pack(side=tk.LEFT, expand=True, padx=(5, 5), pady=0)
+    btn_red = tk.Button(match_input_frame, text="RED WINS", command=lambda: declare_winner('red'), 
+                        bg=THEME['red_team'], fg='white', font=('Segoe UI', 11, 'bold'), height=2,
+                        relief='flat', padx=10, pady=5, activebackground='#C62828')
+    btn_red.pack(side=tk.LEFT, expand=True, padx=(5, 5), pady=0, fill='x')
     
-    btn_blue = tk.Button(match_input_frame, text="BLUE TEAM WINS", command=lambda: declare_winner('blue'), bg='#55AAFF', fg='black', font=('Arial', 12, 'bold'), height=2)
-    btn_blue.pack(side=tk.LEFT, expand=True, padx=(5, 5), pady=0)
+    btn_blue = tk.Button(match_input_frame, text="BLUE WINS", command=lambda: declare_winner('blue'), 
+                         bg=THEME['blue_team'], fg='white', font=('Segoe UI', 11, 'bold'), height=2,
+                         relief='flat', padx=10, pady=5, activebackground='#1565C0')
+    btn_blue.pack(side=tk.LEFT, expand=True, padx=(5, 5), pady=0, fill='x')
 
-    match_res_frame = tk.Frame(root, bg='#eeeeee', padx=10, pady=10)
+    match_res_frame = tk.Frame(root, bg=THEME['bg_main'], padx=10, pady=10)
     
-    final_control_frame_ref = tk.Frame(root)
+    final_control_frame_ref = tk.Frame(root, bg=THEME['bg_main'])
     
     load_match_data_and_teams()
         
@@ -1738,9 +1781,10 @@ def setup_main_gui(root):
     global main_root
     main_root = root
     root.title("Moose Lodge Shuffleboard")
+    root.configure(bg=THEME['bg_main'])
     root.protocol("WM_DELETE_WINDOW", lambda: on_close(root)) 
     
-    root.geometry("470x500") 
+    root.geometry("470x600") # Taller geometry for better breathing room
 
     g1_teams = TOURNAMENT_STATE.get('G1', {}).get('teams', ["Team Red", "Team Blue"])
     team_A = g1_teams[0] or "Team Red"
@@ -1754,30 +1798,36 @@ def show_draw_summary(player_draws, TEAMS, TEAM_ROSTERS, num_teams, total_pool, 
     """Displays the player draw, team rosters, and prize pool before launching the main GUI."""
     summary_root = tk.Tk()
     summary_root.title("Tournament Draw & Prize Pool")
+    summary_root.configure(bg=THEME['bg_main'])
     summary_root.protocol("WM_DELETE_WINDOW", lambda: on_close(summary_root)) 
     
     log_message("Displaying Draw Summary and Prize Pool.") 
     
-    draw_frame = tk.Frame(summary_root, padx=10, pady=10, bd=2, relief=tk.GROOVE)
+    draw_frame = tk.Frame(summary_root, padx=10, pady=10, bd=0, bg=THEME['bg_card'])
     draw_frame.pack(fill='x', padx=10, pady=5)
-    tk.Label(draw_frame, text="*** Player Draw Results ***", font=('Arial', 12, 'bold')).pack(pady=5)
+    tk.Label(draw_frame, text="*** Player Draw Results ***", font=('Segoe UI', 12, 'bold'), 
+             bg=THEME['bg_card'], fg=THEME['fg_primary']).pack(pady=5)
     draw_text = ""
     for draw_num, player_name in player_draws:
         draw_text += f"Draw #{draw_num}: {player_name}\n"
-    tk.Label(draw_frame, text=draw_text, justify=tk.LEFT, font=('Courier', 10)).pack()
+    tk.Label(draw_frame, text=draw_text, justify=tk.LEFT, font=('Consolas', 10), 
+             bg=THEME['bg_card'], fg=THEME['fg_secondary']).pack()
     
-    team_frame = tk.Frame(summary_root, padx=10, pady=10, bd=2, relief=tk.GROOVE)
+    team_frame = tk.Frame(summary_root, padx=10, pady=10, bd=0, bg=THEME['bg_card'])
     team_frame.pack(fill='x', padx=10, pady=5)
-    tk.Label(team_frame, text="*** Team Roster & Seeding ***", font=('Arial', 12, 'bold')).pack(pady=5)
+    tk.Label(team_frame, text="*** Team Roster & Seeding ***", font=('Segoe UI', 12, 'bold'),
+             bg=THEME['bg_card'], fg=THEME['fg_primary']).pack(pady=5)
     team_text = ""
     for i, team_name in enumerate(TEAMS):
         roster = TEAM_ROSTERS.get(team_name, ["N/A", "N/A"])
         team_text += f"Team {i+1} (T{i+1}): {roster[0]} / {roster[1]}\n"
-    tk.Label(team_frame, text=team_text, justify=tk.LEFT, font=('Courier', 10)).pack()
+    tk.Label(team_frame, text=team_text, justify=tk.LEFT, font=('Consolas', 10),
+             bg=THEME['bg_card'], fg=THEME['fg_secondary']).pack()
     
-    prize_frame = tk.Frame(summary_root, padx=10, pady=10, bd=2, relief=tk.GROOVE)
+    prize_frame = tk.Frame(summary_root, padx=10, pady=10, bd=0, bg=THEME['bg_card'])
     prize_frame.pack(fill='x', padx=10, pady=5)
-    tk.Label(prize_frame, text="*** Prize Pool Calculation ***", font=('Arial', 12, 'bold')).pack(pady=5)
+    tk.Label(prize_frame, text="*** Prize Pool Calculation ***", font=('Segoe UI', 12, 'bold'),
+             bg=THEME['bg_card'], fg=THEME['fg_primary']).pack(pady=5)
     
     per_player_1st = int(prizes.get('1st', 0) / 2)
     per_player_2nd = int(prizes.get('2nd', 0) / 2)
@@ -1790,11 +1840,13 @@ def show_draw_summary(player_draws, TEAMS, TEAM_ROSTERS, num_teams, total_pool, 
         per_player_3rd = int(prizes.get('3rd', 0) / 2)
         prize_text += f"3rd Place Prize: ${prizes.get('3rd', 0)} (${per_player_3rd} per player)\n"
         
-    tk.Label(prize_frame, text=prize_text, justify=tk.LEFT, font=('Courier', 10)).pack()
+    tk.Label(prize_frame, text=prize_text, justify=tk.LEFT, font=('Consolas', 10),
+             bg=THEME['bg_card'], fg=THEME['fg_secondary']).pack()
     
     start_button = tk.Button(summary_root, text="BEGIN TOURNAMENT", 
                              command=summary_root.quit, 
-                             bg='#4CAF50', fg='white', font=('Arial', 12, 'bold'), height=2)
+                             bg=THEME['btn_confirm'], fg='white', font=('Segoe UI', 12, 'bold'), height=2,
+                             relief='flat', padx=20)
     start_button.pack(fill='x', padx=10, pady=10)
     
     summary_root.mainloop() 
@@ -1932,10 +1984,10 @@ def get_player_setup_dialog(parent):
             val = name_entry.get().strip()
             
             if val and counts[val] > 1:
-                name_entry.config(bg='#FFCCCC') 
+                name_entry.config(bg='#FFCDD2') 
                 has_duplicates = True
             elif not paid_var.get():
-                name_entry.config(bg='#FFD580') 
+                name_entry.config(bg='#FFE0B2') 
             else:
                 name_entry.config(bg='white')
         return has_duplicates
@@ -2201,21 +2253,24 @@ def declare_winner(color):
 
     match_res_frame.pack(fill='x', padx=10, pady=10) 
     
-    status_label.config(text=f"MATCH {match_id_to_confirm} ENDED: **{winner}** wins. Please **CONFIRM** or **GO BACK** to re-select winner.", fg='darkred')
+    status_label.config(text=f"MATCH {match_id_to_confirm} ENDED: **{winner}** wins. Please **CONFIRM** or **GO BACK**.", 
+                        fg=THEME['accent_gold'], bg=THEME['bg_card'])
     
     global current_match_res_buttons
     for widget in match_res_frame.winfo_children():
         widget.destroy()
     current_match_res_buttons.clear()
     
-    confirm_btn = tk.Button(match_res_frame, text=f"CONFIRM: {winner} won and advance bracket", bg='#4CAF50', fg='white', 
-                            font=('Arial', 11, 'bold'),
+    confirm_btn = tk.Button(match_res_frame, text=f"CONFIRM: {winner} won and advance bracket", 
+                            bg=THEME['btn_confirm'], fg='white', 
+                            font=('Segoe UI', 11, 'bold'), relief='flat', padx=10, pady=10,
                             command=lambda w=winner, l=loser, c=color, mid=match_id_to_confirm: confirm_match_resolution(w, l, c, mid))
     confirm_btn.pack(pady=5, fill='x')
     current_match_res_buttons.append(confirm_btn)
     
-    go_back_btn = tk.Button(match_res_frame, text="GO BACK: Mistake made in winner selection", bg='#F44336', fg='white', 
-                            font=('Arial', 10),
+    go_back_btn = tk.Button(match_res_frame, text="GO BACK: Mistake made in winner selection", 
+                            bg=THEME['btn_cancel'], fg='white', 
+                            font=('Segoe UI', 10, 'bold'), relief='flat', padx=10, pady=5,
                             command=go_back_to_selection)
     go_back_btn.pack(pady=5, fill='x')
     current_match_res_buttons.append(go_back_btn)
