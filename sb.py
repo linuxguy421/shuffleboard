@@ -1796,58 +1796,92 @@ def setup_main_gui(root):
 
 def show_draw_summary(player_draws, TEAMS, TEAM_ROSTERS, num_teams, total_pool, prizes):
     """Displays the player draw, team rosters, and prize pool before launching the main GUI."""
+    
+    # --- Theme Constants ---
+    BG_MAIN = "#121212"
+    BG_CARD = "#1E1E1E"
+    FG_TEXT = "#FFFFFF"
+    FG_ACCENT = "#4CAF50" # Green for headers
+
     summary_root = tk.Tk()
     summary_root.title("Tournament Draw & Prize Pool")
-    summary_root.configure(bg=THEME['bg_main'])
+    summary_root.geometry("550x750")
+    summary_root.configure(bg=BG_MAIN)
     summary_root.protocol("WM_DELETE_WINDOW", lambda: on_close(summary_root)) 
     
     log_message("Displaying Draw Summary and Prize Pool.") 
     
-    draw_frame = tk.Frame(summary_root, padx=10, pady=10, bd=0, bg=THEME['bg_card'])
-    draw_frame.pack(fill='x', padx=10, pady=5)
-    tk.Label(draw_frame, text="*** Player Draw Results ***", font=('Segoe UI', 12, 'bold'), 
-             bg=THEME['bg_card'], fg=THEME['fg_primary']).pack(pady=5)
-    draw_text = ""
-    for draw_num, player_name in player_draws:
-        draw_text += f"Draw #{draw_num}: {player_name}\n"
-    tk.Label(draw_frame, text=draw_text, justify=tk.LEFT, font=('Consolas', 10), 
-             bg=THEME['bg_card'], fg=THEME['fg_secondary']).pack()
+    # Header
+    tk.Label(summary_root, text="TOURNAMENT READY", font=('Segoe UI', 18, 'bold'), 
+             bg=BG_MAIN, fg=FG_ACCENT).pack(pady=(20, 10))
+
+    # 1. Draw Results
+    draw_frame = tk.Frame(summary_root, padx=15, pady=10, bg=BG_CARD)
+    draw_frame.pack(fill='both', expand=True, padx=20, pady=5)
     
-    team_frame = tk.Frame(summary_root, padx=10, pady=10, bd=0, bg=THEME['bg_card'])
-    team_frame.pack(fill='x', padx=10, pady=5)
-    tk.Label(team_frame, text="*** Team Roster & Seeding ***", font=('Segoe UI', 12, 'bold'),
-             bg=THEME['bg_card'], fg=THEME['fg_primary']).pack(pady=5)
-    team_text = ""
+    tk.Label(draw_frame, text="Player Draw Results", font=('Segoe UI', 11, 'bold'), 
+             bg=BG_CARD, fg="#2196F3", anchor='w').pack(fill='x')
+    
+    draw_scroll = tk.Scrollbar(draw_frame)
+    draw_scroll.pack(side='right', fill='y')
+    
+    draw_text_widget = tk.Text(draw_frame, height=6, bg="#2D2D2D", fg="white", 
+                               font=('Consolas', 9), relief='flat', yscrollcommand=draw_scroll.set)
+    draw_text_widget.pack(fill='both', expand=True, pady=5)
+    draw_scroll.config(command=draw_text_widget.yview)
+
+    draw_content = ""
+    for draw_num, player_name in player_draws:
+        draw_content += f"Draw #{draw_num}: {player_name}\n"
+    
+    draw_text_widget.insert('1.0', draw_content)
+    draw_text_widget.config(state='disabled')
+
+    # 2. Team Rosters
+    team_frame = tk.Frame(summary_root, padx=15, pady=10, bg=BG_CARD)
+    team_frame.pack(fill='both', expand=True, padx=20, pady=5)
+    
+    tk.Label(team_frame, text="Team Rosters & Seeding", font=('Segoe UI', 11, 'bold'),
+             bg=BG_CARD, fg="#FFC107", anchor='w').pack(fill='x')
+    
+    team_text_widget = tk.Text(team_frame, height=6, bg="#2D2D2D", fg="white", 
+                               font=('Consolas', 9), relief='flat')
+    team_text_widget.pack(fill='both', expand=True, pady=5)
+    
+    team_content = ""
     for i, team_name in enumerate(TEAMS):
         roster = TEAM_ROSTERS.get(team_name, ["N/A", "N/A"])
-        team_text += f"Team {i+1} (T{i+1}): {roster[0]} / {roster[1]}\n"
-    tk.Label(team_frame, text=team_text, justify=tk.LEFT, font=('Consolas', 10),
-             bg=THEME['bg_card'], fg=THEME['fg_secondary']).pack()
+        team_content += f"Team {i+1} (T{i+1}): {roster[0]} / {roster[1]}\n"
     
-    prize_frame = tk.Frame(summary_root, padx=10, pady=10, bd=0, bg=THEME['bg_card'])
-    prize_frame.pack(fill='x', padx=10, pady=5)
-    tk.Label(prize_frame, text="*** Prize Pool Calculation ***", font=('Segoe UI', 12, 'bold'),
-             bg=THEME['bg_card'], fg=THEME['fg_primary']).pack(pady=5)
+    team_text_widget.insert('1.0', team_content)
+    team_text_widget.config(state='disabled')
+    
+    # 3. Prize Pool
+    prize_frame = tk.Frame(summary_root, padx=15, pady=10, bg=BG_CARD)
+    prize_frame.pack(fill='x', padx=20, pady=5)
+    
+    tk.Label(prize_frame, text="Prize Pool Calculation", font=('Segoe UI', 11, 'bold'),
+             bg=BG_CARD, fg="#E91E63", anchor='w').pack(fill='x')
     
     per_player_1st = int(prizes.get('1st', 0) / 2)
     per_player_2nd = int(prizes.get('2nd', 0) / 2)
     
-    prize_text = f"Total Pool: ${total_pool}\n"
-    prize_text += f"1st Place Prize: ${prizes.get('1st', 0)} (${per_player_1st} per player)\n"
-    prize_text += f"2nd Place Prize: ${prizes.get('2nd', 0)} (${per_player_2nd} per player)\n"
+    prize_text = f"Total Pool: ${total_pool}\n\n"
+    prize_text += f"1st Place: ${prizes.get('1st', 0)} (${per_player_1st} / player)\n"
+    prize_text += f"2nd Place: ${prizes.get('2nd', 0)} (${per_player_2nd} / player)\n"
     
-    if prizes.get('3rd') is not None:
+    if prizes.get('3rd') is not None and prizes.get('3rd') > 0:
         per_player_3rd = int(prizes.get('3rd', 0) / 2)
-        prize_text += f"3rd Place Prize: ${prizes.get('3rd', 0)} (${per_player_3rd} per player)\n"
+        prize_text += f"3rd Place: ${prizes.get('3rd', 0)} (${per_player_3rd} / player)\n"
         
     tk.Label(prize_frame, text=prize_text, justify=tk.LEFT, font=('Consolas', 10),
-             bg=THEME['bg_card'], fg=THEME['fg_secondary']).pack()
+             bg=BG_CARD, fg="white").pack(anchor='w', pady=5)
     
     start_button = tk.Button(summary_root, text="BEGIN TOURNAMENT", 
                              command=summary_root.quit, 
                              bg=THEME['btn_confirm'], fg='white', font=('Segoe UI', 12, 'bold'), height=2,
                              relief='flat', padx=20)
-    start_button.pack(fill='x', padx=10, pady=10)
+    start_button.pack(fill='x', padx=20, pady=20)
     
     summary_root.mainloop() 
     summary_root.destroy()
@@ -1945,9 +1979,20 @@ def get_player_setup_dialog(parent):
     """
     log_message("Opening unified player setup dialog.") 
     
+    # --- Theme Constants for this Dialog ---
+    BG_MAIN = "#121212"
+    BG_CARD = "#1E1E1E" 
+    FG_TEXT = "#E0E0E0"
+    FG_SUB = "#B0B0B0"
+    ENTRY_BG = "#2D2D2D"
+    ENTRY_FG = "#FFFFFF"
+    BTN_BG = "#333333"
+    BTN_FG = "#FFFFFF"
+    
     dialog = tk.Toplevel(parent)
     dialog.title("Tournament Setup - Player Entry")
-    dialog.geometry("650x800") 
+    dialog.geometry("650x850") 
+    dialog.configure(bg=BG_MAIN)
     dialog.grab_set() 
     
     result = None 
@@ -1984,34 +2029,36 @@ def get_player_setup_dialog(parent):
             val = name_entry.get().strip()
             
             if val and counts[val] > 1:
-                name_entry.config(bg='#FFCDD2') 
+                name_entry.config(bg='#C62828', fg='white') # Dark Red
                 has_duplicates = True
             elif not paid_var.get():
-                name_entry.config(bg='#FFE0B2') 
+                name_entry.config(bg='#EF6C00', fg='white') # Dark Orange
             else:
-                name_entry.config(bg='white')
+                name_entry.config(bg=ENTRY_BG, fg=ENTRY_FG)
         return has_duplicates
 
     # --- Dynamic Rendering Logic ---
     def create_player_row(parent_frame, player_index, initial_data=None):
         """Creates a row, populating with existing data if provided."""
-        row_frame = tk.Frame(parent_frame, bg="#f0f0f0")
-        row_frame.pack(fill='x', pady=2)
+        row_frame = tk.Frame(parent_frame, bg=BG_CARD, pady=2)
+        row_frame.pack(fill='x', pady=3, padx=5)
         
         p_num = player_index + 1
-        tk.Label(row_frame, text=f"P{p_num}:", width=4, anchor='w', bg="#f0f0f0").pack(side='left')
+        tk.Label(row_frame, text=f"P{p_num:02}:", width=4, anchor='w', 
+                 bg=BG_CARD, fg=FG_SUB, font=('Segoe UI', 10, 'bold')).pack(side='left', padx=5)
 
         draw_entry = None
         if is_manual_draw.get():
-            draw_entry = tk.Entry(row_frame, width=5, justify='center')
+            draw_entry = tk.Entry(row_frame, width=5, justify='center', 
+                                  bg=ENTRY_BG, fg=ENTRY_FG, insertbackground='white', relief='flat')
             draw_entry.pack(side='left', padx=(0,5))
             # Restore draw or default to index
             val = initial_data.get('draw') if initial_data else str(p_num)
             draw_entry.insert(0, val if val else str(p_num))
-            tk.Label(row_frame, text="|", bg="#f0f0f0").pack(side='left', padx=(0,5))
+            tk.Label(row_frame, text="|", bg=BG_CARD, fg=FG_SUB).pack(side='left', padx=(0,5))
 
-        name_entry = tk.Entry(row_frame)
-        name_entry.pack(side='left', fill='x', expand=True, padx=(0, 5))
+        name_entry = tk.Entry(row_frame, bg=ENTRY_BG, fg=ENTRY_FG, insertbackground='white', relief='flat', font=('Segoe UI', 10))
+        name_entry.pack(side='left', fill='x', expand=True, padx=(0, 5), ipady=3)
         # Restore name or default to "Player X"
         name_val = initial_data.get('name') if initial_data else f"Player {p_num}"
         name_entry.insert(0, name_val)
@@ -2019,8 +2066,10 @@ def get_player_setup_dialog(parent):
 
         paid_var = tk.BooleanVar(value=initial_data.get('paid', False) if initial_data else False)
         chk = tk.Checkbutton(row_frame, text="Paid", variable=paid_var, 
-                             bg="#f0f0f0", command=update_visuals)
-        chk.pack(side='right', padx=(5, 0))
+                             bg=BG_CARD, fg=FG_TEXT, selectcolor=BG_MAIN, 
+                             activebackground=BG_CARD, activeforeground=FG_TEXT,
+                             command=update_visuals)
+        chk.pack(side='right', padx=(5, 10))
 
         return (name_entry, paid_var, draw_entry)
 
@@ -2034,7 +2083,7 @@ def get_player_setup_dialog(parent):
 
         instr = "Draw # unique" if is_manual_draw.get() else "Auto-Draw"
         tk.Label(container, text=f"** {instr} | Orange=Unpaid | Red=Duplicate **", 
-                 fg='#555555', bg="#f0f0f0", font=('Arial', 9, 'bold')).pack(pady=(5, 5), anchor='w')
+                 fg=FG_SUB, bg=BG_CARD, font=('Segoe UI', 9)).pack(pady=(10, 5), anchor='w', padx=10)
 
         for i in range(current_player_count):
             existing = saved_data[i] if i < len(saved_data) else None
@@ -2046,36 +2095,46 @@ def get_player_setup_dialog(parent):
         update_visuals()
 
     # --- Controls ---
-    header_frame = tk.Frame(dialog)
-    header_frame.pack(fill='x', padx=10, pady=10)
-    tk.Label(header_frame, text="Configure Players", font=("Arial", 14, "bold")).pack(side='top', pady=(0, 10))
+    header_frame = tk.Frame(dialog, bg=BG_MAIN, pady=10)
+    header_frame.pack(fill='x')
+    tk.Label(header_frame, text="Configure Players", font=("Segoe UI", 16, "bold"), 
+             bg=BG_MAIN, fg=THEME['blue_team']).pack(side='top', pady=(0, 10))
 
-    controls_frame = tk.Frame(header_frame)
-    controls_frame.pack(fill='x')
+    controls_frame = tk.Frame(header_frame, bg=BG_MAIN)
+    controls_frame.pack(fill='x', padx=20)
 
     tk.Checkbutton(controls_frame, text="Manual Draw (Assign Draw #)", 
-                  variable=is_manual_draw, command=lambda: render_inputs(input_container)).pack(side='left')
+                  variable=is_manual_draw, command=lambda: render_inputs(input_container),
+                  bg=BG_MAIN, fg=FG_TEXT, selectcolor=BG_CARD, activebackground=BG_MAIN, activeforeground=FG_TEXT).pack(side='left')
+    
     tk.Checkbutton(controls_frame, text="Log Game to File", 
-                  variable=log_game_var, command=lambda: toggle_log_game(log_game_var)).pack(side='right')
+                  variable=log_game_var, command=lambda: toggle_log_game(log_game_var),
+                  bg=BG_MAIN, fg=FG_TEXT, selectcolor=BG_CARD, activebackground=BG_MAIN, activeforeground=FG_TEXT).pack(side='right')
 
     # --- Scrollable Area ---
-    canvas_frame = tk.Frame(dialog, bd=1, relief="sunken")
-    canvas_frame.pack(fill='both', expand=True, padx=10, pady=5)
+    canvas_frame = tk.Frame(dialog, bd=0, bg=BG_CARD)
+    canvas_frame.pack(fill='both', expand=True, padx=20, pady=10)
+    
     v_scrollbar = tk.Scrollbar(canvas_frame)
     v_scrollbar.pack(side='right', fill='y')
-    canvas = tk.Canvas(canvas_frame, yscrollcommand=v_scrollbar.set, bg="#f0f0f0")
+    
+    canvas = tk.Canvas(canvas_frame, yscrollcommand=v_scrollbar.set, bg=BG_CARD, highlightthickness=0)
     canvas.pack(side='left', fill='both', expand=True)
+    
     v_scrollbar.config(command=canvas.yview)
-    input_container = tk.Frame(canvas, bg="#f0f0f0")
+    
+    input_container = tk.Frame(canvas, bg=BG_CARD)
     canvas.create_window((0, 0), window=input_container, anchor="nw")
     input_container.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
     canvas.bind_all("<MouseWheel>", lambda e: canvas.yview_scroll(int(-1*(e.delta/120)), "units"))
 
     # --- Team Mgmt ---
-    mgmt_frame = tk.Frame(dialog, pady=10)
+    mgmt_frame = tk.Frame(dialog, bg=BG_MAIN, pady=15)
     mgmt_frame.pack(fill='x')
-    lbl_count = tk.Label(mgmt_frame, text=f"Total Players: {current_player_count}", font=("Arial", 11, "bold"))
-    lbl_count.pack()
+    
+    lbl_count = tk.Label(mgmt_frame, text=f"Total Players: {current_player_count}", 
+                         font=("Segoe UI", 12, "bold"), bg=BG_MAIN, fg=FG_TEXT)
+    lbl_count.pack(pady=(0, 10))
 
     def update_count(delta):
         nonlocal current_player_count
@@ -2087,13 +2146,17 @@ def get_player_setup_dialog(parent):
         else:
             messagebox.showwarning("Limit", f"Player count must be between {MIN_PLAYERS} and {MAX_PLAYERS}.")
 
-    btn_frame = tk.Frame(mgmt_frame)
+    btn_frame = tk.Frame(mgmt_frame, bg=BG_MAIN)
     btn_frame.pack()
-    tk.Button(btn_frame, text="+ Add Team", command=lambda: update_count(2), bg="#DDDDDD").pack(side='left', padx=10)
-    tk.Button(btn_frame, text="- Remove Team", command=lambda: update_count(-2), bg="#DDDDDD").pack(side='left', padx=10)
+    
+    tk.Button(btn_frame, text="+ Add Team", command=lambda: update_count(2), 
+              bg=BTN_BG, fg=BTN_FG, relief='flat', padx=15, pady=5).pack(side='left', padx=10)
+    
+    tk.Button(btn_frame, text="- Remove Team", command=lambda: update_count(-2), 
+              bg=BTN_BG, fg=BTN_FG, relief='flat', padx=15, pady=5).pack(side='left', padx=10)
 
     # --- Footer ---
-    action_frame = tk.Frame(dialog, pady=10, bd=1, relief='groove')
+    action_frame = tk.Frame(dialog, pady=20, bg=BG_MAIN)
     action_frame.pack(fill='x', side='bottom')
 
     def on_ok():
@@ -2131,8 +2194,13 @@ def get_player_setup_dialog(parent):
         result = (is_manual_draw.get(), player_data_list)
         dialog.destroy()
 
-    tk.Button(action_frame, text="START TOURNAMENT", command=on_ok, bg='#4CAF50', fg='white', font=('Arial', 11, 'bold'), padx=20).pack(side='right', padx=20)
-    tk.Button(action_frame, text="Cancel", command=dialog.destroy).pack(side='right', padx=10)
+    tk.Button(action_frame, text="START TOURNAMENT", command=on_ok, 
+              bg=THEME['btn_confirm'], fg='white', font=('Segoe UI', 11, 'bold'), 
+              relief='flat', padx=30, pady=8).pack(side='right', padx=20)
+              
+    tk.Button(action_frame, text="Cancel", command=dialog.destroy,
+              bg=THEME['btn_cancel'], fg='white', font=('Segoe UI', 10), 
+              relief='flat', padx=15, pady=8).pack(side='right', padx=10)
 
     render_inputs(input_container)
     dialog.wait_window()
