@@ -13,7 +13,7 @@ import time
 import json 
 
 # --- Version ---
-SHUF_VERSION = "1.45-Theme"
+SHUF_VERSION = "1.46"
 
 # --- Theme Configuration ---
 THEME = {
@@ -329,35 +329,6 @@ def show_title_screen():
     splash.mainloop()
 
 # --- Winnings Calculation (Retained for fallback only) ---
-
-def calculate_winnings(num_teams):
-    """Calculates prize pool and payouts based on team count, ensuring whole dollars."""
-    PAYOUT_SPLIT_3_TEAMS = {'1st': 0.70, '2nd': 0.30, '3rd': 0.00}
-    PAYOUT_SPLIT_4_PLUS = {'1st': 0.50, '2nd': 0.30, '3rd': 0.20}
-    
-    total_pool = num_teams * 2 * ENTRY_FEE_PER_PERSON
-    
-    if num_teams == 3:	
-        payouts = PAYOUT_SPLIT_3_TEAMS
-    else:
-        payouts = PAYOUT_SPLIT_4_PLUS
-        
-    prizes = {}
-    remaining_pool = total_pool
-    
-    prizes['1st'] = int(total_pool * payouts['1st'])
-    prizes['2nd'] = int(total_pool * payouts['2nd'])
-    
-    if num_teams >= 4:
-        # Calculate 3rd place prize using remaining pool to ensure whole dollar remainder
-        prizes['3rd'] = remaining_pool - prizes['1st'] - prizes['2nd']
-    else:
-        prizes['3rd'] = 0
-        
-    log_message(f"Calculated prizes (fallback): Total Pool ${total_pool}, Prizes {prizes}") 
-    return total_pool, prizes
-
-# --- Bracket Sorting Utility (Retained) ---
 
 def sort_match_keys(k):
     """Sorts match keys (G1, G2... G7, GF, GGF) numerically, handling non-numeric games safely."""
@@ -910,128 +881,6 @@ def open_full_bracket():
     
     draw_large_bracket(full_bracket_canvas)
 
-def draw_bracket(canvas):
-    """
-    Draws the visual bracket on the Canvas using dynamically calculated proportional 
-    coordinates and dynamic line drawing.
-    """
-    global TEAM_ROSTERS
-    canvas.delete('all')
-    log_message("Redrawing main bracket.") 
-    
-    canvas.update_idletasks()
-    canvas_width = canvas.winfo_width()
-    canvas_height = canvas.winfo_height()
-    
-    X_UNITS = 100 
-    Y_UNITS = 100 
-    MATCH_WIDTH_U = 12 
-    MATCH_HEIGHT_U = 6 
-    
-    H_PAD = 0.02 * canvas_width
-    V_PAD = 0.02 * canvas_height
-    
-    effective_width = canvas_width - 2 * H_PAD
-    effective_height = canvas_height - 2 * V_PAD
-    
-    H_SCALE = effective_width / X_UNITS
-    V_SCALE = effective_height / Y_UNITS
-
-    match_w = MATCH_WIDTH_U * H_SCALE
-    match_h = MATCH_HEIGHT_U * V_SCALE
-    
-    MIN_MATCH_W, MIN_MATCH_H = 80, 30
-    match_w = max(match_w, MIN_MATCH_W)
-    match_h = max(match_h, MIN_MATCH_H)
-    
-    match_coords = calculate_dynamic_coords(TOURNAMENT_STATE)
-
-    def get_coords(match_id):
-        if match_id not in match_coords: return 0, 0
-        u_x, u_y = match_coords[match_id]
-        x = u_x * H_SCALE + H_PAD
-        y = u_y * V_SCALE + V_PAD
-        return x, y
-        
-    draw_dynamic_lines(canvas, TOURNAMENT_STATE, match_coords, match_w, match_h, H_SCALE, V_SCALE, H_PAD, V_PAD)
-
-    font_id_size = max(5, int(match_h / 8))
-    font_team_size = max(8, int(match_h / 5))
-    font_roster_size = max(6, int(match_h / 8))
-    
-    for match_id, match_data in TOURNAMENT_STATE.items():
-        if not isinstance(match_data, dict) or 'teams' not in match_data:
-             continue
-            
-        if not match_id.startswith('G') and match_id != 'GF' and match_id != 'GGF':
-            continue
-            
-        if match_id not in match_coords:
-            continue
-            
-        x, y = get_coords(match_id)
-
-        fill_color = 'white'
-        
-        if match_id == TOURNAMENT_STATE.get('active_match_id') and match_data['winner'] is None:
-            fill_color = '#FFF9C4'
-        elif match_data.get('is_reset') and match_data.get('winner') is None:
-             fill_color = '#FFCC80' # Orange-ish
-        
-        if match_data.get('champion'):
-             fill_color = THEME['accent_gold']
-        elif match_data.get('winner') is not None and match_data.get('winner_color') == 'red':
-             fill_color = '#FFCDD2' 
-        elif match_data.get('winner') is not None and match_data.get('winner_color') == 'blue':
-             fill_color = '#BBDEFB' 
-        
-        canvas.create_rectangle(x, y, x + match_w, y + match_h, 
-                                fill=fill_color, outline='#263238', width=2, tags=match_id)
-        
-        canvas.create_text(x + 5, y + 5, text=f"{match_id}", anchor='w', fill='#546E7A', font=('Segoe UI', font_id_size))
-
-        if match_data['winner'] or match_data.get('champion'):
-            winner_team = match_data.get('champion') or match_data['winner']
-            color = 'dark red' if match_data.get('champion') else 'dark green'
-            
-            roster = TEAM_ROSTERS.get(winner_team, ['P1', 'P2'])
-            roster_str = f"({roster[0]} / {roster[1]})"
-            
-            canvas.create_text(x + match_w/2, y + match_h/2 - font_team_size/2, 
-                               text=winner_team, fill=color, font=('Segoe UI', font_team_size, 'bold'))
-            canvas.create_text(x + match_w/2, y + match_h/2 + font_roster_size*1.2, 
-                               text=roster_str, fill=color, font=('Segoe UI', font_roster_size))
-
-        else:
-            team_A = match_data['teams'][0]
-            text_fill_color_A = 'black'
-            if team_A:
-                roster_A = TEAM_ROSTERS.get(team_A, ['P1', 'P2'])
-                p_A_roster_str = f"({roster_A[0]} / {roster_A[1]})"
-                text_A = f"{team_A} {p_A_roster_str}"
-            else:
-                text_A = 'TBD'
-                text_fill_color_A = '#90A4AE'
-
-            canvas.create_text(x + 5, y + match_h/4 + 3, text=text_A, anchor='w', font=('Segoe UI', font_roster_size), fill=text_fill_color_A)
-
-            canvas.create_line(x + 5, y + match_h/2, x + match_w - 5, y + match_h/2, fill='#B0BEC5')
-
-            team_B = match_data['teams'][1]
-            text_fill_color_B = 'black'
-            if team_B:
-                roster_B = TEAM_ROSTERS.get(team_B, ['P3', 'P4'])
-                p_B_roster_str = f"({roster_B[0]} / {roster_B[1]})"
-                text_B = f"{team_B} {p_B_roster_str}"
-            else:
-                text_B = 'TBD'
-                text_fill_color_B = '#90A4AE'
-            
-            canvas.create_text(x + 5, y + 3*match_h/4 - 3, text=text_B, anchor='w', font=('Segoe UI', font_roster_size), fill=text_fill_color_B)
-
-
-# --- Utility to find the Next Active Match ---
-
 def find_next_active_match():
     """Iterates through all match keys (in chronological order) to find the next ready-to-play match."""
     
@@ -1071,20 +920,6 @@ def _serialize_config_for_snapshot(config):
                 out[k] = v
         return out
     return config
-
-def _serialize_match_for_snapshot(match_data):
-    """
-    Produce a minimal JSON-serializable dict for a single match entry.
-    """
-    if not isinstance(match_data, dict):
-        return match_data
-    return {
-        "teams": match_data.get("teams"),
-        "winner": match_data.get("winner"),
-        "winner_color": match_data.get("winner_color"),
-        "is_reset": bool(match_data.get("is_reset", False)),
-        "config": _serialize_config_for_snapshot(match_data.get("config", {})),
-    }
 
 def serialize_snapshot():
     """
