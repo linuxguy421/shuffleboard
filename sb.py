@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 
+import tkinter as ttk
 import tkinter as tk
-from tkinter import messagebox, simpledialog, filedialog
+from tkinter import messagebox, simpledialog, filedialog, ttk
 from math import log2, ceil
 import sys
 import re 
@@ -56,6 +57,8 @@ MIN_PLAYERS = 6
 MAX_PLAYERS = 20    
 
 # Global state and Canvas item IDs
+MATCH_HISTORY = []  # Tracks completed matches: {'id': id, 'winner': name, 'loser': name, 'color': color}
+schedule_content_frame = None # Reference for refreshing the UI
 TOURNAMENT_STATE = {}
 REPLAY_FILEPATH = None # Initialized to None, set only on New Game or Resume
 REPLAY_MODE = False
@@ -118,6 +121,457 @@ def _find_last_snapshot_in_file(path):
                 continue
 
     return last_snapshot
+
+# --- Global References for New UI ---
+ui_references = {
+    'notebook': None,
+    'match_tab_frame': None,
+    'red_card_frame': None,
+    'blue_card_frame': None,
+    'red_name_lbl': None,
+    'red_roster_lbl': None,
+    'red_stats_lbl': None,
+    'blue_name_lbl': None,
+    'blue_roster_lbl': None,
+    'blue_stats_lbl': None,
+    'info_lbl': None,
+    'vs_label': None
+}
+
+def setup_scoreboard(root, team_red_placeholder, team_blue_placeholder):
+    """
+    Redesigned Main UI: Uses Tabs to separate concerns and a 'Card' layout for the match.
+    """
+    global scoreboard_canvas_ref, team_labels, player_labels_ref, status_label
+    global match_input_frame, match_res_frame, btn_red, btn_blue, roster_seeding_frame_ref
+    global match_details_frame, game_routing_label, team_info_labels, bracket_info_canvas_ref
+    global rankings_label_ref, btn_switch, bracket_info_frame_ref, team_info_frame_ref
+    global switch_frame_ref, final_control_frame_ref, rankings_display_frame_ref
+    global ui_references
+
+    log_message("Initializing modernized scoreboard UI.")
+
+    # --- Styling for Notebook (Dark Theme) ---
+    style = ttk.Style()
+    style.theme_use('default')
+    style.configure("TNotebook", background=THEME['bg_main'], borderwidth=0)
+    style.configure("TNotebook.Tab", background=THEME['bg_card'], foreground=THEME['fg_secondary'], padding=[10, 5], font=('Segoe UI', 10))
+    style.map("TNotebook.Tab", background=[("selected", THEME['bg_canvas'])], foreground=[("selected", THEME['fg_primary'])])
+    style.configure("TFrame", background=THEME['bg_main'])
+
+    # --- Header Status ---
+    status_frame = tk.Frame(root, bg=THEME['bg_card'], padx=10, pady=5)
+    status_frame.pack(fill='x', side='top')
+    
+    status_label = tk.Label(status_frame, text="Tournament Initialized.", font=('Segoe UI', 12, 'bold'),
+                            bg=THEME['bg_card'], fg=THEME['accent_gold'])
+    status_label.pack(side='left')
+
+    # --- Main Notebook (Tabs) ---
+    notebook = ttk.Notebook(root)
+    notebook.pack(fill='both', expand=True, padx=5, pady=5)
+    ui_references['notebook'] = notebook
+
+    # Tab 1: The Arena (Active Match)
+    tab_match = tk.Frame(notebook, bg=THEME['bg_main'])
+    notebook.add(tab_match, text='   ⚔️ ARENA   ')
+    
+    # Tab 3: The Roster (List)
+    tab_roster = tk.Frame(notebook, bg=THEME['bg_main'])
+    notebook.add(tab_roster, text='   👥 ROSTERS   ')
+
+    # ==========================
+    # TAB 1: ARENA LAYOUT
+    # ==========================
+    
+    # 1. Routing Info (Where does winner go?)
+    info_frame = tk.Frame(tab_match, bg=THEME['bg_main'], pady=5)
+    info_frame.pack(fill='x')
+    game_routing_label = tk.Label(info_frame, text="Winner -> TBD | Loser -> TBD", 
+                                  font=('Segoe UI', 9), fg=THEME['fg_secondary'], bg=THEME['bg_main'])
+    game_routing_label.pack()
+    ui_references['info_lbl'] = game_routing_label
+
+    # 2. The Interaction Area (Cards)
+    match_input_frame = tk.Frame(tab_match, bg=THEME['bg_main'])
+    match_input_frame.pack(fill='both', expand=True, padx=5, pady=5)
+    ui_references['match_tab_frame'] = match_input_frame # Reference for hiding later
+
+    # -- Red Card --
+    red_card = tk.Frame(match_input_frame, bg=THEME['bg_card'], bd=2, relief='flat')
+    red_card.place(relx=0.0, rely=0.0, relwidth=0.48, relheight=0.85)
+    ui_references['red_card_frame'] = red_card
+
+    # Red Content
+    tk.Label(red_card, text="RED TEAM", font=('Segoe UI', 8, 'bold'), fg=THEME['red_team'], bg=THEME['bg_card']).pack(pady=(10,0))
+    
+    ui_references['red_name_lbl'] = tk.Label(red_card, text=team_red_placeholder, font=('Segoe UI', 14, 'bold'), 
+                                             fg=THEME['fg_primary'], bg=THEME['bg_card'], wraplength=180)
+    ui_references['red_name_lbl'].pack(pady=(5,0))
+    
+    ui_references['red_roster_lbl'] = tk.Label(red_card, text="P1 / P2", font=('Segoe UI', 10), 
+                                               fg=THEME['fg_secondary'], bg=THEME['bg_card'])
+    ui_references['red_roster_lbl'].pack(pady=(2,10))
+    
+    ui_references['red_stats_lbl'] = tk.Label(red_card, text="0-0", font=('Consolas', 9), fg=THEME['fg_secondary'], bg=THEME['bg_card'])
+    ui_references['red_stats_lbl'].pack(side='bottom', pady=5)
+    
+    btn_red = tk.Button(red_card, text="🏆 RED WINS", command=lambda: declare_winner('red'),
+                        bg=THEME['red_team'], fg='white', font=('Segoe UI', 11, 'bold'),
+                        relief='flat', activebackground='#C62828', cursor='hand2')
+    btn_red.pack(side='bottom', fill='x', padx=10, pady=10)
+
+    # -- VS Center --
+    vs_frame = tk.Frame(match_input_frame, bg=THEME['bg_main'])
+    vs_frame.place(relx=0.48, rely=0.0, relwidth=0.04, relheight=0.85)
+    ui_references['vs_label'] = tk.Label(vs_frame, text="VS", font=('Segoe UI', 12, 'bold'), fg=THEME['fg_secondary'], bg=THEME['bg_main'])
+    ui_references['vs_label'].place(relx=0.5, rely=0.4, anchor='center')
+
+    # -- Blue Card --
+    blue_card = tk.Frame(match_input_frame, bg=THEME['bg_card'], bd=2, relief='flat')
+    blue_card.place(relx=0.52, rely=0.0, relwidth=0.48, relheight=0.85)
+    ui_references['blue_card_frame'] = blue_card
+
+    # Blue Content
+    tk.Label(blue_card, text="BLUE TEAM", font=('Segoe UI', 8, 'bold'), fg=THEME['blue_team'], bg=THEME['bg_card']).pack(pady=(10,0))
+    
+    ui_references['blue_name_lbl'] = tk.Label(blue_card, text=team_blue_placeholder, font=('Segoe UI', 14, 'bold'), 
+                                              fg=THEME['fg_primary'], bg=THEME['bg_card'], wraplength=180)
+    ui_references['blue_name_lbl'].pack(pady=(5,0))
+    
+    ui_references['blue_roster_lbl'] = tk.Label(blue_card, text="P3 / P4", font=('Segoe UI', 10), 
+                                                fg=THEME['fg_secondary'], bg=THEME['bg_card'])
+    ui_references['blue_roster_lbl'].pack(pady=(2,10))
+    
+    ui_references['blue_stats_lbl'] = tk.Label(blue_card, text="0-0", font=('Consolas', 9), fg=THEME['fg_secondary'], bg=THEME['bg_card'])
+    ui_references['blue_stats_lbl'].pack(side='bottom', pady=5)
+
+    btn_blue = tk.Button(blue_card, text="🏆 BLUE WINS", command=lambda: declare_winner('blue'),
+                         bg=THEME['blue_team'], fg='white', font=('Segoe UI', 11, 'bold'),
+                         relief='flat', activebackground='#1565C0', cursor='hand2')
+    btn_blue.pack(side='bottom', fill='x', padx=10, pady=10)
+
+    # -- Controls (Bottom of Arena) --
+    ctrl_frame = tk.Frame(tab_match, bg=THEME['bg_main'], pady=5)
+    ctrl_frame.pack(fill='x', side='bottom')
+    
+    switch_frame_ref = ctrl_frame # Use existing ref name for compatibility
+    
+    btn_switch = tk.Button(ctrl_frame, text="🔄 Swap Puck Color", command=swap_teams,
+                           bg=THEME['btn_default'], fg='white', relief='flat', font=('Segoe UI', 9))
+    btn_switch.pack(side='left', padx=5, fill='x', expand=True)
+    
+    tk.Button(ctrl_frame, text="Pop-out Bracket ↗", command=open_full_bracket,
+              bg=THEME['btn_default'], fg='white', relief='flat', font=('Segoe UI', 9)).pack(side='left', padx=5, fill='x', expand=True)
+
+    # -- Result Confirmation (Initially Hidden) --
+    match_res_frame = tk.Frame(tab_match, bg=THEME['bg_main'], padx=20, pady=40)
+    # Note: We don't pack it yet. declare_winner will handle it.
+
+    # -- Final Rankings (Initially Hidden) --
+    rankings_display_frame_ref = tk.Frame(root, bg=THEME['bg_card'])
+    rankings_label_ref = tk.Label(rankings_display_frame_ref, text="", bg=THEME['bg_card'], fg=THEME['fg_primary'])
+    rankings_label_ref.pack()
+    final_control_frame_ref = tk.Frame(root, bg=THEME['bg_main'])
+
+
+    # --- Tab 2: SCHEDULE & HISTORY ---
+    schedule_tab = tk.Frame(notebook, bg=THEME['bg_main'])
+    notebook.add(schedule_tab, text=" SCHEDULE ")
+    
+    # Scrollable container for the schedule
+    sched_canvas = tk.Canvas(schedule_tab, bg=THEME['bg_main'], highlightthickness=0)
+    sched_scrollbar = ttk.Scrollbar(schedule_tab, orient="vertical", command=sched_canvas.yview)
+    global schedule_content_frame
+    schedule_content_frame = tk.Frame(sched_canvas, bg=THEME['bg_main'])
+    
+    schedule_content_frame.bind(
+        "<Configure>",
+        lambda e: sched_canvas.configure(scrollregion=sched_canvas.bbox("all"))
+    )
+    
+    sched_canvas.create_window((0, 0), window=schedule_content_frame, anchor="nw", width=480) # Adjust width as needed
+    sched_canvas.configure(yscrollcommand=sched_scrollbar.set)
+    
+    sched_canvas.pack(side="left", fill="both", expand=True)
+    sched_scrollbar.pack(side="right", fill="y")
+
+    # ==========================
+    # TAB 3: ROSTERS
+    # ==========================
+    # Use the existing roster logic but in a vertical scroll
+    roster_scroll = tk.Scrollbar(tab_roster)
+    roster_scroll.pack(side='right', fill='y')
+    
+    roster_canvas = tk.Canvas(tab_roster, bg=THEME['bg_card'], highlightthickness=0, yscrollcommand=roster_scroll.set)
+    roster_canvas.pack(side='left', fill='both', expand=True)
+    roster_scroll.config(command=roster_canvas.yview)
+    
+    roster_seeding_frame_ref = tk.Frame(roster_canvas, bg=THEME['bg_card'])
+    roster_canvas.create_window((0,0), window=roster_seeding_frame_ref, anchor='nw')
+    
+    roster_seeding_frame_ref.bind("<Configure>", lambda e: roster_canvas.configure(scrollregion=roster_canvas.bbox("all")))
+    
+    # Initialize Data
+    update_roster_seeding_vertical() # New helper function for vertical roster
+    load_match_data_and_teams()
+
+def update_schedule_tab():
+    """
+    Refreshes the Schedule tab. 
+    Shows players (rosters) instead of Team IDs for better readability.
+    """
+    global schedule_content_frame, MATCH_HISTORY, TOURNAMENT_STATE, TEAM_ROSTERS
+    if not schedule_content_frame: return
+
+    # Clear existing widgets
+    for widget in schedule_content_frame.winfo_children():
+        widget.destroy()
+
+    # --- SECTION 1: ON DECK (Upcoming) ---
+    tk.Label(schedule_content_frame, text="UPCOMING MATCHES", font=THEME['font_bold'], 
+             fg=THEME['accent_gold'], bg=THEME['bg_main'], pady=10).pack()
+    
+    active_id = TOURNAMENT_STATE.get('active_match_id')
+    upcoming_count = 0
+    
+    # Sort match keys (G1, G2, etc.) to show them in order
+    for mid in sorted(TOURNAMENT_STATE.keys(), key=sort_match_keys):
+        if mid in ['active_match_id', 'TOURNAMENT_OVER']: continue
+        m_data = TOURNAMENT_STATE[mid]
+        
+        # A match is "On Deck" if both teams are known but it hasn't been played yet
+        if m_data['teams'][0] and m_data['teams'][1] and m_data['winner'] is None and mid != active_id:
+            upcoming_count += 1
+            
+            # Fetch the rosters for both teams
+            roster_a = " / ".join(TEAM_ROSTERS.get(m_data['teams'][0], ["?", "?"]))
+            roster_b = " / ".join(TEAM_ROSTERS.get(m_data['teams'][1], ["?", "?"]))
+            
+            f = tk.Frame(schedule_content_frame, bg=THEME['bg_card'], padx=10, pady=8)
+            f.pack(fill='x', padx=20, pady=3)
+            
+            # Match ID (e.g., G4)
+            tk.Label(f, text=f"{mid}:", font=('Segoe UI', 9, 'bold'), 
+                     fg=THEME['fg_secondary'], bg=THEME['bg_card']).pack(side='left')
+            
+            # Player Names
+            tk.Label(f, text=f"{roster_a}   vs   {roster_b}", 
+                     font=('Segoe UI', 10, 'bold'), fg=THEME['fg_primary'], bg=THEME['bg_card']).pack(side='left', padx=15)
+
+    if upcoming_count == 0:
+        tk.Label(schedule_content_frame, text="No matches currently on deck.", 
+                 font=THEME['font_main'], fg=THEME['fg_secondary'], bg=THEME['bg_main']).pack(pady=10)
+
+    # --- SECTION 2: MATCH HISTORY (Recent Results) ---
+    tk.Label(schedule_content_frame, text="MATCH HISTORY", font=THEME['font_bold'], 
+             fg=THEME['accent_gold'], bg=THEME['bg_main'], pady=20).pack()
+
+    if not MATCH_HISTORY:
+        tk.Label(schedule_content_frame, text="No matches completed yet.", 
+                 font=THEME['font_main'], fg=THEME['fg_secondary'], bg=THEME['bg_main']).pack()
+    else:
+        # Show history in reverse (newest result at the top)
+        for record in reversed(MATCH_HISTORY):
+            f = tk.Frame(schedule_content_frame, bg=THEME['bg_main'], pady=3)
+            f.pack(fill='x', padx=20)
+            
+            # Use the color of the winning team for the text
+            color_hex = THEME['red_team'] if record['color'] == 'red' else THEME['blue_team']
+            
+            # Fetch rosters for the history record
+            win_roster = " / ".join(TEAM_ROSTERS.get(record['winner'], ["?", "?"]))
+            loss_roster = " / ".join(TEAM_ROSTERS.get(record['loser'], ["?", "?"]))
+            
+            # Format: "G1: Player A / Player B def. Player C / Player D"
+            history_text = f"{record['id']}: {win_roster} def. {loss_roster}"
+            
+            tk.Label(f, text=history_text, font=THEME['font_main'], 
+                     fg=color_hex, bg=THEME['bg_main']).pack(side='left')
+
+def update_roster_seeding_vertical():
+    """Updates roster tab with vertical list."""
+    global roster_seeding_frame_ref, TEAMS, TEAM_ROSTERS
+    if not roster_seeding_frame_ref: return
+    
+    for w in roster_seeding_frame_ref.winfo_children(): w.destroy()
+    
+    for i, team in enumerate(TEAMS):
+        bg_col = THEME['bg_card']
+        fg_col = THEME['fg_primary']
+        
+        # Highlight if active
+        if team in current_match_teams.values():
+            fg_col = THEME['accent_gold']
+            
+        row = tk.Frame(roster_seeding_frame_ref, bg=bg_col, pady=5)
+        row.pack(fill='x', padx=10, pady=2)
+        
+        roster = TEAM_ROSTERS.get(team, ['?','?'])
+        
+        tk.Label(row, text=f"{team}", font=('Segoe UI', 10, 'bold'), width=15, anchor='w', bg=bg_col, fg=fg_col).pack(side='left')
+        tk.Label(row, text=f"{roster[0]} / {roster[1]}", font=('Segoe UI', 10), anchor='w', bg=bg_col, fg=THEME['fg_secondary']).pack(side='left')
+
+
+def update_scoreboard_display():
+    """Redesigned update logic for the new Card UI."""
+    global team_labels, player_labels_ref, TOURNAMENT_STATE, status_label, current_match_teams
+    global game_routing_label, team_info_labels, bracket_info_canvas_ref, ui_references
+
+    match_id = TOURNAMENT_STATE.get('active_match_id', 'TOURNAMENT_OVER')
+    
+    if match_id == 'TOURNAMENT_OVER':
+        return
+        
+    log_message(f"Updating scoreboard display for match: {match_id}") 
+
+    team_red = current_match_teams['red']
+    team_blue = current_match_teams['blue']
+    
+    roster_red = " / ".join(TEAM_ROSTERS.get(team_red, ["P1", "P2"]))
+    roster_blue = " / ".join(TEAM_ROSTERS.get(team_blue, ["P3", "P4"]))
+
+    match_data = TOURNAMENT_STATE[match_id]
+    match_config = match_data['config']
+    
+    # --- Update New UI Elements ---
+    if ui_references['red_name_lbl']:
+        ui_references['red_name_lbl'].config(text=team_red)
+        ui_references['red_roster_lbl'].config(text=roster_red)
+        
+        ui_references['blue_name_lbl'].config(text=team_blue)
+        ui_references['blue_roster_lbl'].config(text=roster_blue)
+        
+        wins_red, losses_red = get_team_record(team_red)
+        wins_blue, losses_blue = get_team_record(team_blue)
+        
+        ui_references['red_stats_lbl'].config(text=f"Wins: {wins_red} | Loss: {losses_red}")
+        ui_references['blue_stats_lbl'].config(text=f"Wins: {wins_blue} | Loss: {losses_blue}")
+
+        w_next = format_destination(match_config.get('W_next'))
+        l_next = format_destination(match_config.get('L_next'))
+        
+        ui_references['info_lbl'].config(text=f"Match {match_id} • Winner: {w_next} • Loser: {l_next}")
+
+    # Update Status Header
+    status_label.config(text=f"ACTIVE MATCH: {match_id}", fg=THEME['accent_gold'])
+    
+    # Update Tab 2 (Bracket)
+    if bracket_info_canvas_ref:
+        draw_small_bracket_view(bracket_info_canvas_ref, TOURNAMENT_STATE)
+
+    # Update Full Bracket if open
+    if full_bracket_root and full_bracket_canvas:
+        try:
+            draw_large_bracket(full_bracket_canvas)
+        except Exception as e:
+            log_message(f"Error updating full bracket: {e}")
+            
+    # Refresh vertical roster highlights
+    update_roster_seeding_vertical()
+    update_schedule_tab()
+
+def declare_winner(color):
+    """Handles UI transition to confirmation screen inside the Tab."""
+    global TOURNAMENT_STATE, match_res_frame, current_match_teams
+    global ui_references, current_match_res_buttons
+    
+    match_id_to_confirm = TOURNAMENT_STATE['active_match_id']
+    winner = current_match_teams[color]
+    loser = current_match_teams['blue'] if color == 'red' else current_match_teams['red']
+    
+    log_message(f"Winner declared for {match_id_to_confirm}: {winner} ({color}).") 
+
+    # Hide the VS Cards, Show the Result Frame
+    ui_references['match_tab_frame'].pack_forget()
+    match_res_frame.pack(fill='both', expand=True, padx=10, pady=10)
+    
+    # Re-create buttons inside match_res_frame
+    for widget in match_res_frame.winfo_children():
+        widget.destroy()
+    current_match_res_buttons.clear()
+    
+    # Header
+    tk.Label(match_res_frame, text="CONFIRM RESULT", font=('Segoe UI', 14, 'bold'), 
+             bg=THEME['bg_main'], fg=THEME['fg_primary']).pack(pady=(0, 20))
+             
+    tk.Label(match_res_frame, text=f"{winner} wins Match {match_id_to_confirm}?", 
+             font=('Segoe UI', 12), bg=THEME['bg_main'], fg=THEME['fg_secondary']).pack(pady=(0, 20))
+    
+    # Big Confirm Button
+    confirm_btn = tk.Button(match_res_frame, text=f"✅ YES, {winner} WON", 
+                            bg=THEME['btn_confirm'], fg='white', 
+                            font=('Segoe UI', 12, 'bold'), relief='flat', padx=20, pady=15,
+                            command=lambda w=winner, l=loser, c=color, mid=match_id_to_confirm: confirm_match_resolution(w, l, c, mid))
+    confirm_btn.pack(pady=10, fill='x')
+    current_match_res_buttons.append(confirm_btn)
+    
+    # Cancel Button
+    go_back_btn = tk.Button(match_res_frame, text="❌ CANCEL / GO BACK", 
+                            bg=THEME['btn_cancel'], fg='white', 
+                            font=('Segoe UI', 10), relief='flat', padx=10, pady=10,
+                            command=go_back_to_selection)
+    go_back_btn.pack(pady=10, fill='x')
+    current_match_res_buttons.append(go_back_btn)
+
+def go_back_to_selection():
+    """Reverts the UI from Confirmation to the Arena view."""
+    global match_res_frame, ui_references
+    
+    log_message("Going back to winner selection screen.") 
+    
+    match_res_frame.pack_forget()
+    ui_references['match_tab_frame'].pack(fill='both', expand=True, padx=5, pady=5)
+    
+    # Ensure button text is up to date
+    update_winner_buttons()
+
+def load_match_data_and_teams():
+    """Updated to handle the new notebook structure."""
+    global TOURNAMENT_STATE, current_match_teams, last_assigned_match_id
+    global rankings_label_ref, final_control_frame_ref, rankings_display_frame_ref
+    global ui_references, match_res_frame
+    
+    match_id = TOURNAMENT_STATE.get('active_match_id', 'TOURNAMENT_OVER')
+    log_message(f"Loading match data for new active match: {match_id}") 
+    
+    # Hide End Game screens if they were open
+    if final_control_frame_ref: final_control_frame_ref.pack_forget()
+    if rankings_display_frame_ref: rankings_display_frame_ref.pack_forget()
+    
+    # Show Notebook
+    if ui_references['notebook']:
+        ui_references['notebook'].pack(fill='both', expand=True, padx=5, pady=5)
+    
+    if match_id == 'TOURNAMENT_OVER':
+        ui_references['notebook'].pack_forget() # Hide the game UI
+        
+        champion = None
+        for data in TOURNAMENT_STATE.values():
+            if isinstance(data, dict) and data.get('champion'):
+                champion = data['champion']
+                break
+        
+        if champion:
+             display_final_rankings(champion) 
+        else:
+            status_label.config(text=f"TOURNAMENT OVER! No champion declared. (Error State)", fg='dark red')
+        return
+
+    # Ensure the Arena view is visible (not the confirm view)
+    match_res_frame.pack_forget()
+    ui_references['match_tab_frame'].pack(fill='both', expand=True, padx=5, pady=5)
+
+    if match_id != last_assigned_match_id:
+        match_data = TOURNAMENT_STATE[match_id]
+        team_A = match_data['teams'][0] 
+        team_B = match_data['teams'][1] 
+        
+        current_match_teams['red'] = team_A
+        current_match_teams['blue'] = team_B
+        last_assigned_match_id = match_id
+    
+    update_scoreboard_display()
 
 def run_replay_mode(path):
     global REPLAY_FILEPATH, REPLAY_MODE, REPLAY_VIEW_ONLY
@@ -1105,6 +1559,15 @@ def handle_match_resolution(winner, loser, winning_color, match_id):
     elif l_target and l_target.endswith('_CONDITIONAL'):
         pass 
 
+    # Record to history
+    if match_id != 'TOURNAMENT_OVER' and winner and loser:
+        MATCH_HISTORY.append({
+            'id': match_id,
+            'winner': winner,
+            'loser': loser,
+            'color': winning_color
+        })
+
     # 4. Find the next actively playable match
     TOURNAMENT_STATE['active_match_id'] = find_next_active_match()
     log_message(f"Standard Match Resolution complete. New active match: {TOURNAMENT_STATE['active_match_id']}") 
@@ -1300,165 +1763,70 @@ def swap_teams():
     
     update_scoreboard_display()
 
-def go_back_to_selection():
-    """Hides the confirmation frame and shows the winner selection frame."""
-    global match_res_frame, match_input_frame, match_details_frame, current_match_res_buttons, switch_frame_ref
-    
-    log_message("Going back to winner selection screen.") 
-    
-    match_res_frame.pack_forget()
-    
-    for widget in match_res_frame.winfo_children():
-        widget.destroy()
-    current_match_res_buttons.clear()
-    
-    if switch_frame_ref: switch_frame_ref.pack(fill='x', padx=10, pady=(0, 5)) 
-    if match_details_frame: match_details_frame.pack(fill='x', padx=10, pady=5)
-    match_input_frame.pack(fill='x', pady=5)
-    
-    team_red = current_match_teams['red']
-    team_blue = current_match_teams['blue']
-    match_id = TOURNAMENT_STATE['active_match_id']
-    status_label.config(text=f"Active Match: {match_id} - {team_red} (RED) vs {team_blue} (BLUE)", 
-                        fg=THEME['fg_primary'], bg=THEME['bg_card'])
-
-def update_scoreboard_display():
-    global team_labels, player_labels_ref, TOURNAMENT_STATE, scoreboard_canvas_ref, status_label, current_match_teams
-    global game_routing_label, team_info_labels, bracket_info_canvas_ref
-
-    match_id = TOURNAMENT_STATE.get('active_match_id', 'TOURNAMENT_OVER')
-    
-    if match_id == 'TOURNAMENT_OVER':
-        return
-        
-    log_message(f"Updating scoreboard display for match: {match_id}") 
-
-    team_red = current_match_teams['red']
-    team_blue = current_match_teams['blue']
-    
-    roster_red = " / ".join(TEAM_ROSTERS.get(team_red, ["P1", "P2"]))
-    roster_blue = " / ".join(TEAM_ROSTERS.get(team_blue, ["P3", "P4"]))
-
-    canvas = scoreboard_canvas_ref
-    match_data = TOURNAMENT_STATE[match_id]
-    match_config = match_data['config']
-    
-    canvas.itemconfig(team_labels['red'], text=roster_red)
-    canvas.itemconfig(team_labels['blue'], text=roster_blue)
-    
-    canvas.itemconfig(player_labels_ref['red'], text=team_red)
-    canvas.itemconfig(player_labels_ref['blue'], text=team_blue)
-    
-    w_next = format_destination(match_config.get('W_next'))
-    l_next = format_destination(match_config.get('L_next'))
-    
-    wins_red, losses_red = get_team_record(team_red)
-    wins_blue, losses_blue = get_team_record(team_blue)
-    
-    routing_text = (
-        f"Game ID: {match_id}\n"
-        f"Winner Advances To: {w_next}\n"
-        f"Loser Drops To: {l_next}"
-    )
-    game_routing_label.config(text=routing_text)
-    
-    team_info_labels['red'].config(text=f"Wins: {wins_red}\nLosses: {losses_red}")
-    team_info_labels['blue'].config(text=f"Wins: {wins_blue}\nLosses: {losses_blue}")
-    
-    status_label.config(text=f"Active Match: {match_id}", fg=THEME['fg_primary'])
-    update_winner_buttons()
-    
-    if bracket_info_canvas_ref:
-        draw_small_bracket_view(bracket_info_canvas_ref, TOURNAMENT_STATE)
-
-    if full_bracket_root and full_bracket_canvas:
-        try:
-            draw_large_bracket(full_bracket_canvas)
-        except Exception as e:
-            log_message(f"Error updating full bracket: {e}")
-
 def display_final_rankings(champion):
     """
-    Manages packing of match detail frames to ensure the ranking label 
-    is visible between the scoreboard and the Quit button.
+    Displays the final rankings and a centered EXIT button using the correct root reference.
     """
-    global team_labels, player_labels_ref, scoreboard_canvas_ref, match_input_frame, match_details_frame, status_label
-    global TOURNAMENT_RANKINGS, main_root, rankings_label_ref, bracket_info_frame_ref, team_info_frame_ref, switch_frame_ref
-    global final_control_frame_ref, rankings_display_frame_ref
+    # Use 'main_root' instead of 'root'
+    global rankings_display_frame_ref, rankings_label_ref, status_label
+    global ui_references, final_control_frame_ref, TEAM_ROSTERS, TEAMS, main_root
+
+    log_message(f"Displaying final rankings. Champion: {champion}")
+
+    # 1. Update Header
+    if status_label:
+        status_label.config(text="🏆 TOURNAMENT COMPLETE 🏆", fg=THEME['accent_gold'])
+
+    # 2. Hide the main game interface
+    if ui_references.get('notebook'):
+        ui_references['notebook'].pack_forget()
+
+    # 3. Show the Rankings Frame
+    rankings_display_frame_ref.pack(fill='both', expand=True, padx=20, pady=20)
     
-    log_message(f"Displaying final rankings. Champion: {champion}") 
+    # 4. Format the Champion and Standings text
+    champ_roster = " / ".join(TEAM_ROSTERS.get(champion, ["?",  "?"]))
+    final_text = f"CONGRATULATIONS\n\n🏆 {champ_roster} 🏆\n\nFINAL STANDINGS:\n"
     
-    match_input_frame.pack_forget()
-    if switch_frame_ref:
-        switch_frame_ref.pack_forget() 
+    sorted_teams = sorted(TEAMS, key=lambda t: get_team_record(t)[0], reverse=True)
+    for i, team in enumerate(sorted_teams, 1):
+        w, l = get_team_record(team)
+        team_roster = " / ".join(TEAM_ROSTERS.get(team, ["?", "?"]))
+        medal = "🥇 " if i == 1 else "🥈 " if i == 2 else "🥉 " if i == 3 else f"{i}. "
+        final_text += f"\n{medal}{team_roster} ({w}W - {l}L)"
+
+    # 5. Update the text label
+    rankings_label_ref.config(
+        text=final_text, 
+        justify='center', 
+        font=('Segoe UI', 12, 'bold'),
+        fg=THEME['fg_primary'],
+        bg=THEME['bg_card'],
+        pady=20
+    )
+
+    # 6. Setup the EXIT Button
+    final_control_frame_ref.pack(fill='x', side='bottom', pady=30)
     
-    if match_details_frame: 
-        match_details_frame.pack_forget()
-    
-    if rankings_display_frame_ref:
-        rankings_display_frame_ref.pack(fill='both', expand=True, padx=10, pady=5)
+    # Clear out any old buttons
+    for child in final_control_frame_ref.winfo_children():
+        child.destroy()
         
-    status_label.config(text=f"TOURNAMENT OVER! Champion: {champion}", 
-                        font=THEME['font_header'], fg=THEME['accent_gold'], bg=THEME['bg_card'])
+    # Create the large Exit button using main_root.destroy
+    exit_button = tk.Button(
+        final_control_frame_ref, 
+        text="EXIT TOURNAMENT", 
+        command=main_root.destroy,  # Using the correct global variable
+        bg=THEME['btn_cancel'], 
+        fg='white',
+        font=('Segoe UI', 12, 'bold'), 
+        relief='flat', 
+        padx=60, 
+        pady=20,
+        cursor='hand2'
+    )
+    exit_button.pack(expand=True)
     
-    first_place = TOURNAMENT_RANKINGS.get('1ST', 'N/A')
-    second_place = TOURNAMENT_RANKINGS.get('2ND', 'N/A')
-    
-    first_team_num = first_place.split(' ')[1] if 'Team' in first_place else ''
-    second_team_num = second_place.split(' ')[1] if 'Team' in second_place else ''
-    
-    first_roster = " / ".join(TEAM_ROSTERS.get(first_place, ["P1", "P2"]))
-    second_roster = " / ".join(TEAM_ROSTERS.get(second_place, ["P3", "P4"]))
-
-    canvas = scoreboard_canvas_ref
-    canvas.delete('all')
-    
-    center_x = canvas.winfo_width() / 2
-    name_x_1st, name_x_2nd = center_x - 110, center_x + 110
-    
-    canvas.create_line(center_x, 5, center_x, 95, fill=THEME['fg_secondary'], width=1)
-    
-    canvas.create_text(name_x_1st, 15, text=f"1ST PLACE (Team {first_team_num})", fill='gold', font=('Segoe UI', 9, 'bold'))
-    canvas.create_text(name_x_1st, 40, text=f"{first_roster}", font=('Segoe UI', 16, 'bold'), fill='gold')
-
-    canvas.create_text(name_x_2nd, 15, text=f"2ND PLACE (Team {second_team_num})", fill=THEME['fg_secondary'], font=('Segoe UI', 9, 'bold'))
-    canvas.create_text(name_x_2nd, 40, text=f"{second_roster}", font=('Segoe UI', 16, 'bold'), fill=THEME['fg_secondary'])
-
-    rankings_text = "--- Remaining Tournament Rankings ---\n\n"
-    
-    def rank_sort_key(rank_str):
-        if rank_str == '1ST' or rank_str == '2ND':
-            return 0 
-        match = re.match(r'(\d+)', rank_str)
-        if match:
-            return int(match.group(1))
-        return float('inf')
-        
-    sorted_ranks = sorted(TOURNAMENT_RANKINGS.keys(), key=rank_sort_key)
-    
-    for rank in sorted_ranks:
-        if rank not in ['1ST', '2ND']:
-            team = TOURNAMENT_RANKINGS[rank]
-            team_num = team.split(' ')[1] if 'Team' in team else ''
-            roster = " / ".join(TEAM_ROSTERS.get(team, ["TBD", "TBD"]))
-            rankings_text += f"{rank} Place: {team} ({roster})\n"
-            
-    log_message(f"Final Rankings: {dict(TOURNAMENT_RANKINGS)}") 
-            
-    if rankings_label_ref:
-        rankings_label_ref.config(text=rankings_text, justify=tk.LEFT, 
-                                  fg=THEME['fg_primary'], bg=THEME['bg_card'], font=('Segoe UI', 10))
-    
-    for widget in final_control_frame_ref.winfo_children():
-        widget.destroy()
-        
-    final_control_frame_ref.pack(fill='x', pady=10)
-    
-    quit_btn = tk.Button(final_control_frame_ref, text="QUIT", command=lambda: on_close(main_root), 
-                         bg=THEME['btn_cancel'], fg='white', font=('Segoe UI', 12, 'bold'), height=2,
-                         relief='flat', padx=20)
-    quit_btn.pack(padx=10, pady=10, fill='x')
-
 def reset_game(update_teams=True):
     """Resets the game state (only updating teams now)."""
     log_message("Resetting game UI.") 
@@ -1490,127 +1858,6 @@ def update_roster_seeding_display():
         tk.Label(team_container, text=f"{team_name}: {players_str}", font=('Consolas', 9), 
                  bg=THEME['bg_main'], fg=THEME['fg_secondary']).pack(padx=5, pady=2)
 
-def setup_scoreboard(root, team_red_placeholder, team_blue_placeholder):
-    """Initializes the scoreboard canvas and widgets with the new UI."""
-    global scoreboard_canvas_ref, team_labels, player_labels_ref, status_label, match_input_frame, match_res_frame, btn_red, btn_blue, roster_seeding_frame_ref
-    global match_details_frame, game_routing_label, team_info_labels, bracket_info_canvas_ref, rankings_label_ref, btn_switch, bracket_info_frame_ref, team_info_frame_ref
-    global switch_frame_ref, final_control_frame_ref, rankings_display_frame_ref
-    
-    log_message("Initializing scoreboard and UI components.") 
-    
-    header_frame = tk.Frame(root, bg=THEME['bg_main'])
-    header_frame.pack(fill='x', pady=(10,0))
-    
-    # header_label = tk.Label(header_frame, text="Current Match", font=THEME['font_header'], fg=THEME['fg_primary'], bg=THEME['bg_main'], pady=5)
-    # header_label.pack(fill='x')
-    
-    status_label = tk.Label(root, text="Tournament Initialized.", font=('Segoe UI', 11, 'bold'), 
-                            pady=8, bg=THEME['bg_card'], fg=THEME['fg_primary'])
-    status_label.pack(fill='x', padx=10, pady=5)
-    
-    scoreboard_canvas_ref = tk.Canvas(root, width=450, height=100, bg='white', highlightthickness=0)
-    # Canvas background is white to keep text rendering simple, or we can make it thematic
-    scoreboard_canvas_ref.configure(bg=THEME['bg_card'])
-    scoreboard_canvas_ref.pack(fill='x', padx=10, pady=5)
-
-    roster_outer_frame = tk.Frame(root, padx=10, pady=2, bd=0, bg=THEME['bg_main'])
-    roster_outer_frame.pack(fill='x', padx=10, pady=2) 
-
-    h_scrollbar = tk.Scrollbar(roster_outer_frame, orient=tk.HORIZONTAL)
-    h_scrollbar.pack(side=tk.BOTTOM, fill=tk.X)
-
-    roster_canvas_ref = tk.Canvas(roster_outer_frame, bg=THEME['bg_card'], height=35, xscrollcommand=h_scrollbar.set, highlightthickness=0)
-    roster_canvas_ref.pack(side=tk.TOP, fill=tk.X, expand=True)
-
-    h_scrollbar.config(command=roster_canvas_ref.xview)
-
-    roster_seeding_frame_ref = tk.Frame(roster_canvas_ref, bg=THEME['bg_card'])
-    roster_canvas_ref.create_window((0, 0), window=roster_seeding_frame_ref, anchor="nw")
-    roster_seeding_frame_ref.bind("<Configure>", lambda e: roster_canvas_ref.configure(scrollregion=roster_canvas_ref.bbox("all")))
-    
-    update_roster_seeding_display()
-
-    match_details_frame = tk.Frame(root, padx=10, pady=5, bg=THEME['bg_main'])
-    match_details_frame.pack(fill='x', padx=10, pady=5)
-    
-    center_x = 225
-    name_x_red, name_x_blue = 110, 340 
-    
-    scoreboard_canvas_ref.create_line(center_x, 5, center_x, 95, fill=THEME['fg_secondary'], width=1)
-    
-    team_labels['red'] = scoreboard_canvas_ref.create_text(name_x_red, 40, text=f"{team_red_placeholder}", font=('Segoe UI', 16, 'bold'), fill=THEME['red_team'])
-    player_labels_ref['red'] = scoreboard_canvas_ref.create_text(name_x_red, 70, text="Team X / (P1, P2)", font=('Segoe UI', 9), width=200, fill=THEME['fg_primary'])
-
-    team_labels['blue'] = scoreboard_canvas_ref.create_text(name_x_blue, 40, text=f"{team_blue_placeholder}", font=('Segoe UI', 16, 'bold'), fill=THEME['blue_team'])
-    player_labels_ref['blue'] = scoreboard_canvas_ref.create_text(name_x_blue, 70, text="Team Y / (P3, P4)", font=('Segoe UI', 9), width=200, fill=THEME['fg_primary'])
-
-    switch_frame_ref = tk.Frame(root, bg=THEME['bg_main']) 
-    
-    btn_switch = tk.Button(switch_frame_ref, text="🔄 SWITCH SIDES", command=swap_teams, 
-                           bg=THEME['btn_default'], fg='white', font=('Segoe UI', 9, 'bold'), height=1,
-                           relief='flat', activebackground=THEME['bg_card'])
-    btn_switch.pack(side=tk.LEFT, fill='x', expand=True, padx=(0, 2))
-    
-    btn_bracket = tk.Button(switch_frame_ref, text="📜 FULL BRACKET", command=open_full_bracket,
-                            bg=THEME['btn_default'], fg='white', font=('Segoe UI', 9, 'bold'), height=1,
-                            relief='flat', activebackground=THEME['bg_card'])
-    btn_bracket.pack(side=tk.LEFT, fill='x', expand=True, padx=(2, 0))    
-    
-    match_details_frame = tk.Frame(root, padx=10, pady=5, bg=THEME['bg_main'])
-    
-    bracket_info_frame = tk.Frame(match_details_frame, bd=0, bg=THEME['bg_main'])
-    bracket_info_frame.pack(fill='x', pady=(0, 5))
-    bracket_info_frame_ref = bracket_info_frame 
-    
-    bracket_info_canvas = tk.Canvas(bracket_info_frame, height=80, bg=THEME['bg_canvas'], highlightthickness=0)
-    bracket_info_canvas.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
-    
-    bracket_info_canvas.bind("<Configure>", lambda event: draw_small_bracket_view(bracket_info_canvas, TOURNAMENT_STATE))
-
-    bracket_info_canvas_ref = bracket_info_canvas 
-    
-    rankings_display_frame_ref = tk.Frame(root, padx=10, pady=5, bd=0, bg=THEME['bg_card'])
-    
-    game_routing_label = tk.Label(match_details_frame, text="Game ID: G#\nWinner Advances To: TBD\nLoser Drops To: TBD", 
-                                  justify=tk.LEFT, font=('Segoe UI', 9), bd=0, padx=5, pady=5, 
-                                  bg=THEME['bg_card'], fg=THEME['fg_secondary'])
-    game_routing_label.pack(fill='x', pady=(0, 5))
-    
-    rankings_label_ref = tk.Label(rankings_display_frame_ref, 
-                                  text="--- Remaining Tournament Rankings ---", 
-                                  justify=tk.LEFT, fg=THEME['fg_primary'], bg=THEME['bg_card'], font=('Segoe UI', 10, 'bold'), padx=5, pady=5)
-    rankings_label_ref.pack(fill='both', expand=True)
-    
-    team_info_frame = tk.Frame(match_details_frame, bg=THEME['bg_main'])
-    team_info_frame.pack(fill='x')
-    team_info_frame_ref = team_info_frame
-    
-    team_info_labels['red'] = tk.Label(team_info_frame, text="Team: Team X\nPlayers: P1, P2 (Active)", 
-                                       justify=tk.LEFT, font=('Segoe UI', 9), fg=THEME['red_team'], bg=THEME['bg_main'])
-    team_info_labels['red'].pack(side=tk.LEFT, expand=True, padx=5)
-    
-    team_info_labels['blue'] = tk.Label(team_info_frame, text="Team: Team Y\nPlayers: P3, P4 (Active)", 
-                                        justify=tk.LEFT, font=('Segoe UI', 9), fg=THEME['blue_team'], bg=THEME['bg_main'])
-    team_info_labels['blue'].pack(side=tk.LEFT, expand=True, padx=5)
-    
-    match_input_frame = tk.Frame(root, padx=10, pady=5, bg=THEME['bg_main'])
-
-    btn_red = tk.Button(match_input_frame, text="RED WINS", command=lambda: declare_winner('red'), 
-                        bg=THEME['red_team'], fg='white', font=('Segoe UI', 11, 'bold'), height=2,
-                        relief='flat', padx=10, pady=5, activebackground='#C62828')
-    btn_red.pack(side=tk.LEFT, expand=True, padx=(5, 5), pady=0, fill='x')
-    
-    btn_blue = tk.Button(match_input_frame, text="BLUE WINS", command=lambda: declare_winner('blue'), 
-                         bg=THEME['blue_team'], fg='white', font=('Segoe UI', 11, 'bold'), height=2,
-                         relief='flat', padx=10, pady=5, activebackground='#1565C0')
-    btn_blue.pack(side=tk.LEFT, expand=True, padx=(5, 5), pady=0, fill='x')
-
-    match_res_frame = tk.Frame(root, bg=THEME['bg_main'], padx=10, pady=10)
-    
-    final_control_frame_ref = tk.Frame(root, bg=THEME['bg_main'])
-    
-    load_match_data_and_teams()
-        
 def setup_main_gui(root):
     """Sets up the main windows and calls component initialization."""
     global main_root
@@ -2139,45 +2386,6 @@ def start_tournament():
     except KeyboardInterrupt:
         on_close(root)
 
-def declare_winner(color):
-    """Handles the conclusion of a match by declaring the winner based on button click."""
-    global TOURNAMENT_STATE, match_res_frame, match_input_frame, current_match_teams, match_details_frame, switch_frame_ref
-    
-    match_id_to_confirm = TOURNAMENT_STATE['active_match_id']
-
-    winner = current_match_teams[color]
-    loser = current_match_teams['blue'] if color == 'red' else current_match_teams['red']
-    
-    log_message(f"Winner declared for {match_id_to_confirm}: {winner} ({color}). Waiting for confirmation.") 
-
-    match_input_frame.pack_forget()
-    if switch_frame_ref: switch_frame_ref.pack_forget() 
-    match_details_frame.pack_forget() 
-
-    match_res_frame.pack(fill='x', padx=10, pady=10) 
-    
-    status_label.config(text=f"MATCH {match_id_to_confirm} ENDED: **{winner}** wins. Please **CONFIRM** or **GO BACK**.", 
-                        fg=THEME['accent_gold'], bg=THEME['bg_card'])
-    
-    global current_match_res_buttons
-    for widget in match_res_frame.winfo_children():
-        widget.destroy()
-    current_match_res_buttons.clear()
-    
-    confirm_btn = tk.Button(match_res_frame, text=f"CONFIRM: {winner} won and advance bracket", 
-                            bg=THEME['btn_confirm'], fg='white', 
-                            font=('Segoe UI', 11, 'bold'), relief='flat', padx=10, pady=10,
-                            command=lambda w=winner, l=loser, c=color, mid=match_id_to_confirm: confirm_match_resolution(w, l, c, mid))
-    confirm_btn.pack(pady=5, fill='x')
-    current_match_res_buttons.append(confirm_btn)
-    
-    go_back_btn = tk.Button(match_res_frame, text="GO BACK: Mistake made in winner selection", 
-                            bg=THEME['btn_cancel'], fg='white', 
-                            font=('Segoe UI', 10, 'bold'), relief='flat', padx=10, pady=5,
-                            command=go_back_to_selection)
-    go_back_btn.pack(pady=5, fill='x')
-    current_match_res_buttons.append(go_back_btn)
-
 def confirm_match_resolution(winner, loser, winning_color, match_id):
     """Processes the confirmed match result and updates the tournament state."""
     global match_res_frame, current_match_res_buttons
@@ -2193,66 +2401,6 @@ def confirm_match_resolution(winner, loser, winning_color, match_id):
 
     reset_game()
     
-def load_match_data_and_teams():
-    """
-    Loads the match data for the current active match, assigns default colors (if new match),
-    and triggers the UI update.
-    """
-    global TOURNAMENT_STATE, match_input_frame, current_match_teams, last_assigned_match_id, match_details_frame
-    global bracket_info_frame_ref, team_info_frame_ref, rankings_label_ref, switch_frame_ref, final_control_frame_ref, rankings_display_frame_ref
-    
-    match_id = TOURNAMENT_STATE.get('active_match_id', 'TOURNAMENT_OVER')
-    log_message(f"Loading match data for new active match: {match_id}") 
-    
-    if final_control_frame_ref:
-        final_control_frame_ref.pack_forget()
-    if rankings_display_frame_ref:
-        rankings_display_frame_ref.pack_forget()
-    
-    if match_id == 'TOURNAMENT_OVER':
-        champion = None
-        for data in TOURNAMENT_STATE.values():
-            if isinstance(data, dict) and data.get('champion'):
-                champion = data['champion']
-                break
-        
-        if champion:
-             display_final_rankings(champion) 
-        else:
-            status_label.config(text=f"TOURNAMENT OVER! No champion declared. (Error State)", fg='dark red')
-            log_message("Error State: TOURNAMENT_OVER with no champion declared.") 
-            
-        match_input_frame.pack_forget()
-        if match_details_frame: match_details_frame.pack_forget()
-        if switch_frame_ref: switch_frame_ref.pack_forget()
-        return
-
-    if switch_frame_ref: 
-        switch_frame_ref.pack(fill='x', padx=10, pady=(0, 5))
-
-    if match_details_frame: 
-        match_details_frame.pack(fill='x', padx=10, pady=(5, 0))
-        
-    match_input_frame.pack(fill='x', pady=(0, 5))
-
-
-    if match_id != last_assigned_match_id:
-        
-        match_data = TOURNAMENT_STATE[match_id]
-        team_A = match_data['teams'][0] 
-        team_B = match_data['teams'][1] 
-        
-        current_match_teams['red'] = team_A
-        current_match_teams['blue'] = team_B
-        
-        last_assigned_match_id = match_id
-        log_message(f"New match {match_id} loaded. Red={team_A}, Blue={team_B}.") 
-    
-    update_scoreboard_display()
-
-
-# --- Main Program Entry Point ---
-
 if __name__ == '__main__':
     
     log_message("Script starting.") 
