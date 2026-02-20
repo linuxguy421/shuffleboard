@@ -133,6 +133,30 @@ ui_references = {
     'vs_label': None
 }
 
+def update_footer_log_status():
+    """Updates footer to reflect persistent game logging state (from Player Setup)."""
+    global ui_references, LOG_GAME_TO_FILE, REPLAY_MODE, REPLAY_VIEW_ONLY
+
+    lbl = ui_references.get('footer_file_status')
+    if not lbl:
+        return
+
+    if REPLAY_VIEW_ONLY:
+        text = "📁 VIEW ONLY"
+        color = THEME['fg_secondary']
+    elif REPLAY_MODE:
+        text = "🔴 REPLAY MODE"
+        color = THEME['fg_secondary']
+    else:
+        if LOG_GAME_TO_FILE:
+            text = "🟢 LOG GAME TO FILE: ON"
+            color = THEME['accent_gold']
+        else:
+            text = "⚪ LOG GAME TO FILE: OFF"
+            color = THEME['fg_secondary']
+
+    lbl.config(text=text, fg=color)
+
 def setup_scoreboard(root, team_red_placeholder, team_blue_placeholder):
     """
     Redesigned Main UI: Uses Tabs to separate concerns and a 'Card' layout for the match.
@@ -268,12 +292,17 @@ def setup_scoreboard(root, team_red_placeholder, team_blue_placeholder):
              fg=THEME['fg_secondary'], bg=THEME['bg_card'], padx=10).pack(side='left')
 
     # 2. Left Section: File/Database Status
-    status_text = "🔴 REPLAY MODE" if REPLAY_MODE else "🟢 RECORDING LIVE"
-    if REPLAY_VIEW_ONLY: status_text = "📁 VIEW ONLY"
-    
-    ui_references['footer_file_status'] = tk.Label(footer_bar, text=status_text, font=('Segoe UI', 8, 'bold'), 
-                                                   fg=THEME['fg_secondary'], bg=THEME['bg_card'], padx=5)
+    ui_references['footer_file_status'] = tk.Label(
+    footer_bar,
+    text="",
+    font=('Segoe UI', 8, 'bold'),
+    fg=THEME['fg_secondary'],
+    bg=THEME['bg_card'],
+    padx=5
+    )
     ui_references['footer_file_status'].pack(side='left')
+
+    update_footer_log_status()
 
     # 3. Right Section: Timer (Far Right)
     ui_references['timer_lbl'] = tk.Label(footer_bar, text="00:00", font=('Consolas', 10, 'bold'), 
@@ -425,27 +454,101 @@ def update_schedule_tab():
                      fg=color_hex, bg=THEME['bg_main']).pack(side='left')
 
 def update_roster_seeding_vertical():
-    """Updates roster tab with vertical list."""
+    """Aligned roster table using grid for consistent column layout."""
     global roster_seeding_frame_ref, TEAMS, TEAM_ROSTERS
-    if not roster_seeding_frame_ref: return
-    
-    for w in roster_seeding_frame_ref.winfo_children(): w.destroy()
-    
-    for i, team in enumerate(TEAMS):
+    global TOURNAMENT_RANKINGS, current_match_teams
+
+    if not roster_seeding_frame_ref:
+        return
+
+    for w in roster_seeding_frame_ref.winfo_children():
+        w.destroy()
+
+    table = tk.Frame(roster_seeding_frame_ref, bg=THEME['bg_card'])
+    table.pack(fill='x', padx=10, pady=10)
+
+    # Configure column weights (keeps alignment consistent)
+    table.grid_columnconfigure(0, weight=0)  # Seed
+    table.grid_columnconfigure(1, weight=3)  # Team / Players
+    table.grid_columnconfigure(2, weight=0)  # W-L
+    table.grid_columnconfigure(3, weight=0)  # Win %
+
+    # ---- Header Row ----
+    headers = ["Seed", "Team / Players", "W-L", "Win%"]
+    for col, text in enumerate(headers):
+        tk.Label(
+            table,
+            text=text,
+            font=('Segoe UI', 9, 'bold'),
+            bg=THEME['bg_card'],
+            fg=THEME['fg_secondary'],
+            anchor='w'
+        ).grid(row=0, column=col, sticky='w', padx=8, pady=(4, 6))
+
+    # Divider
+    tk.Frame(table, bg=THEME['bg_main'], height=2)\
+        .grid(row=1, column=0, columnspan=4, sticky='ew', pady=(0, 6))
+
+    # ---- Team Rows ----
+    row_index = 2
+
+    for idx, team in enumerate(TEAMS, start=1):
+        wins, losses = get_team_record(team)
+        total = wins + losses
+        win_pct = f"{int((wins / total) * 100)}%" if total > 0 else "--"
+
         bg_col = THEME['bg_card']
-        fg_col = THEME['fg_primary']
-        
-        # Highlight if active
-        if team in current_match_teams.values():
-            fg_col = THEME['accent_gold']
-            
-        row = tk.Frame(roster_seeding_frame_ref, bg=bg_col, pady=5)
-        row.pack(fill='x', padx=10, pady=2)
-        
-        roster = TEAM_ROSTERS.get(team, ['?','?'])
-        
-        tk.Label(row, text=f"{team}", font=('Segoe UI', 10, 'bold'), width=15, anchor='w', bg=bg_col, fg=fg_col).pack(side='left')
-        tk.Label(row, text=f"{roster[0]} / {roster[1]}", font=('Segoe UI', 10), anchor='w', bg=bg_col, fg=THEME['fg_secondary']).pack(side='left')
+        fg_primary = THEME['fg_primary']
+        fg_secondary = THEME['fg_secondary']
+        status_color = fg_primary
+
+        status_badge = ""
+        if team == TOURNAMENT_RANKINGS.get('1ST'):
+            status_badge = "  • CHAMPION"
+            status_color = THEME['accent_gold']
+        elif team in TOURNAMENT_RANKINGS.values():
+            status_badge = "  • ELIMINATED"
+            status_color = THEME['btn_cancel']
+        elif team in current_match_teams.values():
+            status_badge = "  • ACTIVE"
+            status_color = THEME['accent_gold']
+
+        roster = TEAM_ROSTERS.get(team, ['?', '?'])
+        team_text = f"{team} ({roster[0]} / {roster[1]}){status_badge}"
+
+        # Seed
+        tk.Label(
+            table, text=str(idx),
+            font=('Segoe UI', 10),
+            bg=bg_col, fg=fg_secondary,
+            anchor='w'
+        ).grid(row=row_index, column=0, sticky='w', padx=8, pady=4)
+
+        # Team / Players
+        tk.Label(
+            table, text=team_text,
+            font=('Segoe UI', 10, 'bold'),
+            bg=bg_col, fg=status_color,
+            anchor='w'
+        ).grid(row=row_index, column=1, sticky='w', padx=8, pady=4)
+
+        # W-L
+        tk.Label(
+            table, text=f"{wins}-{losses}",
+            font=('Consolas', 10),
+            bg=bg_col, fg=fg_primary,
+            anchor='e'
+        ).grid(row=row_index, column=2, sticky='e', padx=8, pady=4)
+
+        # Win %
+        tk.Label(
+            table, text=win_pct,
+            font=('Consolas', 10),
+            bg=bg_col, fg=fg_primary,
+            anchor='e'
+        ).grid(row=row_index, column=3, sticky='e', padx=8, pady=4)
+
+        row_index += 1
 
 def update_timer_display():
     """Updates the match elapsed time every second."""
