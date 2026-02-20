@@ -14,7 +14,7 @@ import time
 import json 
 
 # --- Version ---
-SHUF_VERSION = "1.46"
+SHUF_VERSION = "1.47"
 
 # --- Theme Configuration ---
 THEME = {
@@ -55,8 +55,6 @@ TOURNAMENT_RANKINGS = OrderedDict()
 ENTRY_FEE_PER_PERSON = 5
 MIN_PLAYERS = 6     
 MAX_PLAYERS = 20    
-
-# Global state and Canvas item IDs
 MATCH_HISTORY = []  # Tracks completed matches: {'id': id, 'winner': name, 'loser': name, 'color': color}
 schedule_content_frame = None # Reference for refreshing the UI
 TOURNAMENT_STATE = {}
@@ -81,12 +79,9 @@ last_assigned_match_id = None
 switch_frame_ref = None 
 full_bracket_root = None
 full_bracket_canvas = None
-# Global logging control
 LOG_GAME_TO_FILE = False 
 LOG_FILE_HANDLE = None
 final_control_frame_ref = None 
-
-# Global Variables for Match Details UI
 match_details_frame = None
 game_routing_label = None
 team_info_labels = {'red': None, 'blue': None}
@@ -95,7 +90,7 @@ rankings_label_ref = None
 bracket_info_frame_ref = None 
 team_info_frame_ref = None 
 rankings_display_frame_ref = None 
-
+match_timer_id = None
 
 # --- System Functions ---
 def _find_last_snapshot_in_file(path):
@@ -264,6 +259,32 @@ def setup_scoreboard(root, team_red_placeholder, team_blue_placeholder):
     tk.Button(ctrl_frame, text="Pop-out Bracket ↗", command=open_full_bracket,
               bg=THEME['btn_default'], fg='white', relief='flat', font=('Segoe UI', 9)).pack(side='left', padx=5, fill='x', expand=True)
 
+    # --- UPDATED: PERSISTENT FOOTER STATUS BAR ---
+    footer_bar = tk.Frame(root, bg=THEME['bg_card'], height=25, bd=1, relief='sunken')
+    footer_bar.pack(side='bottom', fill='x')
+
+    # 1. Left Section: Version
+    tk.Label(footer_bar, text=f"v{SHUF_VERSION}", font=('Segoe UI', 8), 
+             fg=THEME['fg_secondary'], bg=THEME['bg_card'], padx=10).pack(side='left')
+
+    # 2. Left Section: File/Database Status
+    status_text = "🔴 REPLAY MODE" if REPLAY_MODE else "🟢 RECORDING LIVE"
+    if REPLAY_VIEW_ONLY: status_text = "📁 VIEW ONLY"
+    
+    ui_references['footer_file_status'] = tk.Label(footer_bar, text=status_text, font=('Segoe UI', 8, 'bold'), 
+                                                   fg=THEME['fg_secondary'], bg=THEME['bg_card'], padx=5)
+    ui_references['footer_file_status'].pack(side='left')
+
+    # 3. Right Section: Timer (Far Right)
+    ui_references['timer_lbl'] = tk.Label(footer_bar, text="00:00", font=('Consolas', 10, 'bold'), 
+                                           fg=THEME['accent_gold'], bg=THEME['bg_card'], padx=10)
+    ui_references['timer_lbl'].pack(side='right')
+
+    # 4. Center Section: Tournament Progress
+    ui_references['footer_progress'] = tk.Label(footer_bar, text="Progress: 0%", font=('Segoe UI', 9), 
+                                                fg=THEME['fg_primary'], bg=THEME['bg_card'], padx=20)
+    ui_references['footer_progress'].pack(side='right')
+    
     # -- Result Confirmation (Initially Hidden) --
     match_res_frame = tk.Frame(tab_match, bg=THEME['bg_main'], padx=20, pady=40)
     # Note: We don't pack it yet. declare_winner will handle it.
@@ -320,6 +341,7 @@ def update_schedule_tab():
     """
     Refreshes the Schedule tab. 
     Shows players (rosters) instead of Team IDs for better readability.
+    Now shows matches even if only one team is known, using 'TBD' and status icons.
     """
     global schedule_content_frame, MATCH_HISTORY, TOURNAMENT_STATE, TEAM_ROSTERS
     if not schedule_content_frame: return
@@ -327,6 +349,12 @@ def update_schedule_tab():
     # Clear existing widgets
     for widget in schedule_content_frame.winfo_children():
         widget.destroy()
+
+    # Helper function to safely format missing rosters as "TBD"
+    def get_roster_text(team):
+        if not team:
+            return "TBD"
+        return " / ".join(TEAM_ROSTERS.get(team, [team, team]))
 
     # --- SECTION 1: ON DECK (Upcoming) ---
     tk.Label(schedule_content_frame, text="UPCOMING MATCHES", font=THEME['font_bold'], 
@@ -340,24 +368,31 @@ def update_schedule_tab():
         if mid in ['active_match_id', 'TOURNAMENT_OVER']: continue
         m_data = TOURNAMENT_STATE[mid]
         
-        # A match is "On Deck" if both teams are known but it hasn't been played yet
-        if m_data['teams'][0] and m_data['teams'][1] and m_data['winner'] is None and mid != active_id:
+        team1 = m_data['teams'][0]
+        team2 = m_data['teams'][1]
+        
+        # A match is "Upcoming" if AT LEAST ONE team is known, it hasn't been played, and isn't active
+        if (team1 or team2) and m_data['winner'] is None and mid != active_id:
             upcoming_count += 1
             
-            # Fetch the rosters for both teams
-            roster_a = " / ".join(TEAM_ROSTERS.get(m_data['teams'][0], ["?", "?"]))
-            roster_b = " / ".join(TEAM_ROSTERS.get(m_data['teams'][1], ["?", "?"]))
+            roster_a = get_roster_text(team1)
+            roster_b = get_roster_text(team2)
+            
+            # Visual indicators based on readiness
+            is_ready = bool(team1 and team2)
+            icon = "🟢" if is_ready else "⏳"
+            status_color = THEME['fg_primary'] if is_ready else THEME['fg_secondary']
             
             f = tk.Frame(schedule_content_frame, bg=THEME['bg_card'], padx=10, pady=8)
             f.pack(fill='x', padx=20, pady=3)
             
-            # Match ID (e.g., G4)
-            tk.Label(f, text=f"{mid}:", font=('Segoe UI', 9, 'bold'), 
+            # Match ID & Status Icon
+            tk.Label(f, text=f"{icon} {mid}:", font=('Segoe UI', 9, 'bold'), 
                      fg=THEME['fg_secondary'], bg=THEME['bg_card']).pack(side='left')
             
             # Player Names
             tk.Label(f, text=f"{roster_a}   vs   {roster_b}", 
-                     font=('Segoe UI', 10, 'bold'), fg=THEME['fg_primary'], bg=THEME['bg_card']).pack(side='left', padx=15)
+                     font=('Segoe UI', 10, 'bold'), fg=status_color, bg=THEME['bg_card']).pack(side='left', padx=15)
 
     if upcoming_count == 0:
         tk.Label(schedule_content_frame, text="No matches currently on deck.", 
@@ -412,6 +447,37 @@ def update_roster_seeding_vertical():
         tk.Label(row, text=f"{team}", font=('Segoe UI', 10, 'bold'), width=15, anchor='w', bg=bg_col, fg=fg_col).pack(side='left')
         tk.Label(row, text=f"{roster[0]} / {roster[1]}", font=('Segoe UI', 10), anchor='w', bg=bg_col, fg=THEME['fg_secondary']).pack(side='left')
 
+def update_timer_display():
+    """Updates the match elapsed time every second."""
+    global match_timer_id, TOURNAMENT_STATE, ui_references, main_root
+    
+    if not ui_references.get('timer_lbl') or not main_root:
+        return
+        
+    match_id = TOURNAMENT_STATE.get('active_match_id')
+    
+    # Stop timer if the tournament is over or no active match
+    if match_id == 'TOURNAMENT_OVER' or not match_id:
+        ui_references['timer_lbl'].config(text="--:--")
+        return
+
+    match_data = TOURNAMENT_STATE.get(match_id)
+    if not match_data:
+        return
+
+    # Initialize start time if this is the first tick for this match
+    if 'start_time' not in match_data or not match_data['start_time']:
+        match_data['start_time'] = time.time()
+
+    # Calculate elapsed time
+    elapsed = int(time.time() - match_data['start_time'])
+    mins, secs = divmod(elapsed, 60)
+    
+    # Update the label
+    ui_references['timer_lbl'].config(text=f"{mins:02d}:{secs:02d}")
+    
+    # Schedule the next tick in 1000ms (1 second)
+    match_timer_id = main_root.after(1000, update_timer_display)
 
 def update_scoreboard_display():
     """Redesigned update logic for the new Card UI."""
@@ -470,6 +536,18 @@ def update_scoreboard_display():
     # Refresh vertical roster highlights
     update_roster_seeding_vertical()
     update_schedule_tab()
+
+    # --- Update Footer Progress ---
+    if 'footer_progress' in ui_references:
+        # Filter TOURNAMENT_STATE to count actual match keys (like G1, G2, GF)
+        total_matches = len([k for k in TOURNAMENT_STATE.keys() if k not in ['active_match_id', 'TOURNAMENT_OVER']])
+        completed_matches = len(MATCH_HISTORY)
+        
+        if total_matches > 0:
+            percent = int((completed_matches / total_matches) * 100)
+            ui_references['footer_progress'].config(
+                text=f"Match {completed_matches + 1} of {total_matches} ({percent}%)"
+            )
 
 def declare_winner(color):
     """Handles UI transition to confirmation screen inside the Tab."""
@@ -571,6 +649,11 @@ def load_match_data_and_teams():
         current_match_teams['blue'] = team_B
         last_assigned_match_id = match_id
     
+        global match_timer_id
+        if match_timer_id and main_root:
+            main_root.after_cancel(match_timer_id) # Cancel any old loops
+        update_timer_display() # Kick off the new timer loop
+    
     update_scoreboard_display()
 
 def run_replay_mode(path):
@@ -628,6 +711,7 @@ def run_replay_mode(path):
             "winner_color": m.get("winner_color"),
             "is_reset": m.get("is_reset", False),
             "champion": m.get("champion"),      # ADDED RESTORE
+            "start_time": m.get("start_time"),
             "config": config,
         }
 
@@ -1400,6 +1484,7 @@ def serialize_snapshot():
                 "winner_color": match_data.get("winner_color"),
                 "is_reset": match_data.get("is_reset", False),
                 "champion": match_data.get("champion"),  # ADDED
+                "start_time": match_data.get("start_time"),
                 "config": {
                     k: (list(v) if isinstance(v, tuple) else v)
                     for k, v in match_data.get("config", {}).items()
