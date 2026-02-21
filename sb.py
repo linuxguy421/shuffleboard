@@ -2340,235 +2340,350 @@ def toggle_log_game(log_var):
 
 def get_player_setup_dialog(parent):
     """
-    Combined dialog for selecting player count and entering names/draw numbers.
-    Maintains player data (Names, Paid status, Draws) when toggling modes.
+    Modern, borderless 'Card' UI for player setup.
+    Features inset input fields and clean, borderless checkboxes.
     """
-    log_message("Opening unified player setup dialog.") 
-    
-    # --- Theme Constants for this Dialog ---
-    BG_MAIN = "#121212"
-    BG_CARD = "#1E1E1E" 
-    FG_TEXT = "#E0E0E0"
-    FG_SUB = "#B0B0B0"
-    ENTRY_BG = "#2D2D2D"
-    ENTRY_FG = "#FFFFFF"
-    BTN_BG = "#333333"
-    BTN_FG = "#FFFFFF"
+    log_message("Opening refined modern player setup dialog.") 
     
     dialog = tk.Toplevel(parent)
-    dialog.title("Tournament Setup - Player Entry")
+    dialog.title("Tournament Setup")
     dialog.geometry("650x850") 
-    dialog.configure(bg=BG_MAIN)
+    dialog.configure(bg=THEME['bg_main'])
     dialog.grab_set() 
     
     result = None 
     is_manual_draw = tk.BooleanVar(value=False)
     log_game_var = tk.BooleanVar(value=LOG_GAME_TO_FILE)
-    
-    # Internal state
     current_player_count = MIN_PLAYERS 
-    player_entries = [] # List of tuples: (name_entry, paid_var, draw_entry_or_None)
+    player_entries = []
 
-    # --- Data Persistence Helpers ---
-    def save_current_data():
-        """Scrapes text and state from current widgets to prevent loss on re-render."""
-        data = []
-        for widgets in player_entries:
-            # (name_entry, paid_var, draw_entry)
-            name = widgets[0].get().strip()
-            paid = widgets[1].get()
-            draw = ""
-            if len(widgets) > 2 and widgets[2]:
-                draw = widgets[2].get().strip()
-            data.append({'name': name, 'paid': paid, 'draw': draw})
-        return data
-
+    # --- Styling Helper ---
     def update_visuals(event=None):
-        """Red (Duplicate) > Orange (Not Paid) > White (OK)."""
         current_names = [w[0].get().strip() for w in player_entries]
         from collections import Counter
         counts = Counter(current_names)
-        has_duplicates = False
         
         for widgets in player_entries:
             name_entry, paid_var = widgets[0], widgets[1]
             val = name_entry.get().strip()
             
             if val and counts[val] > 1:
-                name_entry.config(bg='#C62828', fg='white') # Dark Red
-                has_duplicates = True
+                name_entry.config(bg='#C62828', fg='white') # Error Red
             elif not paid_var.get():
-                name_entry.config(bg='#EF6C00', fg='white') # Dark Orange
+                name_entry.config(bg='#BF360C', fg='white') # Unpaid Deep Orange
             else:
-                name_entry.config(bg=ENTRY_BG, fg=ENTRY_FG)
-        return has_duplicates
+                # Inset style: Darker than the surrounding card
+                name_entry.config(bg=THEME['bg_main'], fg=THEME['fg_primary'])
 
-    # --- Dynamic Rendering Logic ---
-    def create_player_row(parent_frame, player_index, initial_data=None):
-        """Creates a row, populating with existing data if provided."""
-        row_frame = tk.Frame(parent_frame, bg=BG_CARD, pady=2)
-        row_frame.pack(fill='x', pady=3, padx=5)
+    # --- Row Construction ---
+    def create_player_row(parent_frame, idx, initial_data=None):
+        row_bg = THEME['bg_card']
+        row_frame = tk.Frame(parent_frame, bg=row_bg, pady=4)
+        row_frame.pack(fill='x', pady=2, padx=15)
         
-        p_num = player_index + 1
-        tk.Label(row_frame, text=f"P{p_num:02}:", width=4, anchor='w', 
-                 bg=BG_CARD, fg=FG_SUB, font=('Segoe UI', 10, 'bold')).pack(side='left', padx=5)
+        # Player ID Label
+        tk.Label(row_frame, text=f"P{idx+1:02}", width=4, font=THEME['font_bold'],
+                 bg=row_bg, fg=THEME['fg_secondary']).pack(side='left', padx=5)
 
         draw_entry = None
         if is_manual_draw.get():
-            draw_entry = tk.Entry(row_frame, width=5, justify='center', 
-                                  bg=ENTRY_BG, fg=ENTRY_FG, insertbackground='white', relief='flat')
-            draw_entry.pack(side='left', padx=(0,5))
-            # Restore draw or default to index
-            val = initial_data.get('draw') if initial_data else str(p_num)
-            draw_entry.insert(0, val if val else str(p_num))
-            tk.Label(row_frame, text="|", bg=BG_CARD, fg=FG_SUB).pack(side='left', padx=(0,5))
+            draw_entry = tk.Entry(row_frame, width=5, justify='center', font=THEME['font_main'],
+                                  bg=THEME['bg_main'], fg=THEME['fg_primary'], 
+                                  insertbackground='white', relief='flat')
+            draw_entry.pack(side='left', padx=5)
+            val = initial_data.get('draw') if initial_data else str(idx + 1)
+            draw_entry.insert(0, val)
 
-        name_entry = tk.Entry(row_frame, bg=ENTRY_BG, fg=ENTRY_FG, insertbackground='white', relief='flat', font=('Segoe UI', 10))
-        name_entry.pack(side='left', fill='x', expand=True, padx=(0, 5), ipady=3)
-        # Restore name or default to "Player X"
-        name_val = initial_data.get('name') if initial_data else f"Player {p_num}"
+        # Name Entry - Inset Look
+        name_entry = tk.Entry(row_frame, bg=THEME['bg_main'], fg=THEME['fg_primary'], 
+                              insertbackground='white', relief='flat', font=THEME['font_main'])
+        name_entry.pack(side='left', fill='x', expand=True, padx=5, ipady=8) # Increased height
+        
+        name_val = initial_data.get('name') if initial_data else f"Player {idx+1}"
         name_entry.insert(0, name_val)
         name_entry.bind('<KeyRelease>', update_visuals)
 
+        # Paid Checkbox - Borderless
         paid_var = tk.BooleanVar(value=initial_data.get('paid', False) if initial_data else False)
         chk = tk.Checkbutton(row_frame, text="Paid", variable=paid_var, 
-                             bg=BG_CARD, fg=FG_TEXT, selectcolor=BG_MAIN, 
-                             activebackground=BG_CARD, activeforeground=FG_TEXT,
+                             bg=row_bg, fg=THEME['fg_secondary'], 
+                             selectcolor=THEME['bg_main'], # Matches inset color
+                             activebackground=row_bg, 
+                             activeforeground=THEME['fg_primary'],
+                             borderwidth=0,          # Removes the standard border
+                             highlightthickness=0,   # Removes the focus ring
+                             padx=10, 
                              command=update_visuals)
-        chk.pack(side='right', padx=(5, 10))
+        chk.pack(side='right')
 
         return (name_entry, paid_var, draw_entry)
 
-    def render_inputs(container):
-        """Saves current state, wipes UI, and rebuilds."""
-        saved_data = save_current_data()
+    def render_inputs():
+        saved_data = []
+        for w in player_entries:
+            saved_data.append({
+                'name': w[0].get(), 
+                'paid': w[1].get(), 
+                'draw': w[2].get() if w[2] else ""
+            })
         
-        for widget in container.winfo_children():
+        for widget in input_container.winfo_children():
             widget.destroy()
         player_entries.clear()
 
-        instr = "Draw # unique" if is_manual_draw.get() else "Auto-Draw"
-        tk.Label(container, text=f"** {instr} | Orange=Unpaid | Red=Duplicate **", 
-                 fg=FG_SUB, bg=BG_CARD, font=('Segoe UI', 9)).pack(pady=(10, 5), anchor='w', padx=10)
+        for i in range(current_player_count):
+            existing = saved_data[i] if i < len(saved_data) else None
+            player_entries.append(create_player_row(input_container, i, existing))
+        
+        update_visuals()
+
+    # --- Header Section ---
+    header = tk.Frame(dialog, bg=THEME['bg_card'], padx=25, pady=20)
+    header.pack(fill='x', padx=20, pady=20)
+    
+    tk.Label(header, text="Configure Players", font=THEME['font_title'], 
+             bg=THEME['bg_card'], fg=THEME['fg_primary']).pack(anchor='w')
+    
+    cb_frame = tk.Frame(header, bg=THEME['bg_card'])
+    cb_frame.pack(fill='x', pady=(15, 0))
+    
+    # Borderless Global Option Checkboxes
+    tk.Checkbutton(cb_frame, text="Manual Draw (Assign #)", variable=is_manual_draw, 
+                   command=render_inputs, bg=THEME['bg_card'], fg=THEME['fg_secondary'],
+                   selectcolor=THEME['bg_main'], borderwidth=0, highlightthickness=0).pack(side='left')
+    
+    tk.Checkbutton(cb_frame, text="Log Game Progress", variable=log_game_var, 
+                   command=lambda: toggle_log_game(log_game_var),
+                   bg=THEME['bg_card'], fg=THEME['fg_secondary'],
+                   selectcolor=THEME['bg_main'], borderwidth=0, highlightthickness=0).pack(side='left', padx=25)
+
+    # --- Main List Area ---
+    list_card = tk.Frame(dialog, bg=THEME['bg_card'], padx=5, pady=5)
+    list_card.pack(fill='both', expand=True, padx=20)
+    
+    canvas = tk.Canvas(list_card, bg=THEME['bg_card'], highlightthickness=0)
+    scrollbar = tk.Scrollbar(list_card, orient="vertical", command=canvas.yview)
+    input_container = tk.Frame(canvas, bg=THEME['bg_card'])
+
+    canvas.create_window((0, 0), window=input_container, anchor="nw", width=580)
+    canvas.configure(yscrollcommand=scrollbar.set)
+    
+    scrollbar.pack(side="right", fill="y")
+    canvas.pack(side="left", fill="both", expand=True)
+    input_container.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+
+    # --- Management Footer ---
+    mgmt_frame = tk.Frame(dialog, bg=THEME['bg_card'], pady=20)
+    mgmt_frame.pack(fill='x', padx=20, pady=(0, 20))
+    
+    lbl_count = tk.Label(mgmt_frame, text=f"Total Players: {current_player_count}", 
+                         font=THEME['font_header'], bg=THEME['bg_card'], fg=THEME['fg_primary'])
+    lbl_count.pack()
+
+    btn_row = tk.Frame(mgmt_frame, bg=THEME['bg_card'])
+    btn_row.pack(pady=15)
+
+    def change_count(n):
+        nonlocal current_player_count
+        if MIN_PLAYERS <= current_player_count + n <= MAX_PLAYERS:
+            current_player_count += n
+            lbl_count.config(text=f"Total Players: {current_player_count}")
+            render_inputs()
+
+    tk.Button(btn_row, text="+ Add Team", command=lambda: change_count(2), 
+              bg=THEME['btn_default'], fg='white', relief='flat', padx=20, pady=5).pack(side='left', padx=10)
+    tk.Button(btn_row, text="- Remove Team", command=lambda: change_count(-2), 
+              bg=THEME['btn_default'], fg='white', relief='flat', padx=20, pady=5).pack(side='left', padx=10)
+
+def get_player_setup_dialog(parent):
+    """
+    Modern, borderless 'Card' UI for player setup.
+    Features inset input fields and clean, borderless checkboxes.
+    """
+    log_message("Opening refined modern player setup dialog.") 
+    
+    dialog = tk.Toplevel(parent)
+    dialog.title("Tournament Setup")
+    dialog.geometry("650x850") 
+    dialog.configure(bg=THEME['bg_main'])
+    dialog.grab_set() 
+    
+    result = None 
+    is_manual_draw = tk.BooleanVar(value=False)
+    log_game_var = tk.BooleanVar(value=LOG_GAME_TO_FILE)
+    current_player_count = MIN_PLAYERS 
+    player_entries = []
+
+    # --- Styling Helper ---
+    def update_visuals(event=None):
+        current_names = [w[0].get().strip() for w in player_entries]
+        from collections import Counter
+        counts = Counter(current_names)
+        
+        for widgets in player_entries:
+            name_entry, paid_var = widgets[0], widgets[1]
+            val = name_entry.get().strip()
+            
+            if val and counts[val] > 1:
+                name_entry.config(bg='#C62828', fg='white') # Error Red
+            elif not paid_var.get():
+                name_entry.config(bg='#BF360C', fg='white') # Unpaid Deep Orange
+            else:
+                # Inset style: Darker than the surrounding card
+                name_entry.config(bg=THEME['bg_main'], fg=THEME['fg_primary'])
+
+    # --- Row Construction ---
+    def create_player_row(parent_frame, idx, initial_data=None):
+        row_bg = THEME['bg_card']
+        row_frame = tk.Frame(parent_frame, bg=row_bg, pady=4)
+        row_frame.pack(fill='x', pady=2, padx=15)
+        
+        # Player ID Label
+        tk.Label(row_frame, text=f"P{idx+1:02}", width=4, font=THEME['font_bold'],
+                 bg=row_bg, fg=THEME['fg_secondary']).pack(side='left', padx=5)
+
+        draw_entry = None
+        if is_manual_draw.get():
+            draw_entry = tk.Entry(row_frame, width=5, justify='center', font=THEME['font_main'],
+                                  bg=THEME['bg_main'], fg=THEME['fg_primary'], 
+                                  insertbackground='white', relief='flat')
+            draw_entry.pack(side='left', padx=5)
+            val = initial_data.get('draw') if initial_data else str(idx + 1)
+            draw_entry.insert(0, val)
+
+        # Name Entry - Inset Look
+        name_entry = tk.Entry(row_frame, bg=THEME['bg_main'], fg=THEME['fg_primary'], 
+                              insertbackground='white', relief='flat', font=THEME['font_main'])
+        name_entry.pack(side='left', fill='x', expand=True, padx=5, ipady=8) # Increased height
+        
+        name_val = initial_data.get('name') if initial_data else f"Player {idx+1}"
+        name_entry.insert(0, name_val)
+        name_entry.bind('<KeyRelease>', update_visuals)
+
+        # Paid Checkbox - Borderless
+        paid_var = tk.BooleanVar(value=initial_data.get('paid', False) if initial_data else False)
+        chk = tk.Checkbutton(row_frame, text="Paid", variable=paid_var, 
+                             bg=row_bg, fg=THEME['fg_secondary'], 
+                             selectcolor=THEME['bg_main'], # Matches inset color
+                             activebackground=row_bg, 
+                             activeforeground=THEME['fg_primary'],
+                             borderwidth=0,          # Removes the standard border
+                             highlightthickness=0,   # Removes the focus ring
+                             padx=10, 
+                             command=update_visuals)
+        chk.pack(side='right')
+
+        return (name_entry, paid_var, draw_entry)
+
+    def render_inputs():
+        saved_data = []
+        for w in player_entries:
+            saved_data.append({
+                'name': w[0].get(), 
+                'paid': w[1].get(), 
+                'draw': w[2].get() if w[2] else ""
+            })
+        
+        for widget in input_container.winfo_children():
+            widget.destroy()
+        player_entries.clear()
 
         for i in range(current_player_count):
             existing = saved_data[i] if i < len(saved_data) else None
-            widgets = create_player_row(container, i, existing)
-            player_entries.append(widgets)
+            player_entries.append(create_player_row(input_container, i, existing))
         
-        container.update_idletasks()
-        canvas.configure(scrollregion=canvas.bbox("all"))
         update_visuals()
 
-    # --- Controls ---
-    header_frame = tk.Frame(dialog, bg=BG_MAIN, pady=10)
-    header_frame.pack(fill='x')
-    tk.Label(header_frame, text="Configure Players", font=("Segoe UI", 16, "bold"), 
-             bg=BG_MAIN, fg=THEME['blue_team']).pack(side='top', pady=(0, 10))
+    # --- Header Section ---
+    header = tk.Frame(dialog, bg=THEME['bg_card'], padx=25, pady=20)
+    header.pack(fill='x', padx=20, pady=20)
+    
+    tk.Label(header, text="Configure Players", font=THEME['font_title'], 
+             bg=THEME['bg_card'], fg=THEME['fg_primary']).pack(anchor='w')
+    
+    cb_frame = tk.Frame(header, bg=THEME['bg_card'])
+    cb_frame.pack(fill='x', pady=(15, 0))
+    
+    # Borderless Global Option Checkboxes
+    tk.Checkbutton(cb_frame, text="Manual Draw (Assign #)", variable=is_manual_draw, 
+                   command=render_inputs, bg=THEME['bg_card'], fg=THEME['fg_secondary'],
+                   selectcolor=THEME['bg_main'], borderwidth=0, highlightthickness=0).pack(side='left')
+    
+    tk.Checkbutton(cb_frame, text="Log Game Progress", variable=log_game_var, 
+                   command=lambda: toggle_log_game(log_game_var),
+                   bg=THEME['bg_card'], fg=THEME['fg_secondary'],
+                   selectcolor=THEME['bg_main'], borderwidth=0, highlightthickness=0).pack(side='left', padx=25)
 
-    controls_frame = tk.Frame(header_frame, bg=BG_MAIN)
-    controls_frame.pack(fill='x', padx=20)
+    # --- Main List Area ---
+    list_card = tk.Frame(dialog, bg=THEME['bg_card'], padx=5, pady=5)
+    list_card.pack(fill='both', expand=True, padx=20)
+    
+    canvas = tk.Canvas(list_card, bg=THEME['bg_card'], highlightthickness=0)
+    scrollbar = tk.Scrollbar(list_card, orient="vertical", command=canvas.yview)
+    input_container = tk.Frame(canvas, bg=THEME['bg_card'])
 
-    tk.Checkbutton(controls_frame, text="Manual Draw (Assign Draw #)", 
-                  variable=is_manual_draw, command=lambda: render_inputs(input_container),
-                  bg=BG_MAIN, fg=FG_TEXT, selectcolor=BG_CARD, activebackground=BG_MAIN, activeforeground=FG_TEXT).pack(side='left')
+    canvas.create_window((0, 0), window=input_container, anchor="nw", width=580)
+    canvas.configure(yscrollcommand=scrollbar.set)
     
-    tk.Checkbutton(controls_frame, text="Log Game to File", 
-                  variable=log_game_var, command=lambda: toggle_log_game(log_game_var),
-                  bg=BG_MAIN, fg=FG_TEXT, selectcolor=BG_CARD, activebackground=BG_MAIN, activeforeground=FG_TEXT).pack(side='right')
-
-    # --- Scrollable Area ---
-    canvas_frame = tk.Frame(dialog, bd=0, bg=BG_CARD)
-    canvas_frame.pack(fill='both', expand=True, padx=20, pady=10)
-    
-    v_scrollbar = tk.Scrollbar(canvas_frame)
-    v_scrollbar.pack(side='right', fill='y')
-    
-    canvas = tk.Canvas(canvas_frame, yscrollcommand=v_scrollbar.set, bg=BG_CARD, highlightthickness=0)
-    canvas.pack(side='left', fill='both', expand=True)
-    
-    v_scrollbar.config(command=canvas.yview)
-    
-    input_container = tk.Frame(canvas, bg=BG_CARD)
-    canvas.create_window((0, 0), window=input_container, anchor="nw")
+    scrollbar.pack(side="right", fill="y")
+    canvas.pack(side="left", fill="both", expand=True)
     input_container.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
-    canvas.bind_all("<MouseWheel>", lambda e: canvas.yview_scroll(int(-1*(e.delta/120)), "units"))
 
-    # --- Team Mgmt ---
-    mgmt_frame = tk.Frame(dialog, bg=BG_MAIN, pady=15)
-    mgmt_frame.pack(fill='x')
+    # --- Management Footer ---
+    mgmt_frame = tk.Frame(dialog, bg=THEME['bg_card'], pady=20)
+    mgmt_frame.pack(fill='x', padx=20, pady=(0, 20))
     
     lbl_count = tk.Label(mgmt_frame, text=f"Total Players: {current_player_count}", 
-                         font=("Segoe UI", 12, "bold"), bg=BG_MAIN, fg=FG_TEXT)
-    lbl_count.pack(pady=(0, 10))
+                         font=THEME['font_header'], bg=THEME['bg_card'], fg=THEME['fg_primary'])
+    lbl_count.pack()
 
-    def update_count(delta):
+    btn_row = tk.Frame(mgmt_frame, bg=THEME['bg_card'])
+    btn_row.pack(pady=15)
+
+    def change_count(n):
         nonlocal current_player_count
-        new_count = current_player_count + delta
-        if MIN_PLAYERS <= new_count <= MAX_PLAYERS:
-            current_player_count = new_count
-            render_inputs(input_container)
+        if MIN_PLAYERS <= current_player_count + n <= MAX_PLAYERS:
+            current_player_count += n
             lbl_count.config(text=f"Total Players: {current_player_count}")
-        else:
-            messagebox.showwarning("Limit", f"Player count must be between {MIN_PLAYERS} and {MAX_PLAYERS}.")
+            render_inputs()
 
-    btn_frame = tk.Frame(mgmt_frame, bg=BG_MAIN)
-    btn_frame.pack()
-    
-    tk.Button(btn_frame, text="+ Add Team", command=lambda: update_count(2), 
-              bg=BTN_BG, fg=BTN_FG, relief='flat', padx=15, pady=5).pack(side='left', padx=10)
-    
-    tk.Button(btn_frame, text="- Remove Team", command=lambda: update_count(-2), 
-              bg=BTN_BG, fg=BTN_FG, relief='flat', padx=15, pady=5).pack(side='left', padx=10)
+    tk.Button(btn_row, text="+ Add Team", command=lambda: change_count(2), 
+              bg=THEME['btn_default'], fg='white', relief='flat', padx=20, pady=5).pack(side='left', padx=10)
+    tk.Button(btn_row, text="- Remove Team", command=lambda: change_count(-2), 
+              bg=THEME['btn_default'], fg='white', relief='flat', padx=20, pady=5).pack(side='left', padx=10)
 
-    # --- Footer ---
-    action_frame = tk.Frame(dialog, pady=20, bg=BG_MAIN)
-    action_frame.pack(fill='x', side='bottom')
+    # --- Action Buttons ---
+    footer = tk.Frame(dialog, bg=THEME['bg_main'], pady=25)
+    footer.pack(fill='x')
 
-    def on_ok():
+    def confirm():
         nonlocal result
-        player_data_list = []
-        unpaid_players = []
-        if update_visuals():
-            messagebox.showerror("Input Error", "Duplicate player names detected.")
-            return
-
-        assigned_draws = set()
-        for i, (name_entry, paid_var, draw_entry) in enumerate(player_entries):
-            p_name = name_entry.get().strip()
-            if not p_name:
-                messagebox.showerror("Error", f"Player {i+1} name is empty.")
-                return
-            if not paid_var.get(): unpaid_players.append(p_name)
-
-            d_num = None
+        update_visuals()
+        data = []
+        for i, (n_entry, p_var, d_entry) in enumerate(player_entries):
+            name = n_entry.get().strip()
+            if not name: return messagebox.showerror("Error", f"P{i+1} is missing a name.")
+            if not p_var.get(): return messagebox.showerror("Payment", f"{name} has not paid.")
+            
+            draw = None
             if is_manual_draw.get():
-                try:
-                    d_num = int(draw_entry.get().strip())
-                    if d_num < 1 or d_num > current_player_count or d_num in assigned_draws:
-                        raise ValueError
-                    assigned_draws.add(d_num)
-                except ValueError:
-                    messagebox.showerror("Error", f"Invalid/Duplicate draw for {p_name}.")
-                    return
-            player_data_list.append((d_num, p_name, paid_var.get()))
-
-        if unpaid_players:
-            messagebox.showerror("Payment Required", f"Unpaid players:\n" + "\n".join(unpaid_players[:10]))
-            return
-
-        result = (is_manual_draw.get(), player_data_list)
+                try: draw = int(d_entry.get().strip())
+                except: return messagebox.showerror("Error", f"Invalid draw for {name}.")
+            
+            data.append((draw, name, p_var.get()))
+        
+        result = (is_manual_draw.get(), data)
         dialog.destroy()
 
-    tk.Button(action_frame, text="START TOURNAMENT", command=on_ok, 
-              bg=THEME['btn_confirm'], fg='white', font=('Segoe UI', 11, 'bold'), 
-              relief='flat', padx=30, pady=8).pack(side='right', padx=20)
-              
-    tk.Button(action_frame, text="Cancel", command=dialog.destroy,
-              bg=THEME['btn_cancel'], fg='white', font=('Segoe UI', 10), 
-              relief='flat', padx=15, pady=8).pack(side='right', padx=10)
+    tk.Button(footer, text="START TOURNAMENT", font=THEME['font_header'],
+              bg=THEME['btn_confirm'], fg='white', relief='flat', width=25,
+              command=confirm).pack(side='left', padx=(50, 10))
+    
+    tk.Button(footer, text="Cancel", font=THEME['font_main'],
+              bg=THEME['btn_cancel'], fg='white', relief='flat', width=12,
+              command=dialog.destroy).pack(side='left')
 
-    render_inputs(input_container)
+    render_inputs()
     dialog.wait_window()
     return result
 
