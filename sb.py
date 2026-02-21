@@ -1952,68 +1952,164 @@ def swap_teams():
     update_scoreboard_display()
 
 def display_final_rankings(champion):
-    """
-    Displays the final rankings and a centered EXIT button using the correct root reference.
-    """
-    # Use 'main_root' instead of 'root'
-    global rankings_display_frame_ref, rankings_label_ref, status_label
-    global ui_references, final_control_frame_ref, TEAM_ROSTERS, TEAMS, main_root
+    """Displays a more verbose and styled Tournament Complete screen."""
+    global rankings_display_frame_ref, rankings_label_ref
+    global final_control_frame_ref, ui_references
 
-    log_message(f"Displaying final rankings. Champion: {champion}")
+    # ---- Force Footer Progress to 100% ----
+    total_matches = len([
+        k for k in TOURNAMENT_STATE.keys()
+        if k not in ['active_match_id', 'TOURNAMENT_OVER']
+    ])
+    completed_matches = len(MATCH_HISTORY)
+    percent = 100 if total_matches else 0
 
-    # 1. Update Header
-    if status_label:
-        status_label.config(text="🏆 TOURNAMENT COMPLETE 🏆", fg=THEME['accent_gold'])
+    if 'footer_progress' in ui_references:
+        ui_references['footer_progress'].config(
+            text=f"Match {completed_matches} of {total_matches} ({percent}%)"
+        )
 
-    # 2. Hide the main game interface
-    if ui_references.get('notebook'):
-        ui_references['notebook'].pack_forget()
+    # ---- Reset Frame ----
+    for w in rankings_display_frame_ref.winfo_children():
+        w.destroy()
 
-    # 3. Show the Rankings Frame
     rankings_display_frame_ref.pack(fill='both', expand=True, padx=20, pady=20)
-    
-    # 4. Format the Champion and Standings text
-    champ_roster = " / ".join(TEAM_ROSTERS.get(champion, ["?",  "?"]))
-    final_text = f"CONGRATULATIONS\n\n🏆 {champ_roster} 🏆\n\nFINAL STANDINGS:\n"
-    
-    sorted_teams = sorted(TEAMS, key=lambda t: get_team_record(t)[0], reverse=True)
-    for i, team in enumerate(sorted_teams, 1):
-        w, l = get_team_record(team)
-        team_roster = " / ".join(TEAM_ROSTERS.get(team, ["?", "?"]))
-        medal = "🥇 " if i == 1 else "🥈 " if i == 2 else "🥉 " if i == 3 else f"{i}. "
-        final_text += f"\n{medal}{team_roster} ({w}W - {l}L)"
 
-    # 5. Update the text label
-    rankings_label_ref.config(
-        text=final_text, 
-        justify='center', 
+    # ==============================
+    # HEADER
+    # ==============================
+    tk.Label(
+        rankings_display_frame_ref,
+        text="🏁 TOURNAMENT COMPLETE 🏁",
+        font=THEME['font_title'],
+        fg=THEME['accent_gold'],
+        bg=THEME['bg_card'],
+        anchor='center'
+    ).pack(fill='x', pady=(10, 20))
+
+    # Divider
+    tk.Frame(
+        rankings_display_frame_ref,
+        bg=THEME['accent_gold'],
+        height=2
+    ).pack(fill='x', pady=(0, 25))
+
+    # ==============================
+    # CHAMPION SECTION
+    # ==============================
+    champ_roster = " / ".join(TEAM_ROSTERS.get(champion, ['?', '?']))
+
+    tk.Label(
+        rankings_display_frame_ref,
+        text="🥇 CHAMPIONS",
+        font=('Segoe UI', 12, 'bold'),
+        fg=THEME['accent_gold'],
+        bg=THEME['bg_card']
+    ).pack(pady=(0, 5))
+
+    tk.Label(
+        rankings_display_frame_ref,
+        text=f"{champion}",
+        font=('Segoe UI', 18, 'bold'),
+        fg=THEME['fg_primary'],
+        bg=THEME['bg_card']
+    ).pack()
+
+    tk.Label(
+        rankings_display_frame_ref,
+        text=f"Team Roster: {champ_roster}",
+        font=THEME['font_main'],
+        fg=THEME['fg_secondary'],
+        bg=THEME['bg_card']
+    ).pack(pady=(0, 15))
+
+    tk.Label(
+        rankings_display_frame_ref,
+        text="Undefeated grit. Clutch finishes. Well earned.",
+        font=('Segoe UI', 9, 'italic'),
+        fg=THEME['fg_secondary'],
+        bg=THEME['bg_card']
+    ).pack(pady=(0, 30))
+
+    # ==============================
+    # FINAL STANDINGS
+    # ==============================
+    tk.Label(
+        rankings_display_frame_ref,
+        text="Final Standings",
         font=('Segoe UI', 12, 'bold'),
         fg=THEME['fg_primary'],
-        bg=THEME['bg_card'],
-        pady=20
-    )
+        bg=THEME['bg_card']
+    ).pack(pady=(0, 15))
 
-    # 6. Setup the EXIT Button
-    final_control_frame_ref.pack(fill='x', side='bottom', pady=30)
-    
-    # Clear out any old buttons
-    for child in final_control_frame_ref.winfo_children():
-        child.destroy()
-        
-    # Create the large Exit button using main_root.destroy
-    exit_button = tk.Button(
-        final_control_frame_ref, 
-        text="EXIT TOURNAMENT", 
-        command=main_root.destroy,  # Using the correct global variable
-        bg=THEME['btn_cancel'], 
-        fg='white',
-        font=('Segoe UI', 12, 'bold'), 
-        relief='flat', 
-        padx=60, 
-        pady=20,
-        cursor='hand2'
-    )
-    exit_button.pack(expand=True)
+    standings_frame = tk.Frame(rankings_display_frame_ref, bg=THEME['bg_card'])
+    standings_frame.pack()
+
+    places = [
+        ('🥇 1ST PLACE', '1ST', THEME['accent_gold']),
+        ('🥈 2ND PLACE', '2ND', THEME['fg_primary']),
+        ('🥉 3RD PLACE', '3RD', THEME['fg_secondary'])
+    ]
+
+    for label_text, key, color in places:
+        team = TOURNAMENT_RANKINGS.get(key)
+        if not team:
+            continue
+
+        roster = " / ".join(TEAM_ROSTERS.get(team, ['?', '?']))
+        wins, losses = get_team_record(team)
+
+        row = tk.Frame(standings_frame, bg=THEME['bg_card'])
+        row.pack(fill='x', pady=6)
+
+        tk.Label(
+            row,
+            text=label_text,
+            font=('Segoe UI', 10, 'bold'),
+            fg=color,
+            bg=THEME['bg_card'],
+            width=16,
+            anchor='w'
+        ).pack(side='left')
+
+        tk.Label(
+            row,
+            text=f"{team} ({roster})",
+            font=('Segoe UI', 10, 'bold'),
+            fg=THEME['fg_primary'],
+            bg=THEME['bg_card'],
+            anchor='w'
+        ).pack(side='left', padx=10)
+
+        tk.Label(
+            row,
+            text=f"Record: {wins}-{losses}",
+            font=('Consolas', 10),
+            fg=THEME['fg_secondary'],
+            bg=THEME['bg_card']
+        ).pack(side='right')
+
+    # ==============================
+    # TOURNAMENT SUMMARY FOOTER
+    # ==============================
+    tk.Frame(
+        rankings_display_frame_ref,
+        bg=THEME['bg_main'],
+        height=2
+    ).pack(fill='x', pady=25)
+
+    total_teams = len(TEAMS)
+
+    tk.Label(
+        rankings_display_frame_ref,
+        text=f"{total_teams} Teams • {completed_matches} Matches Played • Double Elimination Format",
+        font=('Segoe UI', 9),
+        fg=THEME['fg_secondary'],
+        bg=THEME['bg_card']
+    ).pack(pady=(0, 10))
+
+    # Final controls
+    final_control_frame_ref.pack(fill='x', pady=(10, 0))
     
 def reset_game(update_teams=True):
     """Resets the game state (only updating teams now)."""
