@@ -91,6 +91,8 @@ bracket_info_frame_ref = None
 team_info_frame_ref = None 
 rankings_display_frame_ref = None 
 match_timer_id = None
+MATCH_DURATIONS = []        # List of completed match durations (seconds)
+TOURNAMENT_START_TIME = None
 
 # --- System Functions ---
 def _find_last_snapshot_in_file(path):
@@ -559,7 +561,6 @@ def update_timer_display():
         
     match_id = TOURNAMENT_STATE.get('active_match_id')
     
-    # Stop timer if the tournament is over or no active match
     if match_id == 'TOURNAMENT_OVER' or not match_id:
         ui_references['timer_lbl'].config(text="--:--")
         return
@@ -568,19 +569,67 @@ def update_timer_display():
     if not match_data:
         return
 
-    # Initialize start time if this is the first tick for this match
     if 'start_time' not in match_data or not match_data['start_time']:
         match_data['start_time'] = time.time()
 
-    # Calculate elapsed time
     elapsed = int(time.time() - match_data['start_time'])
     mins, secs = divmod(elapsed, 60)
     
-    # Update the label
     ui_references['timer_lbl'].config(text=f"{mins:02d}:{secs:02d}")
     
-    # Schedule the next tick in 1000ms (1 second)
     match_timer_id = main_root.after(1000, update_timer_display)
+
+def stop_match_timer():
+    global match_timer_id, main_root
+    if match_timer_id and main_root:
+        try:
+            main_root.after_cancel(match_timer_id)
+        except:
+            pass
+        match_timer_id = None
+
+
+def resume_match_timer():
+    global TOURNAMENT_STATE
+    match_id = TOURNAMENT_STATE.get('active_match_id')
+    if not match_id or match_id == 'TOURNAMENT_OVER':
+        return
+
+    match_data = TOURNAMENT_STATE.get(match_id)
+    if not match_data:
+        return
+
+    # Adjust start_time so timer resumes from current elapsed
+    if 'paused_at' in match_data and match_data['paused_at']:
+        paused_duration = time.time() - match_data['paused_at']
+        match_data['start_time'] += paused_duration
+        match_data['paused_at'] = None
+
+    update_timer_display()
+
+
+def finalize_match_duration(match_id):
+    global MATCH_DURATIONS, TOURNAMENT_STATE
+
+    match_data = TOURNAMENT_STATE.get(match_id)
+    if not match_data or not match_data.get('start_time'):
+        return
+
+    duration = int(time.time() - match_data['start_time'])
+    match_data['duration'] = duration
+    MATCH_DURATIONS.append(duration)
+
+    return duration
+
+
+def format_seconds(seconds):
+    if not seconds:
+        return "00:00"
+    mins, secs = divmod(int(seconds), 60)
+    hours, mins = divmod(mins, 60)
+    if hours > 0:
+        return f"{hours}:{mins:02d}:{secs:02d}"
+    return f"{mins:02d}:{secs:02d}"
 
 def update_scoreboard_display():
     """Redesigned update logic for the new Card UI."""
@@ -663,6 +712,12 @@ def declare_winner(color):
     
     log_message(f"Winner declared for {match_id_to_confirm}: {winner} ({color}).") 
 
+    # Pause timer while confirming
+    match_data = TOURNAMENT_STATE.get(match_id_to_confirm)
+    if match_data:
+        match_data['paused_at'] = time.time()
+    stop_match_timer()
+    
     # Hide the VS Cards, Show the Result Frame
     ui_references['match_tab_frame'].pack_forget()
     match_res_frame.pack(fill='both', expand=True, padx=10, pady=10)
@@ -703,6 +758,9 @@ def go_back_to_selection():
     
     match_res_frame.pack_forget()
     ui_references['match_tab_frame'].pack(fill='both', expand=True, padx=5, pady=5)
+    
+    # Resume match timer
+    resume_match_timer()
     
     # Ensure button text is up to date
     update_winner_buttons()
@@ -2099,10 +2157,13 @@ def display_final_rankings(champion):
     ).pack(fill='x', pady=25)
 
     total_teams = len(TEAMS)
+    total_matches = len(MATCH_DURATIONS)
+    total_time = sum(MATCH_DURATIONS)
+    avg_time = int(total_time / total_matches) if total_matches else 0
 
     tk.Label(
         rankings_display_frame_ref,
-        text=f"{total_teams} Teams • {completed_matches} Matches Played • Double Elimination Format",
+        text=f"{total_teams} Teams • Matches Played: {total_matches} • Total Tournament Time: {format_seconds(total_time)} • Average Match Time: {format_seconds(avg_time)}",
         font=('Segoe UI', 9),
         fg=THEME['fg_secondary'],
         bg=THEME['bg_card']
@@ -2787,9 +2848,11 @@ def start_tournament():
 
 def confirm_match_resolution(winner, loser, winning_color, match_id):
     """Processes the confirmed match result and updates the tournament state."""
-    global match_res_frame, current_match_res_buttons
+    global match_res_frame, current_match_res_buttons, TOURNAMENT_STATE
 
     log_message(f"Confirmation received for match {match_id}. Processing result...") 
+
+    duration = finalize_match_duration(match_id)
 
     handle_match_resolution(winner, loser, winning_color, match_id)
 
