@@ -35,19 +35,6 @@ THEME = {
     'font_title': ('Segoe UI', 18, 'bold'),
 }
 
-# --- Console Logging Function ---
-def log_message(message):
-    """Prints a timestamped message to the console and file (if enabled) for tracking."""
-    global LOG_GAME_TO_FILE, LOG_FILE_HANDLE 
-    timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    log_line = f"[{timestamp}] {message}"
-    
-    print(log_line)
-
-    if LOG_GAME_TO_FILE and LOG_FILE_HANDLE:
-        LOG_FILE_HANDLE.write(log_line + "\n")
-        LOG_FILE_HANDLE.flush() 
-
 # --- Global & Tournament Variables ---
 TEAMS = []          
 TEAM_ROSTERS = {}   
@@ -93,6 +80,19 @@ rankings_display_frame_ref = None
 match_timer_id = None
 MATCH_DURATIONS = []        # List of completed match durations (seconds)
 TOURNAMENT_START_TIME = None
+
+# --- Console Logging Function ---
+def log_message(message):
+    """Prints a timestamped message to the console and file (if enabled) for tracking."""
+    global LOG_GAME_TO_FILE, LOG_FILE_HANDLE 
+    timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    log_line = f"[{timestamp}] {message}"
+
+    print(log_line)
+
+    if LOG_GAME_TO_FILE and LOG_FILE_HANDLE:
+        LOG_FILE_HANDLE.write(log_line + "\n")
+        LOG_FILE_HANDLE.flush() 
 
 # --- System Functions ---
 def _find_last_snapshot_in_file(path):
@@ -2418,6 +2418,24 @@ def get_player_setup_dialog(parent):
     current_player_count = MIN_PLAYERS 
     player_entries = []
 
+    def _on_mousewheel(event):
+        # 1. Check if the list is even long enough to scroll
+        if canvas.bbox("all")[3] <= canvas.winfo_height():
+            return
+            
+        # 2. Calculate smooth movement
+        if sys.platform == 'linux':
+            # Linux uses buttons 4 and 5; we'll move 40 pixels per click
+            delta = -40 if event.num == 4 else 40
+        elif sys.platform == 'darwin':
+            # macOS uses small deltas (1, 2, etc.)
+            delta = -event.delta * 10
+        else:
+            # Windows uses 120 per notch; dividing by 2 moves 60 pixels
+            delta = -1 * (event.delta // 2)
+        
+        canvas.yview_scroll(delta, "units")
+
     # --- Styling Helper ---
     def update_visuals(event=None):
         current_names = [w[0].get().strip() for w in player_entries]
@@ -2441,6 +2459,16 @@ def get_player_setup_dialog(parent):
         row_bg = THEME['bg_card']
         row_frame = tk.Frame(parent_frame, bg=row_bg, pady=4)
         row_frame.pack(fill='x', pady=2, padx=15)
+        
+        for widget in [row_frame, name_entry, chk, draw_entry]:
+            if widget: # Ensure widget exists
+                if sys.platform == 'linux':
+                    widget.bind("<Button-4>", _on_mousewheel)
+                    widget.bind("<Button-5>", _on_mousewheel)
+                else:
+                    widget.bind("<MouseWheel>", _on_mousewheel)
+
+        return (name_entry, paid_var, draw_entry)
         
         # Player ID Label
         tk.Label(row_frame, text=f"P{idx+1:02}", width=4, font=THEME['font_bold'],
@@ -2523,6 +2551,7 @@ def get_player_setup_dialog(parent):
     list_card.pack(fill='both', expand=True, padx=20)
     
     canvas = tk.Canvas(list_card, bg=THEME['bg_card'], highlightthickness=0)
+    canvas.configure(yscrollincrement=1)
     scrollbar = tk.Scrollbar(list_card, orient="vertical", command=canvas.yview)
     input_container = tk.Frame(canvas, bg=THEME['bg_card'])
 
@@ -2531,7 +2560,29 @@ def get_player_setup_dialog(parent):
     
     scrollbar.pack(side="right", fill="y")
     canvas.pack(side="left", fill="both", expand=True)
+    
+    # This ensures the scrollable area updates when players are added/removed
     input_container.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+
+    # --- THE ROBUST FIX ---
+    def _on_mousewheel(event):
+        # 1. Check if the content actually needs scrolling
+        content_height = canvas.bbox("all")[3]
+        visible_height = canvas.winfo_height()
+        if content_height <= visible_height:
+            return
+
+        # 2. Handle different OS event types
+        if event.num == 4 or event.delta > 0: # Scroll Up
+            canvas.yview_scroll(-1, "units")
+        elif event.num == 5 or event.delta < 0: # Scroll Down
+            canvas.yview_scroll(1, "units")
+
+    # Bind to the DIALOG and the CANVAS to ensure it catches the movement
+    for widget in [dialog, canvas, input_container]:
+        widget.bind("<MouseWheel>", _on_mousewheel)     # Windows/macOS
+        widget.bind("<Button-4>", _on_mousewheel)       # Linux Up
+        widget.bind("<Button-5>", _on_mousewheel)       # Linux Down
 
     # --- Management Footer ---
     mgmt_frame = tk.Frame(dialog, bg=THEME['bg_card'], pady=20)
