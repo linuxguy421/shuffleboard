@@ -2402,7 +2402,7 @@ def toggle_log_game(log_var):
 def get_player_setup_dialog(parent):
     """
     Modern, borderless 'Card' UI for player setup.
-    Features inset input fields and clean, borderless checkboxes.
+    Features inset input fields, clean borderless checkboxes, and an All Paid toggle.
     """
     log_message("Opening refined modern player setup dialog.") 
     
@@ -2415,26 +2415,22 @@ def get_player_setup_dialog(parent):
     result = None 
     is_manual_draw = tk.BooleanVar(value=False)
     log_game_var = tk.BooleanVar(value=LOG_GAME_TO_FILE)
+    all_paid_var = tk.BooleanVar(value=False) # Tracks the "All Paid" state
     current_player_count = MIN_PLAYERS 
     player_entries = []
 
     def _on_mousewheel(event):
-        # 1. Check if the list is even long enough to scroll
-        if canvas.bbox("all")[3] <= canvas.winfo_height():
+        # 1. Check if the content actually needs scrolling
+        content_height = canvas.bbox("all")[3]
+        visible_height = canvas.winfo_height()
+        if content_height <= visible_height:
             return
-            
-        # 2. Calculate smooth movement
-        if sys.platform == 'linux':
-            # Linux uses buttons 4 and 5; we'll move 40 pixels per click
-            delta = -40 if event.num == 4 else 40
-        elif sys.platform == 'darwin':
-            # macOS uses small deltas (1, 2, etc.)
-            delta = -event.delta * 10
-        else:
-            # Windows uses 120 per notch; dividing by 2 moves 60 pixels
-            delta = -1 * (event.delta // 2)
-        
-        canvas.yview_scroll(delta, "units")
+
+        # 2. Handle different OS event types
+        if event.num == 4 or event.delta > 0: # Scroll Up
+            canvas.yview_scroll(-1, "units")
+        elif event.num == 5 or event.delta < 0: # Scroll Down
+            canvas.yview_scroll(1, "units")
 
     # --- Styling Helper ---
     def update_visuals(event=None):
@@ -2454,21 +2450,18 @@ def get_player_setup_dialog(parent):
                 # Inset style: Darker than the surrounding card
                 name_entry.config(bg=THEME['bg_main'], fg=THEME['fg_primary'])
 
+    # --- Toggle All Paid Function ---
+    def toggle_all_paid():
+        state = all_paid_var.get()
+        for widgets in player_entries:
+            widgets[1].set(state)  # widgets[1] is the paid_var
+        update_visuals()
+
     # --- Row Construction ---
     def create_player_row(parent_frame, idx, initial_data=None):
         row_bg = THEME['bg_card']
         row_frame = tk.Frame(parent_frame, bg=row_bg, pady=4)
         row_frame.pack(fill='x', pady=2, padx=15)
-        
-        for widget in [row_frame, name_entry, chk, draw_entry]:
-            if widget: # Ensure widget exists
-                if sys.platform == 'linux':
-                    widget.bind("<Button-4>", _on_mousewheel)
-                    widget.bind("<Button-5>", _on_mousewheel)
-                else:
-                    widget.bind("<MouseWheel>", _on_mousewheel)
-
-        return (name_entry, paid_var, draw_entry)
         
         # Player ID Label
         tk.Label(row_frame, text=f"P{idx+1:02}", width=4, font=THEME['font_bold'],
@@ -2486,7 +2479,7 @@ def get_player_setup_dialog(parent):
         # Name Entry - Inset Look
         name_entry = tk.Entry(row_frame, bg=THEME['bg_main'], fg=THEME['fg_primary'], 
                               insertbackground='white', relief='flat', font=THEME['font_main'])
-        name_entry.pack(side='left', fill='x', expand=True, padx=5, ipady=8) # Increased height
+        name_entry.pack(side='left', fill='x', expand=True, padx=5, ipady=8) 
         
         name_val = initial_data.get('name') if initial_data else f"Player {idx+1}"
         name_entry.insert(0, name_val)
@@ -2496,14 +2489,22 @@ def get_player_setup_dialog(parent):
         paid_var = tk.BooleanVar(value=initial_data.get('paid', False) if initial_data else False)
         chk = tk.Checkbutton(row_frame, text="Paid", variable=paid_var, 
                              bg=row_bg, fg=THEME['fg_secondary'], 
-                             selectcolor=THEME['bg_main'], # Matches inset color
+                             selectcolor=THEME['bg_main'], 
                              activebackground=row_bg, 
                              activeforeground=THEME['fg_primary'],
-                             borderwidth=0,          # Removes the standard border
-                             highlightthickness=0,   # Removes the focus ring
+                             borderwidth=0,          
+                             highlightthickness=0,   
                              padx=10, 
                              command=update_visuals)
         chk.pack(side='right')
+
+        # Apply robust scrolling to the row and its sub-widgets
+        for widget in [row_frame, name_entry, chk]:
+            if sys.platform == 'linux':
+                widget.bind("<Button-4>", _on_mousewheel)
+                widget.bind("<Button-5>", _on_mousewheel)
+            else:
+                widget.bind("<MouseWheel>", _on_mousewheel)
 
         return (name_entry, paid_var, draw_entry)
 
@@ -2545,6 +2546,12 @@ def get_player_setup_dialog(parent):
                    command=lambda: toggle_log_game(log_game_var),
                    bg=THEME['bg_card'], fg=THEME['fg_secondary'],
                    selectcolor=THEME['bg_main'], borderwidth=0, highlightthickness=0).pack(side='left', padx=25)
+
+    # All Paid Checkbox
+    tk.Checkbutton(cb_frame, text="All Paid", variable=all_paid_var, 
+                   command=toggle_all_paid,
+                   bg=THEME['bg_card'], fg=THEME['fg_secondary'],
+                   selectcolor=THEME['bg_main'], borderwidth=0, highlightthickness=0).pack(side='left')
 
     # --- Main List Area ---
     list_card = tk.Frame(dialog, bg=THEME['bg_card'], padx=5, pady=5)
@@ -2561,185 +2568,15 @@ def get_player_setup_dialog(parent):
     scrollbar.pack(side="right", fill="y")
     canvas.pack(side="left", fill="both", expand=True)
     
-    # This ensures the scrollable area updates when players are added/removed
     input_container.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
-
-    # --- THE ROBUST FIX ---
-    def _on_mousewheel(event):
-        # 1. Check if the content actually needs scrolling
-        content_height = canvas.bbox("all")[3]
-        visible_height = canvas.winfo_height()
-        if content_height <= visible_height:
-            return
-
-        # 2. Handle different OS event types
-        if event.num == 4 or event.delta > 0: # Scroll Up
-            canvas.yview_scroll(-1, "units")
-        elif event.num == 5 or event.delta < 0: # Scroll Down
-            canvas.yview_scroll(1, "units")
 
     # Bind to the DIALOG and the CANVAS to ensure it catches the movement
     for widget in [dialog, canvas, input_container]:
-        widget.bind("<MouseWheel>", _on_mousewheel)     # Windows/macOS
-        widget.bind("<Button-4>", _on_mousewheel)       # Linux Up
-        widget.bind("<Button-5>", _on_mousewheel)       # Linux Down
-
-    # --- Management Footer ---
-    mgmt_frame = tk.Frame(dialog, bg=THEME['bg_card'], pady=20)
-    mgmt_frame.pack(fill='x', padx=20, pady=(0, 20))
-    
-    lbl_count = tk.Label(mgmt_frame, text=f"Total Players: {current_player_count}", 
-                         font=THEME['font_header'], bg=THEME['bg_card'], fg=THEME['fg_primary'])
-    lbl_count.pack()
-
-    btn_row = tk.Frame(mgmt_frame, bg=THEME['bg_card'])
-    btn_row.pack(pady=15)
-
-    def change_count(n):
-        nonlocal current_player_count
-        if MIN_PLAYERS <= current_player_count + n <= MAX_PLAYERS:
-            current_player_count += n
-            lbl_count.config(text=f"Total Players: {current_player_count}")
-            render_inputs()
-
-    tk.Button(btn_row, text="+ Add Team", command=lambda: change_count(2), 
-              bg=THEME['btn_default'], fg='white', relief='flat', padx=20, pady=5).pack(side='left', padx=10)
-    tk.Button(btn_row, text="- Remove Team", command=lambda: change_count(-2), 
-              bg=THEME['btn_default'], fg='white', relief='flat', padx=20, pady=5).pack(side='left', padx=10)
-
-def get_player_setup_dialog(parent):
-    """
-    Modern, borderless 'Card' UI for player setup.
-    Features inset input fields and clean, borderless checkboxes.
-    """
-    log_message("Opening refined modern player setup dialog.") 
-    
-    dialog = tk.Toplevel(parent)
-    dialog.title("Tournament Setup")
-    dialog.geometry("650x850") 
-    dialog.configure(bg=THEME['bg_main'])
-    dialog.grab_set() 
-    
-    result = None 
-    is_manual_draw = tk.BooleanVar(value=False)
-    log_game_var = tk.BooleanVar(value=LOG_GAME_TO_FILE)
-    current_player_count = MIN_PLAYERS 
-    player_entries = []
-
-    # --- Styling Helper ---
-    def update_visuals(event=None):
-        current_names = [w[0].get().strip() for w in player_entries]
-        from collections import Counter
-        counts = Counter(current_names)
-        
-        for widgets in player_entries:
-            name_entry, paid_var = widgets[0], widgets[1]
-            val = name_entry.get().strip()
-            
-            if val and counts[val] > 1:
-                name_entry.config(bg='#C62828', fg='white') # Error Red
-            elif not paid_var.get():
-                name_entry.config(bg='#BF360C', fg='white') # Unpaid Deep Orange
-            else:
-                # Inset style: Darker than the surrounding card
-                name_entry.config(bg=THEME['bg_main'], fg=THEME['fg_primary'])
-
-    # --- Row Construction ---
-    def create_player_row(parent_frame, idx, initial_data=None):
-        row_bg = THEME['bg_card']
-        row_frame = tk.Frame(parent_frame, bg=row_bg, pady=4)
-        row_frame.pack(fill='x', pady=2, padx=15)
-        
-        # Player ID Label
-        tk.Label(row_frame, text=f"P{idx+1:02}", width=4, font=THEME['font_bold'],
-                 bg=row_bg, fg=THEME['fg_secondary']).pack(side='left', padx=5)
-
-        draw_entry = None
-        if is_manual_draw.get():
-            draw_entry = tk.Entry(row_frame, width=5, justify='center', font=THEME['font_main'],
-                                  bg=THEME['bg_main'], fg=THEME['fg_primary'], 
-                                  insertbackground='white', relief='flat')
-            draw_entry.pack(side='left', padx=5)
-            val = initial_data.get('draw') if initial_data else str(idx + 1)
-            draw_entry.insert(0, val)
-
-        # Name Entry - Inset Look
-        name_entry = tk.Entry(row_frame, bg=THEME['bg_main'], fg=THEME['fg_primary'], 
-                              insertbackground='white', relief='flat', font=THEME['font_main'])
-        name_entry.pack(side='left', fill='x', expand=True, padx=5, ipady=8) # Increased height
-        
-        name_val = initial_data.get('name') if initial_data else f"Player {idx+1}"
-        name_entry.insert(0, name_val)
-        name_entry.bind('<KeyRelease>', update_visuals)
-
-        # Paid Checkbox - Borderless
-        paid_var = tk.BooleanVar(value=initial_data.get('paid', False) if initial_data else False)
-        chk = tk.Checkbutton(row_frame, text="Paid", variable=paid_var, 
-                             bg=row_bg, fg=THEME['fg_secondary'], 
-                             selectcolor=THEME['bg_main'], # Matches inset color
-                             activebackground=row_bg, 
-                             activeforeground=THEME['fg_primary'],
-                             borderwidth=0,          # Removes the standard border
-                             highlightthickness=0,   # Removes the focus ring
-                             padx=10, 
-                             command=update_visuals)
-        chk.pack(side='right')
-
-        return (name_entry, paid_var, draw_entry)
-
-    def render_inputs():
-        saved_data = []
-        for w in player_entries:
-            saved_data.append({
-                'name': w[0].get(), 
-                'paid': w[1].get(), 
-                'draw': w[2].get() if w[2] else ""
-            })
-        
-        for widget in input_container.winfo_children():
-            widget.destroy()
-        player_entries.clear()
-
-        for i in range(current_player_count):
-            existing = saved_data[i] if i < len(saved_data) else None
-            player_entries.append(create_player_row(input_container, i, existing))
-        
-        update_visuals()
-
-    # --- Header Section ---
-    header = tk.Frame(dialog, bg=THEME['bg_card'], padx=25, pady=20)
-    header.pack(fill='x', padx=20, pady=20)
-    
-    tk.Label(header, text="Configure Players", font=THEME['font_title'], 
-             bg=THEME['bg_card'], fg=THEME['fg_primary']).pack(anchor='w')
-    
-    cb_frame = tk.Frame(header, bg=THEME['bg_card'])
-    cb_frame.pack(fill='x', pady=(15, 0))
-    
-    # Borderless Global Option Checkboxes
-    tk.Checkbutton(cb_frame, text="Manual Draw (Assign #)", variable=is_manual_draw, 
-                   command=render_inputs, bg=THEME['bg_card'], fg=THEME['fg_secondary'],
-                   selectcolor=THEME['bg_main'], borderwidth=0, highlightthickness=0).pack(side='left')
-    
-    tk.Checkbutton(cb_frame, text="Log Game Progress", variable=log_game_var, 
-                   command=lambda: toggle_log_game(log_game_var),
-                   bg=THEME['bg_card'], fg=THEME['fg_secondary'],
-                   selectcolor=THEME['bg_main'], borderwidth=0, highlightthickness=0).pack(side='left', padx=25)
-
-    # --- Main List Area ---
-    list_card = tk.Frame(dialog, bg=THEME['bg_card'], padx=5, pady=5)
-    list_card.pack(fill='both', expand=True, padx=20)
-    
-    canvas = tk.Canvas(list_card, bg=THEME['bg_card'], highlightthickness=0)
-    scrollbar = tk.Scrollbar(list_card, orient="vertical", command=canvas.yview)
-    input_container = tk.Frame(canvas, bg=THEME['bg_card'])
-
-    canvas.create_window((0, 0), window=input_container, anchor="nw", width=580)
-    canvas.configure(yscrollcommand=scrollbar.set)
-    
-    scrollbar.pack(side="right", fill="y")
-    canvas.pack(side="left", fill="both", expand=True)
-    input_container.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        if sys.platform == 'linux':
+            widget.bind("<Button-4>", _on_mousewheel)       # Linux Up
+            widget.bind("<Button-5>", _on_mousewheel)       # Linux Down
+        else:
+            widget.bind("<MouseWheel>", _on_mousewheel)     # Windows/macOS
 
     # --- Management Footer ---
     mgmt_frame = tk.Frame(dialog, bg=THEME['bg_card'], pady=20)
