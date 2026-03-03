@@ -14,7 +14,7 @@ import time
 import json 
 
 # --- Version ---
-SHUF_VERSION = "1.47"
+SHUF_VERSION = "1.51"
 
 # --- Theme Configuration ---
 THEME = {
@@ -29,6 +29,7 @@ THEME = {
     'btn_default': '#546E7A',   # Blue-Grey Button
     'btn_confirm': '#43A047',   # Green
     'btn_cancel': '#D32F2F',    # Red
+    'btn_dkgray': '#5B5B5B',    # Dark Gray
     'font_main': ('Segoe UI', 10),
     'font_bold': ('Segoe UI', 10, 'bold'),
     'font_header': ('Segoe UI', 14, 'bold'),
@@ -442,11 +443,11 @@ def update_schedule_tab():
             color_hex = THEME['red_team'] if record['color'] == 'red' else THEME['blue_team']
             
             # Fetch rosters for the history record
-            win_roster = " / ".join(TEAM_ROSTERS.get(record['winner'], ["?", "?"]))
-            loss_roster = " / ".join(TEAM_ROSTERS.get(record['loser'], ["?", "?"]))
+            win_roster = " & ".join(TEAM_ROSTERS.get(record['winner'], ["?", "?"]))
+            loss_roster = " & ".join(TEAM_ROSTERS.get(record['loser'], ["?", "?"]))
             
-            # Format: "G1: Player A / Player B def. Player C / Player D"
-            history_text = f"{record['id']}: {win_roster} def. {loss_roster}"
+            # Format: "G1: Player A / Player B defeated Player C / Player D"
+            history_text = f"{record['id']}: {win_roster} defeated {loss_roster}"
             
             tk.Label(f, text=history_text, font=THEME['font_main'], 
                      fg=color_hex, bg=THEME['bg_main']).pack(side='left')
@@ -472,7 +473,7 @@ def update_roster_seeding_vertical():
     table.grid_columnconfigure(3, weight=0)  # Win %
 
     # ---- Header Row ----
-    headers = ["Seed", "Team / Players", "W-L", "Win%"]
+    headers = ["Status", "Team / Players", "W-L", "Win%"]
     for col, text in enumerate(headers):
         tk.Label(
             table,
@@ -481,7 +482,7 @@ def update_roster_seeding_vertical():
             bg=THEME['bg_card'],
             fg=THEME['fg_secondary'],
             anchor='w'
-        ).grid(row=0, column=col, sticky='w', padx=8, pady=(4, 6))
+        ).grid(row=0, column=col, sticky='w', padx=35, pady=(4, 6))
 
     # Divider
     tk.Frame(table, bg=THEME['bg_main'], height=2)\
@@ -500,35 +501,36 @@ def update_roster_seeding_vertical():
         fg_secondary = THEME['fg_secondary']
         status_color = fg_primary
 
-        status_badge = ""
+        status_badge = "    █"
+        status_color = THEME['btn_dkgray']
         if team == TOURNAMENT_RANKINGS.get('1ST'):
-            status_badge = "  • CHAMPION"
+            status_badge = "    █"
             status_color = THEME['accent_gold']
         elif team in TOURNAMENT_RANKINGS.values():
-            status_badge = "  • ELIMINATED"
+            status_badge = "    █"
             status_color = THEME['btn_cancel']
         elif team in current_match_teams.values():
-            status_badge = "  • ACTIVE"
-            status_color = THEME['accent_gold']
+            status_badge = "    █"
+            status_color = THEME['btn_confirm']
 
         roster = TEAM_ROSTERS.get(team, ['?', '?'])
-        team_text = f"{team} ({roster[0]} / {roster[1]}){status_badge}"
+        team_text = f"{roster[0]} & {roster[1]}"
 
         # Seed
         tk.Label(
-            table, text=str(idx),
+            table, text=status_badge,
             font=('Segoe UI', 10),
-            bg=bg_col, fg=fg_secondary,
+            bg=bg_col, fg=status_color,
             anchor='w'
-        ).grid(row=row_index, column=0, sticky='w', padx=8, pady=4)
+        ).grid(row=row_index, column=0, sticky='w', padx=35, pady=7)
 
         # Team / Players
         tk.Label(
             table, text=team_text,
             font=('Segoe UI', 10, 'bold'),
-            bg=bg_col, fg=status_color,
+            bg=bg_col, fg=fg_primary,
             anchor='w'
-        ).grid(row=row_index, column=1, sticky='w', padx=8, pady=4)
+        ).grid(row=row_index, column=1, sticky='w', padx=35, pady=7)
 
         # W-L
         tk.Label(
@@ -536,7 +538,7 @@ def update_roster_seeding_vertical():
             font=('Consolas', 10),
             bg=bg_col, fg=fg_primary,
             anchor='e'
-        ).grid(row=row_index, column=2, sticky='e', padx=8, pady=4)
+        ).grid(row=row_index, column=2, sticky='e', padx=35, pady=7)
 
         # Win %
         tk.Label(
@@ -544,7 +546,7 @@ def update_roster_seeding_vertical():
             font=('Consolas', 10),
             bg=bg_col, fg=fg_primary,
             anchor='e'
-        ).grid(row=row_index, column=3, sticky='e', padx=8, pady=4)
+        ).grid(row=row_index, column=3, sticky='e', padx=35, pady=7)
 
         row_index += 1
 
@@ -1732,10 +1734,10 @@ def handle_match_resolution(winner, loser, winning_color, match_id):
                 match_data['winner'] = None 
                 match_data['winner_color'] = None 
             
-            w_roster = "/".join(TEAM_ROSTERS.get(winner, ["P1", "P2"]))
-            l_roster = "/".join(TEAM_ROSTERS.get(loser, ["P3", "P4"]))
-            messagebox.showinfo("Final Round!", 
-                                f"{w_roster} have defeated the previously undefeated team {l_roster}! So for the marbles...")
+            w_roster = " & ".join(TEAM_ROSTERS.get(winner, ["P1", "P2"]))
+            l_roster = " & ".join(TEAM_ROSTERS.get(loser, ["P3", "P4"]))
+            messagebox.showwarning("Final Round!", 
+                                f"{w_roster} have demoted {l_roster} from undefeated status!")
             
             TOURNAMENT_STATE['active_match_id'] = reset_game_id
             log_message(f"Match GF resulted in Bracket Reset. Next active match: {reset_game_id} ({winner} vs {loser})") 
@@ -1766,8 +1768,6 @@ def handle_match_resolution(winner, loser, winning_color, match_id):
         reset_game() 
         return 
         
-    # --- Standard Propagation (For all non-final games that did not return above) ---
-
     # 2. Propagate Winner 
     w_target = match_config.get('W_next')
     if isinstance(w_target, tuple):
@@ -2132,27 +2132,8 @@ def display_final_rankings(champion):
         ).pack(side='right')
 
     # ==============================
-    # TOURNAMENT SUMMARY FOOTER
+    # TOURNAMENT STATS
     # ==============================
-#    tk.Frame(
-#        rankings_display_frame_ref,
-#        bg=THEME['bg_main'],
-#        height=2
-#    ).pack(fill='x', pady=25)
-
-#    total_teams = len(TEAMS)
-#    total_matches = len(MATCH_DURATIONS)
-#    total_time = sum(MATCH_DURATIONS)
-#    avg_time = int(total_time / total_matches) if total_matches else 0
-
-#   tk.Label(
-#        rankings_display_frame_ref,
-#        text=f"{total_teams} Teams • {total_matches} Matches Played • Total Time: {format_seconds(total_time)} • Average Time: {format_seconds(avg_time)}",
-#        font=('Segoe UI', 9),
-#        fg=THEME['fg_secondary'],
-#        bg=THEME['bg_card']
-#    ).pack(pady=(40, 25))
-
     tk.Frame(
         rankings_display_frame_ref,
         bg=THEME['accent_gold'],
@@ -2352,7 +2333,7 @@ def show_draw_summary(player_draws, TEAMS, TEAM_ROSTERS, num_teams, total_pool, 
 #    tk.Label(prize_frame, text=prize_text, justify=tk.LEFT, font=('Consolas', 9),
 #             bg=BG_CARD, fg="white").pack(anchor='w', pady=5)
 
-    start_button = tk.Button(summary_root, text="BEGIN TOURNAMENT", 
+    start_button = tk.Button(summary_root, text="Start Tournament", 
                              command=summary_root.quit, 
                              bg=THEME['btn_confirm'], fg='white', font=('Segoe UI', 12, 'bold'), height=2,
                              relief='flat', padx=20)
@@ -2672,7 +2653,7 @@ def get_player_setup_dialog(parent):
         result = (is_manual_draw.get(), data)
         dialog.destroy()
 
-    tk.Button(footer, text="Let's Play!", font=THEME['font_header'],
+    tk.Button(footer, text="Complete Registration", font=THEME['font_header'],
               bg=THEME['btn_confirm'], fg='white', relief='flat', width=25,
               command=confirm).pack(side='left', padx=(50, 10))
     
