@@ -197,14 +197,10 @@ def setup_scoreboard(root, team_red_placeholder, team_blue_placeholder):
     tab_match = tk.Frame(notebook, bg=THEME['bg_main'])
     notebook.add(tab_match, text='   ⚔️ ARENA   ')
     
-    # Tab 3: The Roster (List)
+    # Tab 2: The Roster (List)
     tab_roster = tk.Frame(notebook, bg=THEME['bg_main'])
     notebook.add(tab_roster, text='   👥 ROSTERS   ')
 
-    # ==========================
-    # TAB 1: ARENA LAYOUT
-    # ==========================
-    
     # 1. Routing Info (Where does winner go?)
     info_frame = tk.Frame(tab_match, bg=THEME['bg_main'], pady=5)
     info_frame.pack(fill='x')
@@ -230,7 +226,7 @@ def setup_scoreboard(root, team_red_placeholder, team_blue_placeholder):
                                              fg=THEME['fg_primary'], bg=THEME['bg_card'], wraplength=180)
     ui_references['red_name_lbl'].pack(pady=(5,0))
     
-    ui_references['red_roster_lbl'] = tk.Label(red_card, text="P1 / P2", font=('Segoe UI', 10), 
+    ui_references['red_roster_lbl'] = tk.Label(red_card, text="P1 / P2", font=('Segoe UI', 10, 'bold'), 
                                                fg=THEME['fg_secondary'], bg=THEME['bg_card'])
     ui_references['red_roster_lbl'].pack(pady=(2,10))
     
@@ -245,7 +241,7 @@ def setup_scoreboard(root, team_red_placeholder, team_blue_placeholder):
     # -- VS Center --
     vs_frame = tk.Frame(match_input_frame, bg=THEME['bg_main'])
     vs_frame.place(relx=0.48, rely=0.0, relwidth=0.04, relheight=0.85)
-    ui_references['vs_label'] = tk.Label(vs_frame, text="VS", font=('Segoe UI', 12, 'bold'), fg=THEME['fg_secondary'], bg=THEME['bg_main'])
+    ui_references['vs_label'] = tk.Label(vs_frame, text="VS", font=('Segoe UI', 10, 'bold'), fg=THEME['fg_secondary'], bg=THEME['bg_main'])
     ui_references['vs_label'].place(relx=0.5, rely=0.4, anchor='center')
 
     # -- Blue Card --
@@ -363,7 +359,7 @@ def setup_scoreboard(root, team_red_placeholder, team_blue_placeholder):
     roster_canvas.create_window((0,0), window=roster_seeding_frame_ref, anchor='nw')
     
     roster_seeding_frame_ref.bind("<Configure>", lambda e: roster_canvas.configure(scrollregion=roster_canvas.bbox("all")))
-    
+
     # Initialize Data
     update_roster_seeding_vertical() # New helper function for vertical roster
     load_match_data_and_teams()
@@ -1743,9 +1739,7 @@ def handle_match_resolution(winner, loser, winning_color, match_id):
             
             TOURNAMENT_STATE['active_match_id'] = reset_game_id
             log_message(f"Match GF resulted in Bracket Reset. Next active match: {reset_game_id} ({winner} vs {loser})") 
-
-            
-            
+         
             reset_game() 
             return # EXIT after reset handling
 
@@ -2067,31 +2061,21 @@ def display_final_rankings(champion):
 
     tk.Label(
         rankings_display_frame_ref,
-        text=f"{champion}",
+        text=f"{champ_roster}",
         font=('Segoe UI', 18, 'bold'),
         fg=THEME['fg_primary'],
         bg=THEME['bg_card']
     ).pack()
 
-    tk.Label(
-        rankings_display_frame_ref,
-        text=f"Team Roster: {champ_roster}",
-        font=THEME['font_main'],
-        fg=THEME['fg_secondary'],
-        bg=THEME['bg_card']
-    ).pack(pady=(0, 15))
-
-    tk.Label(
-        rankings_display_frame_ref,
-        text="Undefeated grit. Clutch finishes. Well earned.",
-        font=('Segoe UI', 9, 'italic'),
-        fg=THEME['fg_secondary'],
-        bg=THEME['bg_card']
-    ).pack(pady=(0, 30))
-
     # ==============================
     # FINAL STANDINGS
     # ==============================
+    tk.Frame(
+        rankings_display_frame_ref,
+        bg=THEME['accent_gold'],
+        height=2
+    ).pack(fill='x', pady=(25))
+
     tk.Label(
         rankings_display_frame_ref,
         text="Final Standings",
@@ -2132,7 +2116,7 @@ def display_final_rankings(champion):
 
         tk.Label(
             row,
-            text=f"{team} ({roster})",
+            text=f"{roster}",
             font=('Segoe UI', 10, 'bold'),
             fg=THEME['fg_primary'],
             bg=THEME['bg_card'],
@@ -2141,7 +2125,7 @@ def display_final_rankings(champion):
 
         tk.Label(
             row,
-            text=f"Record: {wins}-{losses}",
+            text=f"W/L: {wins}/{losses}",
             font=('Consolas', 10),
             fg=THEME['fg_secondary'],
             bg=THEME['bg_card']
@@ -2150,24 +2134,86 @@ def display_final_rankings(champion):
     # ==============================
     # TOURNAMENT SUMMARY FOOTER
     # ==============================
+#    tk.Frame(
+#        rankings_display_frame_ref,
+#        bg=THEME['bg_main'],
+#        height=2
+#    ).pack(fill='x', pady=25)
+
+#    total_teams = len(TEAMS)
+#    total_matches = len(MATCH_DURATIONS)
+#    total_time = sum(MATCH_DURATIONS)
+#    avg_time = int(total_time / total_matches) if total_matches else 0
+
+#   tk.Label(
+#        rankings_display_frame_ref,
+#        text=f"{total_teams} Teams • {total_matches} Matches Played • Total Time: {format_seconds(total_time)} • Average Time: {format_seconds(avg_time)}",
+#        font=('Segoe UI', 9),
+#        fg=THEME['fg_secondary'],
+#        bg=THEME['bg_card']
+#    ).pack(pady=(40, 25))
+
     tk.Frame(
         rankings_display_frame_ref,
-        bg=THEME['bg_main'],
+        bg=THEME['accent_gold'],
         height=2
-    ).pack(fill='x', pady=25)
+    ).pack(fill='x', pady=(25))
+
+    tk.Label(
+        rankings_display_frame_ref,
+        text="Tournament Statistics",
+        font=('Segoe UI', 12, 'bold'),
+        fg=THEME['fg_primary'],
+        bg=THEME['bg_card']
+    ).pack(pady=(0, 15))
+
+    stats_frame = tk.Frame(rankings_display_frame_ref, bg=THEME['bg_card'])
+    stats_frame.pack()
 
     total_teams = len(TEAMS)
     total_matches = len(MATCH_DURATIONS)
     total_time = sum(MATCH_DURATIONS)
     avg_time = int(total_time / total_matches) if total_matches else 0
 
-    tk.Label(
-        rankings_display_frame_ref,
-        text=f"{total_teams} Teams • Matches Played: {total_matches} • Total Tournament Time: {format_seconds(total_time)} • Average Match Time: {format_seconds(avg_time)}",
-        font=('Segoe UI', 9),
-        fg=THEME['fg_secondary'],
-        bg=THEME['bg_card']
-    ).pack(pady=(0, 10))
+    tth, ttr = divmod(total_time, 3600)
+    ttm, tts = divmod(ttr, 60)
+    ttf = f"{tth}h {ttm}m {tts:02d}s"
+
+    ath, atr = divmod(avg_time, 3600)
+    atm, ats = divmod(atr, 60)
+    atf = f"{ath}h {atm}m {ats:02d}s"
+
+    tstats = [
+        ('Total Teams', total_teams, THEME['fg_primary']),
+        ('Total Matches', total_matches, THEME['fg_primary']),
+        ('Total Time', ttf, THEME['fg_primary']),
+        ('Average Time', atf, THEME['fg_primary'])
+    ]
+
+    for label_text, key, color in tstats:
+        team = TOURNAMENT_RANKINGS.get(key)
+
+        stats_row = tk.Frame(stats_frame, bg=THEME['bg_card'])
+        stats_row.pack(fill='x', pady=6)
+
+        tk.Label(
+            stats_row,
+            text=label_text,
+            font=('Segoe UI', 10, 'bold'),
+            fg=color,
+            bg=THEME['bg_card'],
+            width=16,
+            anchor='w'
+        ).pack(side='left')
+
+        tk.Label(
+            stats_row,
+            text=key,
+            font=('Segoe UI', 10, 'bold'),
+            fg=THEME['fg_primary'],
+            bg=THEME['bg_card'],
+            anchor='w'
+        ).pack(side='left', padx=10)
 
     # Final controls
     final_control_frame_ref.pack(fill='x', pady=(10, 0))
@@ -2239,7 +2285,7 @@ def show_draw_summary(player_draws, TEAMS, TEAM_ROSTERS, num_teams, total_pool, 
     log_message("Displaying Draw Summary and Prize Pool.") 
     
     # Header
-    tk.Label(summary_root, text="TOURNAMENT READY", font=('Segoe UI', 18, 'bold'), 
+    tk.Label(summary_root, text="Tournament Summary", font=('Segoe UI', 18, 'bold'), 
              bg=BG_MAIN, fg=FG_ACCENT).pack(pady=(20, 10))
 
     # 1. Draw Results
@@ -2260,7 +2306,7 @@ def show_draw_summary(player_draws, TEAMS, TEAM_ROSTERS, num_teams, total_pool, 
     draw_content = ""
     for draw_num, player_name in player_draws:
         draw_content += f"Draw #{draw_num}: {player_name}\n"
-    
+   
     draw_text_widget.insert('1.0', draw_content)
     draw_text_widget.config(state='disabled')
 
@@ -2278,32 +2324,34 @@ def show_draw_summary(player_draws, TEAMS, TEAM_ROSTERS, num_teams, total_pool, 
     team_content = ""
     for i, team_name in enumerate(TEAMS):
         roster = TEAM_ROSTERS.get(team_name, ["N/A", "N/A"])
-        team_content += f"Team {i+1} (T{i+1}): {roster[0]} / {roster[1]}\n"
+        team_content += f"Team {i+1} (T{i+1}): {roster[0]} & {roster[1]}\n"
     
     team_text_widget.insert('1.0', team_content)
     team_text_widget.config(state='disabled')
     
     # 3. Prize Pool
-    prize_frame = tk.Frame(summary_root, padx=15, pady=10, bg=BG_CARD)
-    prize_frame.pack(fill='x', padx=20, pady=5)
+#    prize_frame = tk.Frame(summary_root, padx=15, pady=10, bg=BG_CARD)
+#    prize_frame.pack(fill='both', expand=True, padx=20, pady=5)
     
-    tk.Label(prize_frame, text="Prize Pool Calculation", font=('Segoe UI', 11, 'bold'),
-             bg=BG_CARD, fg="#E91E63", anchor='w').pack(fill='x')
+#    tk.Label(prize_frame, text="Prize Pool", font=('Segoe UI', 11, 'bold'),
+#             bg=BG_CARD, fg="#FFC107", anchor='w').pack(fill='x')
     
-    per_player_1st = int(prizes.get('1st', 0) / 2)
-    per_player_2nd = int(prizes.get('2nd', 0) / 2)
+#    per_player_1st = int(prizes.get('1st', 0) / 2)
+#    per_player_2nd = int(prizes.get('2nd', 0) / 2)
     
-    prize_text = f"Total Pool: ${total_pool}\n\n"
-    prize_text += f"1st Place: ${prizes.get('1st', 0)} (${per_player_1st} / player)\n"
-    prize_text += f"2nd Place: ${prizes.get('2nd', 0)} (${per_player_2nd} / player)\n"
+#    prize_text = f"Total Pool: ${total_pool}\n\n"
+#    prize_text += f"1st Place: ${prizes.get('1st', 0)} (${per_player_1st} per player)\n"
+#    prize_text += f"2nd Place: ${prizes.get('2nd', 0)} (${per_player_2nd} per player)\n"
     
-    if prizes.get('3rd') is not None and prizes.get('3rd') > 0:
-        per_player_3rd = int(prizes.get('3rd', 0) / 2)
-        prize_text += f"3rd Place: ${prizes.get('3rd', 0)} (${per_player_3rd} / player)\n"
-        
-    tk.Label(prize_frame, text=prize_text, justify=tk.LEFT, font=('Consolas', 10),
-             bg=BG_CARD, fg="white").pack(anchor='w', pady=5)
-    
+#    if prizes.get('3rd') is not None and prizes.get('3rd') > 0:
+#        per_player_3rd = int(prizes.get('3rd', 0) / 2)
+#        prize_text += f"3rd Place: ${prizes.get('3rd', 0)} (${per_player_3rd} / player)\n"
+#    else:
+#        prize_text += f"3rd Place: Handshake!\n"
+
+#    tk.Label(prize_frame, text=prize_text, justify=tk.LEFT, font=('Consolas', 9),
+#             bg=BG_CARD, fg="white").pack(anchor='w', pady=5)
+
     start_button = tk.Button(summary_root, text="BEGIN TOURNAMENT", 
                              command=summary_root.quit, 
                              bg=THEME['btn_confirm'], fg='white', font=('Segoe UI', 12, 'bold'), height=2,
@@ -2443,9 +2491,9 @@ def get_player_setup_dialog(parent):
             val = name_entry.get().strip()
             
             if val and counts[val] > 1:
-                name_entry.config(bg='#C62828', fg='white') # Error Red
+                name_entry.config(bg='#711717', fg='white') # Error Red
             elif not paid_var.get():
-                name_entry.config(bg='#BF360C', fg='white') # Unpaid Deep Orange
+                name_entry.config(bg='#CED119', fg='black') # Unpaid Deep Orange
             else:
                 # Inset style: Darker than the surrounding card
                 name_entry.config(bg=THEME['bg_main'], fg=THEME['fg_primary'])
@@ -2542,7 +2590,7 @@ def get_player_setup_dialog(parent):
                    command=render_inputs, bg=THEME['bg_card'], fg=THEME['fg_secondary'],
                    selectcolor=THEME['bg_main'], borderwidth=0, highlightthickness=0).pack(side='left')
     
-    tk.Checkbutton(cb_frame, text="Log Game Progress", variable=log_game_var, 
+    tk.Checkbutton(cb_frame, text="Log Game", variable=log_game_var, 
                    command=lambda: toggle_log_game(log_game_var),
                    bg=THEME['bg_card'], fg=THEME['fg_secondary'],
                    selectcolor=THEME['bg_main'], borderwidth=0, highlightthickness=0).pack(side='left', padx=25)
@@ -2624,7 +2672,7 @@ def get_player_setup_dialog(parent):
         result = (is_manual_draw.get(), data)
         dialog.destroy()
 
-    tk.Button(footer, text="START TOURNAMENT", font=THEME['font_header'],
+    tk.Button(footer, text="Let's Play!", font=THEME['font_header'],
               bg=THEME['btn_confirm'], fg='white', relief='flat', width=25,
               command=confirm).pack(side='left', padx=(50, 10))
     
@@ -2758,9 +2806,6 @@ if __name__ == '__main__':
     if not os.path.exists('data'):
         os.makedirs('data')
         log_message("Created 'data' directory.") 
-    
-    # Rule 1 & 2: Clean main block. No automatic replay file creation here.
-    # Rule 12: Replay creation logic moved inside start_tournament (new game flow).
     
     show_title_screen()
 
