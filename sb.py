@@ -2311,27 +2311,37 @@ def show_draw_summary(player_draws, TEAMS, TEAM_ROSTERS, num_teams, total_pool, 
     team_text_widget.config(state='disabled')
     
     # 3. Prize Pool
-#    prize_frame = tk.Frame(summary_root, padx=15, pady=10, bg=BG_CARD)
-#    prize_frame.pack(fill='both', expand=True, padx=20, pady=5)
+    prize_frame = tk.Frame(summary_root, padx=15, pady=10, bg=BG_CARD)
+    prize_frame.pack(fill='both', expand=True, padx=20, pady=5)
     
-#    tk.Label(prize_frame, text="Prize Pool", font=('Segoe UI', 11, 'bold'),
-#             bg=BG_CARD, fg="#FFC107", anchor='w').pack(fill='x')
+    tk.Label(prize_frame, text="Prize Pool", font=('Segoe UI', 11, 'bold'),
+             bg=BG_CARD, fg="#FFC107", anchor='w').pack(fill='x')
     
-#    per_player_1st = int(prizes.get('1st', 0) / 2)
-#    per_player_2nd = int(prizes.get('2nd', 0) / 2)
+    per_player_1st = int(prizes.get('1st', 0) / 2)
+    per_player_2nd = int(prizes.get('2nd', 0) / 2)
     
-#    prize_text = f"Total Pool: ${total_pool}\n\n"
-#    prize_text += f"1st Place: ${prizes.get('1st', 0)} (${per_player_1st} per player)\n"
-#    prize_text += f"2nd Place: ${prizes.get('2nd', 0)} (${per_player_2nd} per player)\n"
+    prize_text = f"Total Pool: ${total_pool}\n\n"
+    prize_text += f"1st Place: ${prizes.get('1st', 0)} (${per_player_1st} per player)\n"
+    prize_text += f"2nd Place: ${prizes.get('2nd', 0)} (${per_player_2nd} per player)\n"
     
-#    if prizes.get('3rd') is not None and prizes.get('3rd') > 0:
-#        per_player_3rd = int(prizes.get('3rd', 0) / 2)
-#        prize_text += f"3rd Place: ${prizes.get('3rd', 0)} (${per_player_3rd} / player)\n"
-#    else:
-#        prize_text += f"3rd Place: Handshake!\n"
+    if prizes.get('3rd') is not None and prizes.get('3rd') > 0:
+        per_player_3rd = int(prizes.get('3rd', 0) / 2)
+        prize_text += f"3rd Place: ${prizes.get('3rd', 0)} (${per_player_3rd} / player)\n"
+    else:
+        prize_text += f"3rd Place: Handshake!\n"
 
-#    tk.Label(prize_frame, text=prize_text, justify=tk.LEFT, font=('Consolas', 9),
-#             bg=BG_CARD, fg="white").pack(anchor='w', pady=5)
+    prize_text_widget = tk.Text(
+        prize_frame,
+        height=6,
+        bg="#2D2D2D",
+        fg="white",
+        font=('Consolas', 9),
+        relief='flat'
+    )
+    prize_text_widget.pack(fill='both', expand=True, pady=5)
+
+    prize_text_widget.insert('1.0', prize_text)
+    prize_text_widget.config(state='disabled')
 
     start_button = tk.Button(summary_root, text="Start Tournament", 
                              command=summary_root.quit, 
@@ -2641,7 +2651,7 @@ def get_player_setup_dialog(parent):
         for i, (n_entry, p_var, d_entry) in enumerate(player_entries):
             name = n_entry.get().strip()
             if not name: return messagebox.showerror("Error", f"P{i+1} is missing a name.")
-            if not p_var.get(): return messagebox.showerror("Payment", f"{name} has not paid.")
+            if not p_var.get(): return messagebox.showerror("Payment Error", f"{name} needs to cough up money!")
             
             draw = None
             if is_manual_draw.get():
