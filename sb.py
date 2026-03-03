@@ -29,7 +29,7 @@ THEME = {
     'btn_default': '#546E7A',   # Blue-Grey Button
     'btn_confirm': '#43A047',   # Green
     'btn_cancel': '#D32F2F',    # Red
-    'btn_dkgray': '#5B5B5B',    # Dark Gray
+    'btn_yellow': '#FFFF00',    # Yellow
     'font_main': ('Segoe UI', 10),
     'font_bold': ('Segoe UI', 10, 'bold'),
     'font_header': ('Segoe UI', 14, 'bold'),
@@ -501,17 +501,17 @@ def update_roster_seeding_vertical():
         fg_secondary = THEME['fg_secondary']
         status_color = fg_primary
 
-        status_badge = "    █"
-        status_color = THEME['btn_dkgray']
+        status_badge = "    ☐"
+        status_color = THEME['btn_confirm']
         if team == TOURNAMENT_RANKINGS.get('1ST'):
             status_badge = "    █"
             status_color = THEME['accent_gold']
         elif team in TOURNAMENT_RANKINGS.values():
-            status_badge = "    █"
+            status_badge = "    ✘"
             status_color = THEME['btn_cancel']
         elif team in current_match_teams.values():
-            status_badge = "    █"
-            status_color = THEME['btn_confirm']
+            status_badge = "    🗹"
+            status_color = THEME['btn_yellow']
 
         roster = TEAM_ROSTERS.get(team, ['?', '?'])
         team_text = f"{roster[0]} & {roster[1]}"
@@ -2326,7 +2326,7 @@ def show_draw_summary(player_draws, TEAMS, TEAM_ROSTERS, num_teams, total_pool, 
     
     if prizes.get('3rd') is not None and prizes.get('3rd') > 0:
         per_player_3rd = int(prizes.get('3rd', 0) / 2)
-        prize_text += f"3rd Place: ${prizes.get('3rd', 0)} (${per_player_3rd} / player)\n"
+        prize_text += f"3rd Place: ${prizes.get('3rd', 0)} (${per_player_3rd} per player)\n"
     else:
         prize_text += f"3rd Place: Handshake!\n"
 
