@@ -1616,7 +1616,7 @@ def draw_large_bracket(canvas):
     for match_id, match_data in TOURNAMENT_STATE.items():
         if not isinstance(match_data, dict) or 'teams' not in match_data:
             continue
-        
+
         bracket_type = match_data.get('is_winnerbracket', 'unknown')
         
         if bracket_type == 'both':
@@ -1810,6 +1810,16 @@ def draw_match_box_internal(canvas, match_id, match_data, x, y, w, h):
                               anchor='center', fill='#1B5E20',
                               font=('Segoe UI', 9, 'bold'))
             return  # Don't draw teams for GGF
+
+    # SPECIAL CASE: GF undefeated champion — gold box, centered champion text
+    if match_id == 'GF' and match_data.get('champion'):
+        champion = match_data.get('champion')
+        roster = TEAM_ROSTERS.get(champion, ['?', '?'])
+        canvas.create_text(x + w/2, y + h/2,
+                          text=f"🏆 {champion}\n{roster[0]} & {roster[1]}",
+                          anchor='center', fill='#1B5E20',
+                          font=('Segoe UI', 9, 'bold'))
+        return
     
     # Teams
     team_A = match_data['teams'][0]
@@ -2385,7 +2395,11 @@ def handle_match_resolution(winner, loser, winning_color, match_id):
             TOURNAMENT_RANKINGS['1ST'] = winner
             TOURNAMENT_RANKINGS['2ND'] = loser
             TOURNAMENT_STATE['active_match_id'] = 'TOURNAMENT_OVER'
+            # GGF is not needed — remove it entirely so it never appears in the bracket
+            TOURNAMENT_STATE.pop('GGF', None)
             log_message(f"GF complete — Champion: {winner} (1st), Runner-up: {loser} (2nd)") 
+            if full_bracket_canvas:
+                draw_large_bracket(full_bracket_canvas)
             reset_game() 
             return 
 
@@ -3616,12 +3630,20 @@ def get_player_setup_dialog(parent):
     # OPTIONS SECTION
     # ========================================================================
 
-    options_card = tk.Frame(dialog, bg=THEME['bg_card'], padx=15, pady=12,
-                           relief='raised', borderwidth=1)
-    options_card.pack(fill='x', padx=20, pady=(10, 12))
+    # ========================================================================
+    # MERGED: TOURNAMENT SETTINGS + TEAM MANAGEMENT
+    # ========================================================================
 
-    tk.Label(options_card, text="Tournament Settings", font=THEME['font_bold'],
-            bg=THEME['bg_card'], fg=THEME['fg_primary']).pack(anchor='w', pady=(0, 8))
+    combined_card = tk.Frame(dialog, bg=THEME['bg_card'], padx=15, pady=10,
+                             relief='raised', borderwidth=1)
+    combined_card.pack(fill='x', padx=20, pady=(10, 12))
+
+    # Left column: Tournament Settings
+    settings_col = tk.Frame(combined_card, bg=THEME['bg_card'])
+    settings_col.pack(side='left', fill='y', padx=(0, 20))
+
+    tk.Label(settings_col, text="Tournament Settings", font=THEME['font_bold'],
+             bg=THEME['bg_card'], fg=THEME['fg_primary']).pack(anchor='w', pady=(0, 6))
 
     def toggle_manual_draw():
         """Toggle manual draw and recreate headers with/without draw column"""
@@ -3630,76 +3652,66 @@ def get_player_setup_dialog(parent):
         _create_column_headers()
         render_inputs()
 
-    # Manual Draw option
-    manual_frame = tk.Frame(options_card, bg=THEME['bg_card'])
-    manual_frame.pack(anchor='w', pady=4, fill='x')
-
-    manual_chk = tk.Checkbutton(manual_frame, text="🎲 Manual Draw Assignment",
-                               variable=is_manual_draw,
-                               command=toggle_manual_draw,
-                               bg=THEME['bg_card'], fg=THEME['fg_secondary'],
-                               selectcolor=THEME['bg_main'],
-                               borderwidth=0, highlightthickness=0,
-                               font=THEME['font_main'])
+    # Manual Draw
+    manual_frame = tk.Frame(settings_col, bg=THEME['bg_card'])
+    manual_frame.pack(anchor='w', pady=2, fill='x')
+    manual_chk = tk.Checkbutton(manual_frame, text="🎲 Manual Draw",
+                                variable=is_manual_draw,
+                                command=toggle_manual_draw,
+                                bg=THEME['bg_card'], fg=THEME['fg_secondary'],
+                                selectcolor=THEME['bg_main'],
+                                borderwidth=0, highlightthickness=0,
+                                font=THEME['font_main'])
     manual_chk.pack(side='left')
-
     tk.Label(manual_frame, text="(specify player order)", font=('Segoe UI', 8),
-            bg=THEME['bg_card'], fg=THEME['fg_secondary']).pack(side='left', padx=10)
+             bg=THEME['bg_card'], fg=THEME['fg_secondary']).pack(side='left', padx=8)
 
-    # Log Game option
-    log_frame = tk.Frame(options_card, bg=THEME['bg_card'])
-    log_frame.pack(anchor='w', pady=4, fill='x')
-
+    # Log Game
+    log_frame = tk.Frame(settings_col, bg=THEME['bg_card'])
+    log_frame.pack(anchor='w', pady=2, fill='x')
     log_chk = tk.Checkbutton(log_frame, text="📝 Log Game to File",
-                            variable=log_game_var,
-                            command=lambda: toggle_log_game(log_game_var),
-                            bg=THEME['bg_card'], fg=THEME['fg_secondary'],
-                            selectcolor=THEME['bg_main'],
-                            borderwidth=0, highlightthickness=0,
-                            font=THEME['font_main'])
+                             variable=log_game_var,
+                             command=lambda: toggle_log_game(log_game_var),
+                             bg=THEME['bg_card'], fg=THEME['fg_secondary'],
+                             selectcolor=THEME['bg_main'],
+                             borderwidth=0, highlightthickness=0,
+                             font=THEME['font_main'])
     log_chk.pack(side='left')
-
     tk.Label(log_frame, text="(replay file saved)", font=('Segoe UI', 8),
-            bg=THEME['bg_card'], fg=THEME['fg_secondary']).pack(side='left', padx=10)
+             bg=THEME['bg_card'], fg=THEME['fg_secondary']).pack(side='left', padx=8)
 
-    # All Paid option with status
-    all_paid_frame = tk.Frame(options_card, bg=THEME['bg_card'])
-    all_paid_frame.pack(anchor='w', pady=4, fill='x')
-
+    # All Paid
+    all_paid_frame = tk.Frame(settings_col, bg=THEME['bg_card'])
+    all_paid_frame.pack(anchor='w', pady=2, fill='x')
     all_paid_chk = tk.Checkbutton(all_paid_frame, text="✅ Mark All as Paid",
-                                 variable=all_paid_var,
-                                 command=toggle_all_paid,
-                                 bg=THEME['bg_card'], fg=THEME['fg_secondary'],
-                                 selectcolor=THEME['bg_main'],
-                                 borderwidth=0, highlightthickness=0,
-                                 font=THEME['font_main'])
+                                  variable=all_paid_var,
+                                  command=toggle_all_paid,
+                                  bg=THEME['bg_card'], fg=THEME['fg_secondary'],
+                                  selectcolor=THEME['bg_main'],
+                                  borderwidth=0, highlightthickness=0,
+                                  font=THEME['font_main'])
     all_paid_chk.pack(side='left')
-
     all_paid_status = tk.Label(all_paid_frame, text="", font=('Segoe UI', 8),
-                              bg=THEME['bg_card'], fg=THEME['accent_gold'])
-    all_paid_status.pack(side='left', padx=10)
+                               bg=THEME['bg_card'], fg=THEME['accent_gold'])
+    all_paid_status.pack(side='left', padx=8)
 
-    # ========================================================================
-    # TEAM MANAGEMENT SECTION - BEFORE THE SCROLLABLE LIST - VISIBLE!
-    # ========================================================================
+    # Vertical divider
+    tk.Frame(combined_card, bg=THEME['bg_main'], width=2).pack(side='left', fill='y', padx=(0, 20))
 
-    team_mgmt_card = tk.Frame(dialog, bg=THEME['bg_card'], padx=15, pady=10,
-                             relief='raised', borderwidth=1)
-    team_mgmt_card.pack(fill='x', padx=20, pady=(8, 12))
+    # Right column: Team Management
+    team_col = tk.Frame(combined_card, bg=THEME['bg_card'])
+    team_col.pack(side='left', fill='y')
 
-    # Title
-    tk.Label(team_mgmt_card, text="Team Management", font=THEME['font_bold'],
-            bg=THEME['bg_card'], fg=THEME['fg_primary']).pack(anchor='w', pady=(0, 6))
+    tk.Label(team_col, text="Team Management", font=THEME['font_bold'],
+             bg=THEME['bg_card'], fg=THEME['fg_primary']).pack(anchor='w', pady=(0, 4))
 
-    # Count display
-    lbl_count = tk.Label(team_mgmt_card, text=f"Total Players: {current_player_count}",
-                        font=THEME['font_header'], bg=THEME['bg_card'],
-                        fg=THEME['fg_primary'])
-    lbl_count.pack(pady=(0, 10))
+    lbl_count = tk.Label(team_col, text=f"Total Players: {current_player_count}",
+                         font=THEME['font_header'], bg=THEME['bg_card'],
+                         fg=THEME['fg_primary'])
+    lbl_count.pack(anchor='w', pady=(0, 6))
 
-    # Button row
-    btn_row = tk.Frame(team_mgmt_card, bg=THEME['bg_card'])
-    btn_row.pack(pady=6)
+    btn_row = tk.Frame(team_col, bg=THEME['bg_card'])
+    btn_row.pack(anchor='w', pady=2)
 
     def _update_button_states():
         """Enable/disable buttons based on player count"""
@@ -3707,7 +3719,7 @@ def get_player_setup_dialog(parent):
             btn_remove.config(state='disabled', fg='#666666')
         else:
             btn_remove.config(state='normal', fg='white')
-        
+
         if current_player_count >= MAX_PLAYERS:
             btn_add.config(state='disabled', fg='#666666')
             btn_add.config(text="+ Add Team (max)")
@@ -3725,20 +3737,19 @@ def get_player_setup_dialog(parent):
             render_inputs()
 
     btn_add = tk.Button(btn_row, text=f"+ Add Team ({MAX_PLAYERS - current_player_count} slots)",
-                       command=lambda: change_count(2),
-                       bg=THEME['btn_default'], fg='white', relief='flat',
-                       padx=18, pady=6, font=THEME['font_main'])
-    btn_add.pack(side='left', padx=8)
+                        command=lambda: change_count(2),
+                        bg=THEME['btn_default'], fg='white', relief='flat',
+                        padx=12, pady=4, font=THEME['font_main'])
+    btn_add.pack(side='left', padx=(0, 6))
 
     btn_remove = tk.Button(btn_row, text="- Remove Team", command=lambda: change_count(-2),
-                          bg=THEME['btn_default'], fg='white', relief='flat',
-                          padx=18, pady=6, font=THEME['font_main'])
-    btn_remove.pack(side='left', padx=8)
-    
-    # Info text
-    tk.Label(team_mgmt_card, text=f"({MIN_PLAYERS}-{MAX_PLAYERS} players total)", 
-            font=('Segoe UI', 8), bg=THEME['bg_card'], 
-            fg=THEME['fg_secondary']).pack(pady=(6, 0))
+                           bg=THEME['btn_default'], fg='white', relief='flat',
+                           padx=12, pady=4, font=THEME['font_main'])
+    btn_remove.pack(side='left')
+
+    tk.Label(team_col, text=f"({MIN_PLAYERS}-{MAX_PLAYERS} players total)",
+             font=('Segoe UI', 8), bg=THEME['bg_card'],
+             fg=THEME['fg_secondary']).pack(anchor='w', pady=(4, 0))
 
     # ========================================================================
     # SCROLLABLE PLAYER LIST
