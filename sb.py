@@ -870,6 +870,7 @@ def run_replay_mode(path):
             "winner_color": m.get("winner_color"),
             "is_reset": m.get("is_reset", False),
             "champion": m.get("champion"),      # ADDED RESTORE
+            "is_winnerbracket": m.get("is_winnerbracket", "unknown"),  # ADDED RESTORE
             "start_time": m.get("start_time"),
             "config": config,
         }
@@ -1709,6 +1710,19 @@ def draw_match_box_internal(canvas, match_id, match_data, x, y, w, h):
     if REPLAY_VIEW_ONLY and match_id == 'GF' and not winner:
         winner = TOURNAMENT_RANKINGS.get('1ST')
     
+    # SPECIAL CASE: GGF shows only champion centered
+    if match_id == 'GGF':
+        if match_data.get('champion'):
+            champion = match_data.get('champion')
+            roster = TEAM_ROSTERS.get(champion, ['?','?'])
+            champion_txt = f"{champion}\n{roster[0]} & {roster[1]}"
+            
+            # Center the champion text in the box
+            canvas.create_text(x + w/2, y + h/2, text=champion_txt,
+                              anchor='center', fill='#1B5E20',
+                              font=('Segoe UI', 9, 'bold'))
+            return  # Don't draw teams for GGF
+    
     # Teams
     team_A = match_data['teams'][0]
     team_B = match_data['teams'][1]
@@ -1798,6 +1812,49 @@ def open_full_bracket():
     right_header.pack(side='right', padx=(20, 0))
     
     if REPLAY_VIEW_ONLY:
+        # Search bar for player highlighting (also in replay mode)
+        search_frame = tk.Frame(right_header, bg=THEME['bg_card'])
+        search_frame.pack(side='left', padx=5)
+        
+        tk.Label(search_frame, text="Search Player:", font=('Segoe UI', 9),
+                bg=THEME['bg_card'], fg=THEME['fg_secondary']).pack(side='left', padx=(0, 5))
+        
+        search_var = tk.StringVar()
+        search_entry = tk.Entry(search_frame, textvariable=search_var, width=15,
+                               font=('Segoe UI', 9), relief='flat')
+        search_entry.pack(side='left', padx=5)
+        
+        def search_player(event=None):
+            """Search for player and highlight their matches"""
+            player_name = search_var.get().strip()
+            dehighlight_traces(full_bracket_canvas)
+            
+            if not player_name:
+                return
+            
+            # Find all teams with this player
+            matching_teams = []
+            for team_name, roster in TEAM_ROSTERS.items():
+                if player_name.lower() in roster[0].lower() or player_name.lower() in roster[1].lower():
+                    matching_teams.append(team_name)
+            
+            # Highlight all matches with these teams
+            for team_name in matching_teams:
+                highlight_team_matches(full_bracket_canvas, team_name, '#90EE90')
+        
+        search_entry.bind('<Return>', search_player)
+        
+        tk.Button(search_frame, text="Search", command=search_player,
+                 bg=THEME['btn_confirm'], fg='white', font=('Segoe UI', 9),
+                 relief='flat', padx=10, pady=2).pack(side='left', padx=2)
+        
+        # Add clear highlights button
+        clear_btn = tk.Button(right_header, text="Clear Highlights",
+                             command=lambda: dehighlight_traces(full_bracket_canvas),
+                             bg=THEME['btn_cancel'], fg='white', font=THEME['font_main'],
+                             relief='flat', padx=15, pady=5)
+        clear_btn.pack(side='left', padx=5)
+        
         tk.Label(right_header, text="📁 VIEW ONLY MODE", font=THEME['font_bold'],
                 bg=THEME['bg_card'], fg='#FF9800').pack(side='left', padx=10)
         
@@ -1805,7 +1862,43 @@ def open_full_bracket():
                  bg=THEME['btn_cancel'], fg='white', font=THEME['font_main'],
                  relief='flat', padx=15, pady=5).pack(side='left', padx=5)
     else:
-        # Add clear highlights button (will bind later after canvas is created)
+        # Search bar for player highlighting
+        search_frame = tk.Frame(right_header, bg=THEME['bg_card'])
+        search_frame.pack(side='left', padx=5)
+        
+        tk.Label(search_frame, text="Search Player:", font=('Segoe UI', 9),
+                bg=THEME['bg_card'], fg=THEME['fg_secondary']).pack(side='left', padx=(0, 5))
+        
+        search_var = tk.StringVar()
+        search_entry = tk.Entry(search_frame, textvariable=search_var, width=15,
+                               font=('Segoe UI', 9), relief='flat')
+        search_entry.pack(side='left', padx=5)
+        
+        def search_player(event=None):
+            """Search for player and highlight their matches"""
+            player_name = search_var.get().strip()
+            dehighlight_traces(full_bracket_canvas)
+            
+            if not player_name:
+                return
+            
+            # Find all teams with this player
+            matching_teams = []
+            for team_name, roster in TEAM_ROSTERS.items():
+                if player_name.lower() in roster[0].lower() or player_name.lower() in roster[1].lower():
+                    matching_teams.append(team_name)
+            
+            # Highlight all matches with these teams
+            for team_name in matching_teams:
+                highlight_team_matches(full_bracket_canvas, team_name, '#90EE90')
+        
+        search_entry.bind('<Return>', search_player)
+        
+        tk.Button(search_frame, text="Search", command=search_player,
+                 bg=THEME['btn_confirm'], fg='white', font=('Segoe UI', 9),
+                 relief='flat', padx=10, pady=2).pack(side='left', padx=2)
+        
+        # Add clear highlights button
         clear_btn = tk.Button(right_header, text="Clear Highlights",
                              bg=THEME['btn_cancel'], fg='white', font=THEME['font_main'],
                              relief='flat', padx=15, pady=5)
@@ -2096,6 +2189,7 @@ def serialize_snapshot():
                 "winner_color": match_data.get("winner_color"),
                 "is_reset": match_data.get("is_reset", False),
                 "champion": match_data.get("champion"),  # ADDED
+                "is_winnerbracket": match_data.get("is_winnerbracket", "unknown"),  # ADDED
                 "start_time": match_data.get("start_time"),
                 "config": {
                     k: (list(v) if isinstance(v, tuple) else v)
@@ -2177,6 +2271,7 @@ def handle_match_resolution(winner, loser, winning_color, match_id):
         # Case 1: LB Winner (winner) defeats WB Winner (loser) in GF -> FORCES RESET
         if winner != wb_finalist and not match_data.get('is_reset', False): 
             match_data['is_reset'] = True 
+            # KEEP the winner and color recorded - don't clear them
             
             reset_game_id = next((k for k in TOURNAMENT_STATE if k == 'GGF'), 'GGF')
             
@@ -2184,9 +2279,6 @@ def handle_match_resolution(winner, loser, winning_color, match_id):
                 # Use the actual names (winner/loser) since they're already resolved from GF
                 TOURNAMENT_STATE[reset_game_id]['teams'] = [winner, loser]
                 TOURNAMENT_STATE[reset_game_id]['is_reset'] = True
-                
-                match_data['winner'] = None 
-                match_data['winner_color'] = None 
             
             w_roster = " & ".join(TEAM_ROSTERS.get(winner, ["P1", "P2"]))
             l_roster = " & ".join(TEAM_ROSTERS.get(loser, ["P3", "P4"]))
@@ -2211,6 +2303,7 @@ def handle_match_resolution(winner, loser, winning_color, match_id):
 
     elif match_id == 'GGF':
         # Case 3: GGF is played -> TOURNAMENT OVER
+        match_data['champion'] = winner  # Also set champion on GGF
         TOURNAMENT_STATE[match_id]['champion'] = winner
         TOURNAMENT_RANKINGS['1ST'] = winner
         gfgf_loser = TOURNAMENT_STATE[match_id]['teams'][0] if winner == TOURNAMENT_STATE[match_id]['teams'][1] else TOURNAMENT_STATE[match_id]['teams'][1]
@@ -2218,6 +2311,10 @@ def handle_match_resolution(winner, loser, winning_color, match_id):
         
         TOURNAMENT_STATE['active_match_id'] = 'TOURNAMENT_OVER'
         log_message(f"Match {match_id} (Reset) completed. 1ST={winner}, 2ND={gfgf_loser}. Tournament is over.") 
+        
+        # Redraw the bracket to show GGF champion
+        if full_bracket_canvas:
+            draw_large_bracket(full_bracket_canvas)
         
         reset_game() 
         return 
