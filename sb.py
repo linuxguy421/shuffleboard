@@ -937,6 +937,10 @@ def run_replay_mode(path):
     TEAM_ROSTERS.update(snap.get("rosters", {}))
     TOURNAMENT_RANKINGS.clear()
     TOURNAMENT_RANKINGS.update(snap.get("rankings", {}))
+    MATCH_HISTORY.clear()
+    MATCH_HISTORY.extend(snap.get("match_history", []))
+    MATCH_DURATIONS.clear()
+    MATCH_DURATIONS.extend(snap.get("match_durations", []))
 
     # Restore match-level state including champion
     TOURNAMENT_STATE.clear()
@@ -2276,6 +2280,8 @@ def serialize_snapshot():
         "state": {},
         "rankings": dict(TOURNAMENT_RANKINGS),
         "active_match_id": TOURNAMENT_STATE.get("active_match_id"),
+        "match_history": list(MATCH_HISTORY),
+        "match_durations": list(MATCH_DURATIONS),
     }
 
     # Serialize match-level state including champion.
