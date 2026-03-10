@@ -2657,7 +2657,7 @@ def swap_teams():
     update_scoreboard_display()
 
 def display_final_rankings(champion):
-    """Displays a more verbose and styled Tournament Complete screen."""
+    """Displays the Tournament Complete screen with standings and statistics."""
     global rankings_display_frame_ref, rankings_label_ref
     global final_control_frame_ref, ui_references
 
@@ -2674,183 +2674,193 @@ def display_final_rankings(champion):
             text=f"Match {completed_matches} of {total_matches} ({percent}%)"
         )
 
+    # Widen the window to fit the two-column stats layout
+    if main_root:
+        main_root.geometry("750x620")
+
     # ---- Reset Frame ----
     for w in rankings_display_frame_ref.winfo_children():
         w.destroy()
 
-    rankings_display_frame_ref.pack(fill='both', expand=True, padx=20, pady=20)
+    rankings_display_frame_ref.pack(fill='both', expand=True, padx=15, pady=10)
+
+    P = rankings_display_frame_ref  # short alias
 
     # ==============================
     # HEADER
     # ==============================
-    tk.Label(
-        rankings_display_frame_ref,
-        text="🏁 TOURNAMENT COMPLETE 🏁",
-        font=THEME['font_title'],
-        fg=THEME['accent_gold'],
-        bg=THEME['bg_card'],
-        anchor='center'
-    ).pack(fill='x', pady=(10, 20))
+    tk.Label(P, text="🏁  TOURNAMENT COMPLETE  🏁",
+             font=THEME['font_title'], fg=THEME['accent_gold'],
+             bg=THEME['bg_card'], anchor='center'
+    ).pack(fill='x', pady=(8, 4))
 
-    # Divider
-    tk.Frame(
-        rankings_display_frame_ref,
-        bg=THEME['accent_gold'],
-        height=2
-    ).pack(fill='x', pady=(0, 25))
+    tk.Frame(P, bg=THEME['accent_gold'], height=2).pack(fill='x', pady=(0, 10))
 
     # ==============================
-    # CHAMPION SECTION
+    # CHAMPION
     # ==============================
     champ_roster = " / ".join(TEAM_ROSTERS.get(champion, ['?', '?']))
+    champ_frame = tk.Frame(P, bg=THEME['bg_canvas'], padx=10, pady=6)
+    champ_frame.pack(fill='x', pady=(0, 8))
+    tk.Label(champ_frame, text="🥇 CHAMPIONS",
+             font=('Segoe UI', 10, 'bold'), fg=THEME['accent_gold'],
+             bg=THEME['bg_canvas']).pack()
+    tk.Label(champ_frame, text=champ_roster,
+             font=('Segoe UI', 16, 'bold'), fg=THEME['fg_primary'],
+             bg=THEME['bg_canvas']).pack()
 
-    tk.Label(
-        rankings_display_frame_ref,
-        text="🥇 CHAMPIONS",
-        font=('Segoe UI', 12, 'bold'),
-        fg=THEME['accent_gold'],
-        bg=THEME['bg_card']
-    ).pack(pady=(0, 5))
-
-    tk.Label(
-        rankings_display_frame_ref,
-        text=f"{champ_roster}",
-        font=('Segoe UI', 18, 'bold'),
-        fg=THEME['fg_primary'],
-        bg=THEME['bg_card']
-    ).pack()
+    tk.Frame(P, bg=THEME['accent_gold'], height=2).pack(fill='x', pady=(0, 8))
 
     # ==============================
-    # FINAL STANDINGS
+    # TWO-COLUMN BODY
     # ==============================
-    tk.Frame(
-        rankings_display_frame_ref,
-        bg=THEME['accent_gold'],
-        height=2
-    ).pack(fill='x', pady=(25))
+    body = tk.Frame(P, bg=THEME['bg_card'])
+    body.pack(fill='both', expand=True)
+    body.grid_columnconfigure(0, weight=1)
+    body.grid_columnconfigure(1, weight=1)
 
-    tk.Label(
-        rankings_display_frame_ref,
-        text="Final Standings",
-        font=('Segoe UI', 12, 'bold'),
-        fg=THEME['fg_primary'],
-        bg=THEME['bg_card']
-    ).pack(pady=(0, 15))
+    # --- helpers ---
+    def section_header(parent, text, row):
+        tk.Label(parent, text=text, font=('Segoe UI', 10, 'bold'),
+                 fg=THEME['accent_gold'], bg=THEME['bg_card']
+        ).grid(row=row, column=0, columnspan=2, sticky='w', pady=(10, 4), padx=8)
 
-    standings_frame = tk.Frame(rankings_display_frame_ref, bg=THEME['bg_card'])
-    standings_frame.pack()
+    def stat_row(parent, row, label, value, val_color=None):
+        val_color = val_color or THEME['fg_primary']
+        tk.Label(parent, text=label, font=('Segoe UI', 9),
+                 fg=THEME['fg_secondary'], bg=THEME['bg_card'], anchor='w'
+        ).grid(row=row, column=0, sticky='w', padx=(8, 4), pady=2)
+        tk.Label(parent, text=value, font=('Segoe UI', 9, 'bold'),
+                 fg=val_color, bg=THEME['bg_card'], anchor='w'
+        ).grid(row=row, column=1, sticky='w', padx=(4, 8), pady=2)
+
+    # ---- LEFT COLUMN: Standings + Basic Stats ----
+    left = tk.Frame(body, bg=THEME['bg_card'])
+    left.grid(row=0, column=0, sticky='nsew', padx=(0, 6))
+    left.grid_columnconfigure(0, weight=1)
+    left.grid_columnconfigure(1, weight=2)
+
+    section_header(left, "Final Standings", 0)
 
     places = [
-        ('🥇 1ST PLACE', '1ST', THEME['accent_gold']),
-        ('🥈 2ND PLACE', '2ND', THEME['fg_primary']),
-        ('🥉 3RD PLACE', '3RD', THEME['fg_secondary'])
+        ('🥇 1st', '1ST', THEME['accent_gold']),
+        ('🥈 2nd', '2ND', THEME['fg_primary']),
+        ('🥉 3rd', '3RD', THEME['fg_secondary']),
     ]
-
+    r = 1
     for label_text, key, color in places:
         team = TOURNAMENT_RANKINGS.get(key)
         if not team:
             continue
-
         roster = " / ".join(TEAM_ROSTERS.get(team, ['?', '?']))
         wins, losses = get_team_record(team)
+        stat_row(left, r, f"{label_text}  W/L {wins}/{losses}", roster, color)
+        r += 1
 
-        row = tk.Frame(standings_frame, bg=THEME['bg_card'])
-        row.pack(fill='x', pady=6)
+    section_header(left, "Tournament Stats", r); r += 1
 
-        tk.Label(
-            row,
-            text=label_text,
-            font=('Segoe UI', 10, 'bold'),
-            fg=color,
-            bg=THEME['bg_card'],
-            width=16,
-            anchor='w'
-        ).pack(side='left')
-
-        tk.Label(
-            row,
-            text=f"{roster}",
-            font=('Segoe UI', 10, 'bold'),
-            fg=THEME['fg_primary'],
-            bg=THEME['bg_card'],
-            anchor='w'
-        ).pack(side='left', padx=10)
-
-        tk.Label(
-            row,
-            text=f"W/L: {wins}/{losses}",
-            font=('Consolas', 10),
-            fg=THEME['fg_secondary'],
-            bg=THEME['bg_card']
-        ).pack(side='right')
-
-    # ==============================
-    # TOURNAMENT STATS
-    # ==============================
-    tk.Frame(
-        rankings_display_frame_ref,
-        bg=THEME['accent_gold'],
-        height=2
-    ).pack(fill='x', pady=(25))
-
-    tk.Label(
-        rankings_display_frame_ref,
-        text="Tournament Statistics",
-        font=('Segoe UI', 12, 'bold'),
-        fg=THEME['fg_primary'],
-        bg=THEME['bg_card']
-    ).pack(pady=(0, 15))
-
-    stats_frame = tk.Frame(rankings_display_frame_ref, bg=THEME['bg_card'])
-    stats_frame.pack()
-
-    total_teams = len(TEAMS)
+    total_teams   = len(TEAMS)
     total_matches = len(MATCH_DURATIONS)
-    total_time = sum(MATCH_DURATIONS)
-    avg_time = int(total_time / total_matches) if total_matches else 0
+    total_time    = sum(MATCH_DURATIONS)
+    avg_time      = int(total_time / total_matches) if total_matches else 0
 
-    tth, ttr = divmod(total_time, 3600)
-    ttm, tts = divmod(ttr, 60)
-    ttf = f"{tth}h {ttm}m {tts:02d}s"
+    stat_row(left, r, "Teams",         str(total_teams));  r += 1
+    stat_row(left, r, "Matches played", str(total_matches)); r += 1
+    stat_row(left, r, "Total time",    format_seconds(total_time)); r += 1
+    stat_row(left, r, "Avg match time", format_seconds(avg_time)); r += 1
 
-    ath, atr = divmod(avg_time, 3600)
-    atm, ats = divmod(atr, 60)
-    atf = f"{ath}h {atm}m {ats:02d}s"
+    # ---- RIGHT COLUMN: Match Breakdown ----
+    right = tk.Frame(body, bg=THEME['bg_card'])
+    right.grid(row=0, column=1, sticky='nsew', padx=(6, 0))
+    right.grid_columnconfigure(0, weight=1)
+    right.grid_columnconfigure(1, weight=2)
 
-    tstats = [
-        ('Total Teams', total_teams, THEME['fg_primary']),
-        ('Total Matches', total_matches, THEME['fg_primary']),
-        ('Total Time', ttf, THEME['fg_primary']),
-        ('Average Time', atf, THEME['fg_primary'])
-    ]
+    section_header(right, "Match Breakdown", 0)
+    r = 1
 
-    for label_text, key, color in tstats:
-        team = TOURNAMENT_RANKINGS.get(key)
+    # Red vs Blue
+    total_h   = len(MATCH_HISTORY)
+    red_wins  = sum(1 for x in MATCH_HISTORY if x['color'] == 'red')
+    blue_wins = sum(1 for x in MATCH_HISTORY if x['color'] == 'blue')
+    red_pct   = int(red_wins  / total_h * 100) if total_h else 0
+    blue_pct  = int(blue_wins / total_h * 100) if total_h else 0
+    stat_row(right, r, "🔴 Red side wins",  f"{red_wins} ({red_pct}%)",  THEME['red_team']);  r += 1
+    stat_row(right, r, "🔵 Blue side wins", f"{blue_wins} ({blue_pct}%)", THEME['blue_team']); r += 1
 
-        stats_row = tk.Frame(stats_frame, bg=THEME['bg_card'])
-        stats_row.pack(fill='x', pady=6)
+    # Longest / shortest
+    if MATCH_DURATIONS and MATCH_HISTORY:
+        paired = list(zip(MATCH_DURATIONS, MATCH_HISTORY))
+        long_dur, long_rec  = max(paired, key=lambda x: x[0])
+        shrt_dur, shrt_rec  = min(paired, key=lambda x: x[0])
+        lw = " & ".join(TEAM_ROSTERS.get(long_rec['winner'], ['?','?']))
+        sw = " & ".join(TEAM_ROSTERS.get(shrt_rec['winner'], ['?','?']))
+        stat_row(right, r, "⏱️ Longest match",  f"{format_seconds(long_dur)}  ({lw})"); r += 1
+        stat_row(right, r, "⚡ Shortest match", f"{format_seconds(shrt_dur)}  ({sw})"); r += 1
 
-        tk.Label(
-            stats_row,
-            text=label_text,
-            font=('Segoe UI', 10, 'bold'),
-            fg=color,
-            bg=THEME['bg_card'],
-            width=16,
-            anchor='w'
-        ).pack(side='left')
+    # Most wins
+    team_wins = {}
+    for rec in MATCH_HISTORY:
+        team_wins[rec['winner']] = team_wins.get(rec['winner'], 0) + 1
+    if team_wins:
+        top_team   = max(team_wins, key=team_wins.get)
+        top_roster = " & ".join(TEAM_ROSTERS.get(top_team, ['?','?']))
+        stat_row(right, r, "🏅 Most wins",
+                 f"{top_roster} ({team_wins[top_team]})", THEME['accent_gold']); r += 1
 
-        tk.Label(
-            stats_row,
-            text=key,
-            font=('Segoe UI', 10, 'bold'),
-            fg=THEME['fg_primary'],
-            bg=THEME['bg_card'],
-            anchor='w'
-        ).pack(side='left', padx=10)
+    # Most active
+    team_matches = {}
+    for rec in MATCH_HISTORY:
+        for t in [rec['winner'], rec['loser']]:
+            team_matches[t] = team_matches.get(t, 0) + 1
+    if team_matches:
+        busiest     = max(team_matches, key=team_matches.get)
+        busy_roster = " & ".join(TEAM_ROSTERS.get(busiest, ['?','?']))
+        stat_row(right, r, "🎯 Most active",
+                 f"{busy_roster} ({team_matches[busiest]})"); r += 1
+
+    # --- Deepest loser bracket run ---
+    # Team with the most wins who came through the LB (lost at least once)
+    lb_runs = {}
+    for rec in MATCH_HISTORY:
+        lb_runs[rec['winner']] = lb_runs.get(rec['winner'], 0) + 1
+    # Only teams that suffered at least one loss
+    lb_contenders = {t: w for t, w in lb_runs.items()
+                     if sum(1 for x in MATCH_HISTORY if x['loser'] == t) > 0}
+    if lb_contenders:
+        grinder      = max(lb_contenders, key=lb_contenders.get)
+        grind_roster = " & ".join(TEAM_ROSTERS.get(grinder, ['?','?']))
+        grind_losses = sum(1 for x in MATCH_HISTORY if x['loser'] == grinder)
+        stat_row(right, r, "💪 Best LB Run",
+                 f"{grind_roster} ({lb_contenders[grinder]}W-{grind_losses}L)"); r += 1
+
+    # --- Quickest exit ---
+    # Team eliminated after playing the fewest total matches
+    all_teams_in_history = set()
+    for rec in MATCH_HISTORY:
+        all_teams_in_history.add(rec['winner'])
+        all_teams_in_history.add(rec['loser'])
+    team_total_matches = {t: sum(1 for x in MATCH_HISTORY
+                                 if x['winner'] == t or x['loser'] == t)
+                          for t in all_teams_in_history}
+    # Only teams that didn't win the tournament
+    eliminated = {t: m for t, m in team_total_matches.items() if t != champion}
+    if eliminated:
+        quickest     = min(eliminated, key=eliminated.get)
+        quick_roster = " & ".join(TEAM_ROSTERS.get(quickest, ['?','?']))
+        stat_row(right, r, "🚪 Quickest Exit",
+                 f"{quick_roster} ({eliminated[quickest]} match{'es' if eliminated[quickest] != 1 else ''})"); r += 1
+
+    # --- GF bracket reset? ---
+    gf_data = TOURNAMENT_STATE.get('GF', {})
+    had_reset = isinstance(gf_data, dict) and gf_data.get('is_reset', False)
+    stat_row(right, r, "🔄 Grand Final Reset",
+             "Yes — went to GGF" if had_reset else "No — settled in GF",
+             THEME['fg_secondary'] if not had_reset else THEME['accent_gold']); r += 1
+
+    tk.Frame(P, bg=THEME['accent_gold'], height=2).pack(fill='x', pady=(10, 6))
 
     # Final controls
-    final_control_frame_ref.pack(fill='x', pady=(10, 0))
+    final_control_frame_ref.pack(fill='x', pady=(0, 6))
     
 def reset_game(update_teams=True):
     """Resets the game state (only updating teams now)."""
