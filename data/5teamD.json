@@ -1,5 +1,5 @@
 {
-  "tournament_name": "Converted from 5teamD.game",
+  "tournament_name": "5-team Shuffleboard Tournament",
   "prizes": {
     "3": 8,
     "2": 12,
@@ -18,7 +18,8 @@
       "loser_drops_to": {
         "game": "G4",
         "slot": 0
-      }
+      },
+      "is_winnerbracket": "true"
     },
     "G2": {
       "teams": [
@@ -32,7 +33,8 @@
       "loser_drops_to": {
         "game": "G4",
         "slot": 1
-      }
+      },
+      "is_winnerbracket": "true"
     },
     "G3": {
       "teams": [
@@ -46,7 +48,8 @@
       "loser_drops_to": {
         "game": "G6",
         "slot": 1
-      }
+      },
+      "is_winnerbracket": "true"
     },
     "G4": {
       "teams": [
@@ -60,7 +63,8 @@
       "loser_drops_to": {
         "result": "ELIMINATED",
         "rank": "5th"
-      }
+      },
+      "is_winnerbracket": "false"
     },
     "G5": {
       "teams": [
@@ -74,7 +78,8 @@
       "loser_drops_to": {
         "game": "G7",
         "slot": 0
-      }
+      },
+      "is_winnerbracket": "true"
     },
     "G6": {
       "teams": [
@@ -88,7 +93,8 @@
       "loser_drops_to": {
         "result": "ELIMINATED",
         "rank": "4th"
-      }
+      },
+      "is_winnerbracket": "false"
     },
     "G7": {
       "teams": [
@@ -102,7 +108,8 @@
       "loser_drops_to": {
         "result": "ELIMINATED",
         "rank": "3rd"
-      }
+      },
+      "is_winnerbracket": "false"
     },
     "GF": {
       "teams": [
@@ -114,7 +121,8 @@
       },
       "loser_drops_to": {
         "result": "GF_CONDITIONAL"
-      }
+      },
+      "is_winnerbracket": "both"
     },
     "GGF": {
       "teams": [
@@ -127,7 +135,8 @@
       "loser_drops_to": {
         "result": "ELIMINATED",
         "rank": "2nd"
-      }
+      },
+      "is_winnerbracket": "both"
     }
   }
 }
