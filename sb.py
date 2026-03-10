@@ -2859,8 +2859,8 @@ def display_final_rankings(champion):
     # --- GF bracket reset? ---
     gf_data = TOURNAMENT_STATE.get('GF', {})
     had_reset = isinstance(gf_data, dict) and gf_data.get('is_reset', False)
-    stat_row(right, r, "🔄 Grand Final Reset",
-             "Yes — went to GGF" if had_reset else "No — settled in GF",
+    stat_row(right, r, "🔄 Undefeated Teams",
+             "No" if had_reset else "Yes",
              THEME['fg_secondary'] if not had_reset else THEME['accent_gold']); r += 1
 
     tk.Frame(P, bg=THEME['accent_gold'], height=2).pack(fill='x', pady=(10, 6))
