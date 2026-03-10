@@ -83,17 +83,19 @@ MATCH_DURATIONS = []        # List of completed match durations (seconds)
 TOURNAMENT_START_TIME = None
 
 # --- Console Logging Function ---
-def log_message(message):
-    """Prints a timestamped message to the console and file (if enabled) for tracking."""
-    global LOG_GAME_TO_FILE, LOG_FILE_HANDLE 
+def log_message(message, level="INFO"):
+    """Prints a leveled, timestamped message to the console and log file (if enabled).
+    Levels: DEBUG, INFO, WARN, ERROR
+    """
+    global LOG_GAME_TO_FILE, LOG_FILE_HANDLE
     timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    log_line = f"[{timestamp}] {message}"
+    log_line = f"[{timestamp}] [{level:<5}] {message}"
 
     print(log_line)
 
     if LOG_GAME_TO_FILE and LOG_FILE_HANDLE:
         LOG_FILE_HANDLE.write(log_line + "\n")
-        LOG_FILE_HANDLE.flush() 
+        LOG_FILE_HANDLE.flush()
 
 # --- System Functions ---
 def _find_last_snapshot_in_file(path):
@@ -171,7 +173,7 @@ def setup_scoreboard(root, team_red_placeholder, team_blue_placeholder):
     global switch_frame_ref, final_control_frame_ref, rankings_display_frame_ref
     global ui_references
 
-    log_message("Initializing modernized scoreboard UI.")
+    log_message("Scoreboard UI initialized.")
 
     # --- Styling for Notebook (Dark Theme) ---
     style = ttk.Style()
@@ -303,10 +305,21 @@ def setup_scoreboard(root, team_red_placeholder, team_blue_placeholder):
 
     update_footer_log_status()
 
-    # 3. Right Section: Timer (Far Right)
-    ui_references['timer_lbl'] = tk.Label(footer_bar, text="00:00", font=('Consolas', 10, 'bold'), 
-                                           fg=THEME['accent_gold'], bg=THEME['bg_card'], padx=10)
+    # 3. Right Section: Timer (Far Right) — click label or button to start/pause
+    ui_references['timer_lbl'] = tk.Label(
+        footer_bar, text="00:00", font=('Consolas', 10, 'bold'),
+        fg=THEME['accent_gold'], bg=THEME['bg_card'], padx=6, cursor='hand2'
+    )
     ui_references['timer_lbl'].pack(side='right')
+    ui_references['timer_lbl'].bind("<Button-1>", lambda e: toggle_match_timer())
+
+    ui_references['timer_play_btn'] = tk.Button(
+        footer_bar, text="▶", font=('Segoe UI', 8, 'bold'),
+        bg=THEME['btn_default'], fg=THEME['accent_gold'],
+        relief='flat', padx=4, pady=0, cursor='hand2',
+        command=toggle_match_timer
+    )
+    ui_references['timer_play_btn'].pack(side='right', padx=(0, 2))
 
     # 4. Center Section: Tournament Progress
     ui_references['footer_progress'] = tk.Label(footer_bar, text="Progress: 0%", font=('Segoe UI', 9), 
@@ -551,14 +564,14 @@ def update_roster_seeding_vertical():
         row_index += 1
 
 def update_timer_display():
-    """Updates the match elapsed time every second."""
+    """Updates the match elapsed time every second. Only ticks when timer is running."""
     global match_timer_id, TOURNAMENT_STATE, ui_references, main_root
-    
+
     if not ui_references.get('timer_lbl') or not main_root:
         return
-        
+
     match_id = TOURNAMENT_STATE.get('active_match_id')
-    
+
     if match_id == 'TOURNAMENT_OVER' or not match_id:
         ui_references['timer_lbl'].config(text="--:--")
         return
@@ -567,14 +580,42 @@ def update_timer_display():
     if not match_data:
         return
 
+    # If paused, show current elapsed without advancing
+    if match_data.get('timer_paused', True):
+        elapsed = int(match_data.get('elapsed_at_pause', 0))
+        mins, secs = divmod(elapsed, 60)
+        ui_references['timer_lbl'].config(text=f"{mins:02d}:{secs:02d}")
+
+        # Flash red if paused for more than 30 seconds
+        paused_at = match_data.get('paused_at') or match_data.get('_paused_since')
+        if paused_at is None:
+            match_data['_paused_since'] = time.time()
+            paused_at = match_data['_paused_since']
+
+        paused_duration = time.time() - paused_at
+        if paused_duration >= 30:
+            flash_state = match_data.get('_flash_state', False)
+            flash_color = '#FF0000' if flash_state else THEME['bg_card']
+            ui_references['timer_lbl'].config(fg=flash_color)
+            if ui_references.get('timer_play_btn'):
+                ui_references['timer_play_btn'].config(fg=flash_color)
+            match_data['_flash_state'] = not flash_state
+            match_timer_id = main_root.after(1000, update_timer_display)
+        else:
+            ui_references['timer_lbl'].config(fg=THEME['accent_gold'])
+            if ui_references.get('timer_play_btn'):
+                ui_references['timer_play_btn'].config(fg=THEME['accent_gold'])
+            match_timer_id = main_root.after(1000, update_timer_display)
+        return
+
     if 'start_time' not in match_data or not match_data['start_time']:
         match_data['start_time'] = time.time()
 
     elapsed = int(time.time() - match_data['start_time'])
     mins, secs = divmod(elapsed, 60)
-    
+
     ui_references['timer_lbl'].config(text=f"{mins:02d}:{secs:02d}")
-    
+
     match_timer_id = main_root.after(1000, update_timer_display)
 
 def stop_match_timer():
@@ -586,9 +627,10 @@ def stop_match_timer():
             pass
         match_timer_id = None
 
-
 def resume_match_timer():
+    """Resumes the timer from where it was paused."""
     global TOURNAMENT_STATE
+
     match_id = TOURNAMENT_STATE.get('active_match_id')
     if not match_id or match_id == 'TOURNAMENT_OVER':
         return
@@ -597,14 +639,52 @@ def resume_match_timer():
     if not match_data:
         return
 
-    # Adjust start_time so timer resumes from current elapsed
-    if 'paused_at' in match_data and match_data['paused_at']:
-        paused_duration = time.time() - match_data['paused_at']
-        match_data['start_time'] += paused_duration
-        match_data['paused_at'] = None
+    elapsed_so_far = match_data.get('elapsed_at_pause', 0)
+    match_data['start_time'] = time.time() - elapsed_so_far
+    match_data['paused_at'] = None
+    match_data['timer_paused'] = False
+    match_data['_paused_since'] = None
+    match_data['_flash_state'] = False
+
+    ui_references['timer_lbl'].config(fg=THEME['accent_gold'])
+    if ui_references.get('timer_play_btn'):
+        ui_references['timer_play_btn'].config(text="⏸", fg=THEME['accent_gold'])
 
     update_timer_display()
 
+def pause_match_timer():
+    """Pauses the timer and records elapsed time."""
+    global match_timer_id, main_root, TOURNAMENT_STATE
+
+    match_id = TOURNAMENT_STATE.get('active_match_id')
+    if match_id and match_id != 'TOURNAMENT_OVER':
+        match_data = TOURNAMENT_STATE.get(match_id)
+        if match_data and match_data.get('start_time'):
+            match_data['elapsed_at_pause'] = int(time.time() - match_data['start_time'])
+        match_data['paused_at'] = time.time()
+        match_data['timer_paused'] = True
+
+    stop_match_timer()
+
+    if ui_references.get('timer_play_btn'):
+        ui_references['timer_play_btn'].config(text="▶")
+
+    update_timer_display()
+    
+def toggle_match_timer():
+    """Toggles the timer between running and paused."""
+    match_id = TOURNAMENT_STATE.get('active_match_id')
+    if not match_id or match_id == 'TOURNAMENT_OVER':
+        return
+
+    match_data = TOURNAMENT_STATE.get(match_id)
+    if not match_data:
+        return
+
+    if match_data.get('timer_paused', True):
+        resume_match_timer()
+    else:
+        pause_match_timer()
 
 def finalize_match_duration(match_id):
     global MATCH_DURATIONS, TOURNAMENT_STATE
@@ -639,7 +719,7 @@ def update_scoreboard_display():
     if match_id == 'TOURNAMENT_OVER':
         return
         
-    log_message(f"Updating scoreboard display for match: {match_id}") 
+    log_message(f"Scoreboard display refreshed for match: {match_id}", "DEBUG")
 
     team_red = current_match_teams['red']
     team_blue = current_match_teams['blue']
@@ -681,7 +761,7 @@ def update_scoreboard_display():
         try:
             draw_large_bracket(full_bracket_canvas)
         except Exception as e:
-            log_message(f"Error updating full bracket: {e}")
+            log_message(f"Failed to update full bracket: {e}", "ERROR")
             
     # Refresh vertical roster highlights
     update_roster_seeding_vertical()
@@ -708,7 +788,7 @@ def declare_winner(color):
     winner = current_match_teams[color]
     loser = current_match_teams['blue'] if color == 'red' else current_match_teams['red']
     
-    log_message(f"Winner declared for {match_id_to_confirm}: {winner} ({color}).") 
+    log_message(f"Winner declared — Match {match_id_to_confirm}: {winner} ({color})")
 
     # Pause timer while confirming
     match_data = TOURNAMENT_STATE.get(match_id_to_confirm)
@@ -752,7 +832,7 @@ def go_back_to_selection():
     """Reverts the UI from Confirmation to the Arena view."""
     global match_res_frame, ui_references
     
-    log_message("Going back to winner selection screen.") 
+    log_message("Returned to winner selection (result cancelled)")
     
     match_res_frame.pack_forget()
     ui_references['match_tab_frame'].pack(fill='both', expand=True, padx=5, pady=5)
@@ -770,7 +850,7 @@ def load_match_data_and_teams():
     global ui_references, match_res_frame
     
     match_id = TOURNAMENT_STATE.get('active_match_id', 'TOURNAMENT_OVER')
-    log_message(f"Loading match data for new active match: {match_id}") 
+    log_message(f"Loading match: {match_id}")
     
     # Hide End Game screens if they were open
     if final_control_frame_ref: final_control_frame_ref.pack_forget()
@@ -801,18 +881,26 @@ def load_match_data_and_teams():
 
     if match_id != last_assigned_match_id:
         match_data = TOURNAMENT_STATE[match_id]
-        team_A = match_data['teams'][0] 
-        team_B = match_data['teams'][1] 
-        
+        team_A = match_data['teams'][0]
+        team_B = match_data['teams'][1]
+
         current_match_teams['red'] = team_A
         current_match_teams['blue'] = team_B
         last_assigned_match_id = match_id
-    
+
+        match_data['timer_paused'] = True
+        match_data['elapsed_at_pause'] = 0
+        match_data['_paused_since'] = time.time()
+        match_data['_flash_state'] = False
+        if ui_references.get('timer_play_btn'):
+            ui_references['timer_play_btn'].config(text="▶", fg=THEME['accent_gold'])
+        ui_references['timer_lbl'].config(fg=THEME['accent_gold'])
+
         global match_timer_id
         if match_timer_id and main_root:
-            main_root.after_cancel(match_timer_id) # Cancel any old loops
-        update_timer_display() # Kick off the new timer loop
-    
+            main_root.after_cancel(match_timer_id)
+        update_timer_display()
+
     update_scoreboard_display()
 
 def run_replay_mode(path):
@@ -822,7 +910,7 @@ def run_replay_mode(path):
     REPLAY_MODE = True
     REPLAY_VIEW_ONLY = False
 
-    log_message(f"Attempting to load replay from: {path}")
+    log_message(f"Loading replay file: {path}")
 
     # Load last snapshot
     try:
@@ -892,7 +980,7 @@ def run_replay_mode(path):
         REPLAY_VIEW_ONLY = True
         REPLAY_FILEPATH = None
 
-        log_message("Replay loaded: Tournament Finished. Entering View-Only Mode.")
+        log_message("Replay loaded — tournament complete, entering view-only mode")
 
         root = tk.Tk()
         root.title("Moose Lodge Shuffleboard — Replay (VIEW ONLY)")
@@ -914,7 +1002,7 @@ def run_replay_mode(path):
     REPLAY_VIEW_ONLY = False
     REPLAY_FILEPATH = path
 
-    log_message(f"Replay loaded: Resuming tournament. Appending to {path}")
+    log_message(f"Replay loaded — resuming tournament, appending to: {path}")
 
     root = tk.Tk()
     root.title("Moose Lodge Shuffleboard — Replay Mode (Continue)")
@@ -940,7 +1028,7 @@ def on_close(root):
     global main_root
     global LOG_FILE_HANDLE 
     
-    log_message("Application close requested.") 
+    log_message("Application close requested")
     
     if LOG_FILE_HANDLE:
         try:
@@ -1107,7 +1195,7 @@ def load_bracket_config(num_teams, elimination_type='D'):
     base_filename = f"{num_teams}team{elimination_type}.json"
     search_paths = [base_filename, os.path.join('data', base_filename)]
     
-    log_message(f"Searching for configuration file: {base_filename}")
+    log_message(f"Searching for bracket config: {base_filename}", "DEBUG")
     
     state = {}
     prizes = {}
@@ -1119,16 +1207,16 @@ def load_bracket_config(num_teams, elimination_type='D'):
                 with open(filepath, 'r') as f:
                     content = json.load(f)
                 state, prizes = _parse_json_config_content(content)
-                log_message(f"Successfully loaded JSON from: '{filepath}'")
+                log_message(f"Bracket config loaded: {filepath}")
                 json_loaded = True
                 break
             except Exception as e:
-                log_message(f"Error reading JSON file '{filepath}': {e}")
+                log_message(f"Failed to read bracket config '{filepath}': {e}", "ERROR")
                 raise ValueError(f"Error parsing '{filepath}': {e}")
 
     if not json_loaded:
         err_msg = f"Configuration file '{base_filename}' not found."
-        log_message(f"Error: {err_msg}")
+        log_message(f"Bracket config error: {err_msg}", "ERROR")
         raise FileNotFoundError(err_msg)
 
     # --- PATCH: AUTO-INJECT FINALS LOGIC ---
@@ -1162,7 +1250,7 @@ def load_bracket_config(num_teams, elimination_type='D'):
         'L_next': ('CHAMPION', 1),
         'is_winnerbracket': 'both'
     }    
-    log_message(f"Injected Finals: GF linked from {WB_FINAL_ID} & {LB_FINAL_ID}")
+    log_message(f"Finals injected — GF linked from {WB_FINAL_ID} & {LB_FINAL_ID}", "DEBUG")
     return state, prizes
         
 def calculate_dynamic_coords(state):
@@ -1407,7 +1495,7 @@ def on_full_bracket_close():
     
     if REPLAY_VIEW_ONLY:
         # If in view-only mode, closing the bracket window should exit the application.
-        log_message("View-Only mode detected. Exiting application on window close.")
+        log_message("View-only mode — exiting on window close")
         on_close(main_root)
         return
 
@@ -2136,16 +2224,16 @@ def find_next_active_match():
         data = TOURNAMENT_STATE[k]
         
         if data['teams'][0] and data['teams'][1] and data['winner'] is None:
-            log_message(f"Found next active match: {k} ({data['teams'][0]} vs {data['teams'][1]})") 
+            log_message(f"Next active match: {k} ({data['teams'][0]} vs {data['teams'][1]})", "DEBUG")
             return k
     
     if sorted_match_keys:
         last_g_id = sorted_match_keys[-1]
         if TOURNAMENT_STATE[last_g_id].get('is_reset', False) and TOURNAMENT_STATE[last_g_id].get('winner') is None:
-             log_message(f"Found next active match (Finals Reset): {last_g_id}") 
+             log_message(f"Next active match (finals reset): {last_g_id}", "DEBUG")
              return last_g_id
          
-    log_message("Tournament is over (or in final state check).") 
+    log_message("No further matches found — tournament complete")
     return 'TOURNAMENT_OVER'
 
 def _serialize_config_for_snapshot(config):
@@ -2224,10 +2312,10 @@ def append_snapshot_to_file(path):
             except Exception:
                 pass
 
-        log_message(f"[Replay] Snapshot appended to {path}")
+        log_message(f"Snapshot saved: {path}", "DEBUG")
 
     except Exception as e:
-        log_message(f"[Replay] Error writing snapshot: {e}")
+        log_message(f"Failed to write snapshot to {path}: {e}", "ERROR")
 
 def handle_match_resolution(winner, loser, winning_color, match_id):
     """
@@ -2236,19 +2324,19 @@ def handle_match_resolution(winner, loser, winning_color, match_id):
     """
     global current_match_res_buttons, TOURNAMENT_RANKINGS
     
-    log_message(f"Resolving match {match_id}: Winner={winner} ({winning_color}), Loser={loser}") 
+    log_message(f"Resolving match {match_id}: {winner} ({winning_color}) defeated {loser}")
     
     if match_id == 'TOURNAMENT_OVER':
          messagebox.showerror("Error", "Attempted to resolve 'TOURNAMENT_OVER' state.")
          TOURNAMENT_STATE['active_match_id'] = find_next_active_match()
          reset_game(update_teams=True)
-         log_message("Error: Attempted to resolve 'TOURNAMENT_OVER'. Resetting game state.") 
+         log_message("Attempted to resolve TOURNAMENT_OVER state — aborting", "ERROR")
          return
          
     match_data = TOURNAMENT_STATE.get(match_id)
 
     if not match_data or 'config' not in match_data:
-        log_message(f"Error: Match {match_id} configuration data is missing or invalid.") 
+        log_message(f"Match {match_id} config missing or invalid — cannot resolve", "ERROR")
         messagebox.showerror("Error", f"Match {match_id} configuration data is missing or invalid.")
         TOURNAMENT_STATE['active_match_id'] = find_next_active_match()
         reset_game(update_teams=True)
@@ -2257,7 +2345,7 @@ def handle_match_resolution(winner, loser, winning_color, match_id):
     match_config = match_data['config']
     
     if match_data.get('winner') is not None and not match_data.get('is_reset', False):
-        log_message(f"Warning: Match {match_id} already resolved.") 
+        log_message(f"Match {match_id} already resolved — skipping", "WARN")
         messagebox.showinfo("Error", f"Match {match_id} already resolved.")
         return
         
@@ -2286,7 +2374,7 @@ def handle_match_resolution(winner, loser, winning_color, match_id):
                                 f"{w_roster} have demoted {l_roster} from undefeated status!")
             
             TOURNAMENT_STATE['active_match_id'] = reset_game_id
-            log_message(f"Match GF resulted in Bracket Reset. Next active match: {reset_game_id} ({winner} vs {loser})") 
+            log_message(f"GF bracket reset — {winner} vs {loser} in {reset_game_id}") 
          
             reset_game() 
             return # EXIT after reset handling
@@ -2297,7 +2385,7 @@ def handle_match_resolution(winner, loser, winning_color, match_id):
             TOURNAMENT_RANKINGS['1ST'] = winner
             TOURNAMENT_RANKINGS['2ND'] = loser
             TOURNAMENT_STATE['active_match_id'] = 'TOURNAMENT_OVER'
-            log_message(f"Match GF: WB Winner {winner} wins Championship. 1ST={winner}, 2ND={loser}") 
+            log_message(f"GF complete — Champion: {winner} (1st), Runner-up: {loser} (2nd)") 
             reset_game() 
             return 
 
@@ -2310,7 +2398,7 @@ def handle_match_resolution(winner, loser, winning_color, match_id):
         TOURNAMENT_RANKINGS['2ND'] = gfgf_loser
         
         TOURNAMENT_STATE['active_match_id'] = 'TOURNAMENT_OVER'
-        log_message(f"Match {match_id} (Reset) completed. 1ST={winner}, 2ND={gfgf_loser}. Tournament is over.") 
+        log_message(f"Reset match {match_id} complete — 1st: {winner}, 2nd: {gfgf_loser}. Tournament over.") 
         
         # Redraw the bracket to show GGF champion
         if full_bracket_canvas:
@@ -2325,11 +2413,11 @@ def handle_match_resolution(winner, loser, winning_color, match_id):
         next_match_id, slot = w_target
         if next_match_id in TOURNAMENT_STATE and TOURNAMENT_STATE[next_match_id]['teams'][slot] is None:
             TOURNAMENT_STATE[next_match_id]['teams'][slot] = winner
-            log_message(f"Propagated Winner {winner} to {next_match_id} [Slot {slot}].") 
+            log_message(f"  -> Winner {winner} → {next_match_id} [slot {slot}]", "DEBUG") 
     elif w_target == 'CHAMPION':
          match_data['champion'] = winner
          TOURNAMENT_RANKINGS['1ST'] = winner
-         log_message(f"Match {match_id}: Winner {winner} is CHAMPION.") 
+         log_message(f"Champion crowned: {winner} (match {match_id})") 
     
     # 3. Propagate Loser and Assign Elimination Rank (MODIFIED)
     l_target = match_config.get('L_next')
@@ -2338,14 +2426,14 @@ def handle_match_resolution(winner, loser, winning_color, match_id):
         loser_match_id, slot = l_target
         if loser_match_id in TOURNAMENT_STATE and TOURNAMENT_STATE[loser_match_id]['teams'][slot] is None:
             TOURNAMENT_STATE[loser_match_id]['teams'][slot] = loser
-            log_message(f"Propagated Loser {loser} to {loser_match_id} [Slot {slot}].") 
+            log_message(f"  -> Loser {loser} → {loser_match_id} [slot {slot}]", "DEBUG") 
     elif l_target and l_target.startswith('ELIMINATED'):
         rank_match = re.search(r'\[(\w+)\]', l_target)
         if rank_match:
             rank = rank_match.group(1)
             if rank not in TOURNAMENT_RANKINGS:
                 TOURNAMENT_RANKINGS[rank] = loser
-                log_message(f"Assigned rank {rank} to eliminated team {loser}.") 
+                log_message(f"  -> {loser} eliminated, ranked {rank}", "DEBUG") 
         
     elif l_target and l_target.endswith('_CONDITIONAL'):
         pass 
@@ -2361,7 +2449,7 @@ def handle_match_resolution(winner, loser, winning_color, match_id):
 
     # 4. Find the next actively playable match
     TOURNAMENT_STATE['active_match_id'] = find_next_active_match()
-    log_message(f"Standard Match Resolution complete. New active match: {TOURNAMENT_STATE['active_match_id']}") 
+    log_message(f"Match {match_id} resolved. Next: {TOURNAMENT_STATE['active_match_id']}") 
     
     reset_game(update_teams=False)
 
@@ -2540,13 +2628,13 @@ def update_winner_buttons():
     if btn_red and btn_blue:
         btn_red.config(text=f"WINNERS: {team_red}")
         btn_blue.config(text=f"WINNERS: {team_blue}")
-    log_message(f"Updated winner buttons: Red={team_red}, Blue={team_blue}") 
+    log_message(f"Winner buttons updated — Red: {team_red}, Blue: {team_blue}", "DEBUG") 
 
 def swap_teams():
     """Swaps the Red and Blue teams in the current match UI."""
     global current_match_teams
     
-    log_message(f"Swapping teams: {current_match_teams['red']} <-> {current_match_teams['blue']}") 
+    log_message(f"Teams swapped — Red: {current_match_teams['red']}, Blue: {current_match_teams['blue']}") 
     
     temp = current_match_teams['red']
     current_match_teams['red'] = current_match_teams['blue']
@@ -2752,7 +2840,7 @@ def display_final_rankings(champion):
     
 def reset_game(update_teams=True):
     """Resets the game state (only updating teams now)."""
-    log_message("Resetting game UI.") 
+    log_message("Game UI reset", "DEBUG")
     if update_teams:
         load_match_data_and_teams()
 
@@ -2763,7 +2851,7 @@ def update_roster_seeding_display():
     if not roster_seeding_frame_ref or not TEAMS:
         return
 
-    log_message("Updating Team Roster & Seeding display (horizontal).")
+    log_message("Roster display updated", "DEBUG")
 
     for widget in roster_seeding_frame_ref.winfo_children():
         widget.destroy()
@@ -2795,7 +2883,7 @@ def setup_main_gui(root):
     team_A = g1_teams[0] or "Team Red"
     team_B = g1_teams[1] or "Team Blue"
     
-    log_message(f"Setting up main GUI for teams: {team_A} vs {team_B}") 
+    log_message(f"Main GUI setup — {team_A} vs {team_B}")
     
     setup_scoreboard(root, team_A, team_B) 
 
@@ -2808,7 +2896,7 @@ def show_draw_summary(player_draws, TEAMS, TEAM_ROSTERS, num_teams, total_pool, 
     summary_root.configure(bg=THEME['bg_main'])
     summary_root.protocol("WM_DELETE_WINDOW", lambda: on_close(summary_root))
     
-    log_message("Displaying Draw Summary and Prize Pool.")
+    log_message("Displaying draw summary and prize pool", "DEBUG")
     
     # ========================================================================
     # HEADER
@@ -2962,7 +3050,7 @@ def generate_dynamic_bracket(teams, config=None):
     TOURNAMENT_STATE.clear()
 
     num_teams = len(teams)
-    log_message(f"Generating bracket for {num_teams} teams.") 
+    log_message(f"Generating bracket for {num_teams} teams")
     
     if config is None:
         try:
@@ -3002,13 +3090,13 @@ def generate_dynamic_bracket(teams, config=None):
                     t_num = int(match_t_id.group(1)) - 1 
                     if t_num < len(teams):
                         TOURNAMENT_STATE[match_id]['teams'][i] = teams[t_num]
-                        log_message(f"Seeded {teams[t_num]} into {match_id} [Slot {i}].") 
+                        log_message(f"  -> Seeded {teams[t_num]} into {match_id} [slot {i}]", "DEBUG") 
                     else:
                         TOURNAMENT_STATE[match_id]['teams'][i] = None 
 
     initial_active_match = find_next_active_match()
     TOURNAMENT_STATE['active_match_id'] = initial_active_match
-    log_message(f"Bracket generation complete. Initial active match: {initial_active_match}")
+    log_message(f"Bracket ready — first match: {initial_active_match}")
 
 # --- Logging File Management ---
 def toggle_log_game(log_var):
@@ -3027,7 +3115,7 @@ def toggle_log_game(log_var):
         
         try:
             LOG_FILE_HANDLE = open(filename, 'a', buffering=1)
-            log_message(f"Starting file logging to: {filename}")
+            log_message(f"File logging enabled: {filename}")
         except Exception as e:
             LOG_GAME_TO_FILE = False
             LOG_FILE_HANDLE = None
@@ -3050,7 +3138,7 @@ def get_player_setup_dialog(parent):
     - Smart button state management
     - Improved error handling with summary messages
     """
-    log_message("Opening enhanced modern player setup dialog.")
+    log_message("Player setup dialog opened", "DEBUG")
     
     dialog = tk.Toplevel(parent)
     dialog.title("Tournament Setup")
@@ -3749,7 +3837,7 @@ def start_tournament():
     """
     global REPLAY_FILEPATH, TEAMS, TEAM_ROSTERS
 
-    log_message("Starting tournament initialization process.") 
+    log_message("Tournament initialization started")
     
     dialog_root = tk.Tk()
     dialog_root.withdraw() 
@@ -3759,7 +3847,7 @@ def start_tournament():
     
     if player_input_result is None:
         dialog_root.destroy()
-        log_message("Tournament setup canceled.") 
+        log_message("Tournament setup cancelled by user", "WARN")
         return
         
     is_manual_draw, player_data_list = player_input_result
@@ -3768,7 +3856,7 @@ def start_tournament():
     dialog_root.destroy() 
     
     # All players are paid now, enforced by the dialog
-    log_message(f"Player data received. Total: {num_players}. Manual Draw: {is_manual_draw}. All players paid.") 
+    log_message(f"Player setup complete — {num_players} players, manual draw: {is_manual_draw}")
 
     # --- 2. Process Draw and Team Setup ---
     TEAMS.clear()
@@ -3789,7 +3877,7 @@ def start_tournament():
             player_draws.append((draw_num, player_name))
         
         player_draws.sort(key=lambda x: x[0]) 
-        log_message(f"Auto-draw complete. {num_players} players drawn.") 
+        log_message(f"Auto-draw complete — {num_players} players assigned", "DEBUG")
     
     num_teams = num_players // 2
     for i in range(num_teams):
@@ -3799,7 +3887,7 @@ def start_tournament():
         
         TEAMS.append(team_name)
         TEAM_ROSTERS[team_name] = [player1, player2]
-        log_message(f"Created team {team_name}: {player1} / {player2} (Draws #{player_draws[i*2][0]} & #{player_draws[i*2+1][0]})") 
+        log_message(f"  -> {team_name}: {player1} & {player2} (draws #{player_draws[i*2][0]}, #{player_draws[i*2+1][0]})", "DEBUG") 
         
     # --- 3. Load Bracket Config and Prizes ---
     try:
@@ -3814,7 +3902,7 @@ def start_tournament():
     prizes['3rd'] = prizes.get('3rd', 0)
     
     total_pool = prizes['1st'] + prizes['2nd'] + prizes['3rd']
-    log_message(f"Loaded prizes: {prizes}. Total Pool: ${total_pool}") 
+    log_message(f"Prize pool loaded — 1st: ${prizes.get('1st',0)}, 2nd: ${prizes.get('2nd',0)}, 3rd: ${prizes.get('3rd',0)} (total: ${total_pool})")
         
     # --- 4. Show Draw Summary ---
     show_draw_summary(player_draws, TEAMS, TEAM_ROSTERS, num_teams, total_pool, prizes)
@@ -3823,13 +3911,13 @@ def start_tournament():
     generate_dynamic_bracket(TEAMS, config)
     
     if not TOURNAMENT_STATE:
-        log_message("Error: TOURNAMENT_STATE is empty after generation.") 
+        log_message("TOURNAMENT_STATE empty after bracket generation — aborting", "ERROR")
         return
 
     # --- 6. Create Replay File ---
     os.makedirs("replays", exist_ok=True)
     REPLAY_FILEPATH = f"replays/game_{int(time.time())}.json"
-    log_message(f"Created new replay file at: {REPLAY_FILEPATH}")
+    log_message(f"Replay file created: {REPLAY_FILEPATH}")
     append_snapshot_to_file(REPLAY_FILEPATH) 
 
     # --- 7. Launch Main Game GUI ---
@@ -3844,7 +3932,7 @@ def confirm_match_resolution(winner, loser, winning_color, match_id):
     """Processes the confirmed match result and updates the tournament state."""
     global match_res_frame, current_match_res_buttons, TOURNAMENT_STATE
 
-    log_message(f"Confirmation received for match {match_id}. Processing result...") 
+    log_message(f"Match {match_id} result confirmed — processing")
 
     duration = finalize_match_duration(match_id)
 
@@ -3859,12 +3947,12 @@ def confirm_match_resolution(winner, loser, winning_color, match_id):
     
 if __name__ == '__main__':
     
-    log_message("Script starting.") 
+    log_message("--- Shuffleboard Tournament Manager starting ---")
     
     if not os.path.exists('data'):
         os.makedirs('data')
-        log_message("Created 'data' directory.") 
+        log_message("Created 'data' directory", "DEBUG")
     
     show_title_screen()
 
-    log_message("Script finished execution.")
+    log_message("--- Shuffleboard Tournament Manager exited ---")
