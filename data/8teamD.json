@@ -18,7 +18,8 @@
       "loser_drops_to": {
         "game": "G5",
         "slot": 0
-      }
+      },
+      "is_winnerbracket": "true"
     },
     "G2": {
       "teams": [
@@ -32,7 +33,8 @@
       "loser_drops_to": {
         "game": "G5",
         "slot": 1
-      }
+      },
+      "is_winnerbracket": "true"
     },
     "G3": {
       "teams": [
@@ -46,7 +48,8 @@
       "loser_drops_to": {
         "game": "G6",
         "slot": 0
-      }
+      },
+      "is_winnerbracket": "true"
     },
     "G4": {
       "teams": [
@@ -60,7 +63,8 @@
       "loser_drops_to": {
         "game": "G6",
         "slot": 1
-      }
+      },
+      "is_winnerbracket": "true"
     },
     "G5": {
       "teams": [
@@ -74,7 +78,8 @@
       "loser_drops_to": {
         "result": "ELIMINATED",
         "rank": "8th"
-      }
+      },
+      "is_winnerbracket": "false"
     },
     "G6": {
       "teams": [
@@ -88,7 +93,8 @@
       "loser_drops_to": {
         "result": "ELIMINATED",
         "rank": "7th"
-      }
+      },
+      "is_winnerbracket": "false"
     },
     "G7": {
       "teams": [
@@ -102,7 +108,8 @@
       "loser_drops_to": {
         "game": "G10",
         "slot": 1
-      }
+      },
+      "is_winnerbracket": "true"
     },
     "G8": {
       "teams": [
@@ -116,7 +123,8 @@
       "loser_drops_to": {
         "game": "G9",
         "slot": 0
-      }
+      },
+      "is_winnerbracket": "true"
     },
     "G9": {
       "teams": [
@@ -130,7 +138,8 @@
       "loser_drops_to": {
         "result": "ELIMINATED",
         "rank": "6th"
-      }
+      },
+      "is_winnerbracket": "false"
     },
     "G10": {
       "teams": [
@@ -144,7 +153,8 @@
       "loser_drops_to": {
         "result": "ELIMINATED",
         "rank": "5th"
-      }
+      },
+      "is_winnerbracket": "false"
     },
     "G11": {
       "teams": [
@@ -158,7 +168,8 @@
       "loser_drops_to": {
         "game": "G13",
         "slot": 0
-      }
+      },
+      "is_winnerbracket": "true"
     },
     "G12": {
       "teams": [
@@ -172,7 +183,8 @@
       "loser_drops_to": {
         "result": "ELIMINATED",
         "rank": "4th"
-      }
+      },
+      "is_winnerbracket": "false"
     },
     "G13": {
       "teams": [
@@ -186,7 +198,8 @@
       "loser_drops_to": {
         "result": "ELIMINATED",
         "rank": "3rd"
-      }
+      },
+      "is_winnerbracket": "false"
     },
     "GF": {
       "teams": [
@@ -198,7 +211,8 @@
       },
       "loser_drops_to": {
         "result": "GF_CONDITIONAL"
-      }
+      },
+      "is_winnerbracket": "both"
     },
     "GGF": {
       "teams": [
@@ -211,7 +225,8 @@
       "loser_drops_to": {
         "result": "ELIMINATED",
         "rank": "2nd"
-      }
+      },
+      "is_winnerbracket": "both"
     }
   }
 }

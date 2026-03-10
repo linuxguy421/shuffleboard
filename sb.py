@@ -1090,7 +1090,8 @@ def _parse_json_config_content(json_content):
         match_entry = {
             'teams': data.get('teams', [None, None]),
             'W_next': _parse_json_destination(data.get('winner_advances_to')),
-            'L_next': _parse_json_destination(data.get('loser_drops_to'))
+            'L_next': _parse_json_destination(data.get('loser_drops_to')),
+            'is_winnerbracket': data.get('is_winnerbracket', 'unknown')
         }
         config[match_id] = match_entry
         
@@ -1148,36 +1149,57 @@ def load_bracket_config(num_teams, elimination_type='D'):
     if LB_FINAL_ID in state: state[LB_FINAL_ID]['W_next'] = ('GF', 1)
 
     state['GF'] = {
-        'teams': [None, None],
+        'teams': [f'W:{WB_FINAL_ID}', f'W:{LB_FINAL_ID}'],  # Store references instead of None
         'W_next': ('CHAMPION', 0), 
-        'L_next': ('GGF', 0) 
+        'L_next': ('GGF', 0),
+        'is_winnerbracket': 'both'
     }
 
     state['GGF'] = {
-        'teams': [None, None],
+        'teams': [None, None],  # Will be set when GF resolves
         'W_next': ('CHAMPION', 0),
-        'L_next': ('CHAMPION', 1)
-    }
-    
+        'L_next': ('CHAMPION', 1),
+        'is_winnerbracket': 'both'
+    }    
     log_message(f"Injected Finals: GF linked from {WB_FINAL_ID} & {LB_FINAL_ID}")
     return state, prizes
         
 def calculate_dynamic_coords(state):
     """
     Calculates X/Y coordinates for all matches, including GF/GGF.
+    Adjusts spacing dynamically based on the number of teams to prevent overlaps.
     """
     coords = {}
     
-    MATCH_WIDTH_U = 12 
-    MATCH_HEIGHT_U = 6 
+    # Count total matches to estimate tournament size
+    total_matches = sum(1 for v in state.values() if isinstance(v, dict) and 'teams' in v)
+    
+    # Dynamic spacing: more matches = more space
+    if total_matches <= 6:
+        MATCH_WIDTH_U = 12
+        MATCH_HEIGHT_U = 6
+        X_STEP_U = MATCH_WIDTH_U + 6
+        Y_STEP_U = MATCH_HEIGHT_U + 4
+    elif total_matches <= 12:
+        MATCH_WIDTH_U = 12
+        MATCH_HEIGHT_U = 6
+        X_STEP_U = MATCH_WIDTH_U + 8
+        Y_STEP_U = MATCH_HEIGHT_U + 5
+    elif total_matches <= 20:
+        MATCH_WIDTH_U = 12
+        MATCH_HEIGHT_U = 6
+        X_STEP_U = MATCH_WIDTH_U + 10
+        Y_STEP_U = MATCH_HEIGHT_U + 6
+    else:
+        MATCH_WIDTH_U = 12
+        MATCH_HEIGHT_U = 6
+        X_STEP_U = MATCH_WIDTH_U + 12
+        Y_STEP_U = MATCH_HEIGHT_U + 7
     
     WB_START_Y_U = 10
     LB_START_Y_U = 55
-    FINALS_Y_U = 35 
+    FINALS_Y_U = 35
     
-    X_STEP_U = MATCH_WIDTH_U + 6 
-    Y_STEP_U = MATCH_HEIGHT_U + 4 
-
     sorted_keys = sorted(
         [k for k in state.keys() if k.startswith('G') or k in ['GF', 'GGF']], 
         key=sort_match_keys
@@ -1393,135 +1415,352 @@ def on_full_bracket_close():
     full_bracket_root = None
     full_bracket_canvas = None
 
+
+
+
+
+
+def draw_connection_lines(canvas, match_coords, h_spacing, match_w, match_h):
+    """Draw connection lines between matches (optional visual enhancement)"""
+    # This can be enhanced later if needed for visual flow
+    pass
+
+def draw_angled_lines_sharp(canvas, state, coords, match_w, match_h, h_scale, v_scale, h_pad, v_pad):
+    """Draw connector lines with sharper angles (right-angle style)"""
+    
+    for match_id, match_data in state.items():
+        if not isinstance(match_data, dict) or 'teams' not in match_data:
+            continue
+        
+        team_a_ref = match_data['teams'][0]
+        team_b_ref = match_data['teams'][1]
+        
+        # Team A connector
+        if team_a_ref and isinstance(team_a_ref, str) and team_a_ref.startswith('W:'):
+            source_id = team_a_ref[2:]
+            if source_id in coords and match_id in coords:
+                src_x, src_y = coords[source_id]
+                src_x = src_x * h_scale + h_pad
+                src_y = src_y * v_scale + v_pad
+                
+                dst_x, dst_y = coords[match_id]
+                dst_x = dst_x * h_scale + h_pad
+                dst_y = dst_y * v_scale + v_pad
+                
+                # Sharper right-angle lines
+                mid_x = src_x + match_w + (dst_x - src_x - match_w) / 2
+                
+                canvas.create_line(src_x + match_w, src_y + match_h/4,
+                                 mid_x, src_y + match_h/4,
+                                 mid_x, dst_y + match_h/4,
+                                 dst_x, dst_y + match_h/4,
+                                 fill='#90A4AE', width=1)
+        
+        # Team B connector
+        if team_b_ref and isinstance(team_b_ref, str) and team_b_ref.startswith('W:'):
+            source_id = team_b_ref[2:]
+            if source_id in coords and match_id in coords:
+                src_x, src_y = coords[source_id]
+                src_x = src_x * h_scale + h_pad
+                src_y = src_y * v_scale + v_pad
+                
+                dst_x, dst_y = coords[match_id]
+                dst_x = dst_x * h_scale + h_pad
+                dst_y = dst_y * v_scale + v_pad
+                
+                # Sharper right-angle lines
+                mid_x = src_x + match_w + (dst_x - src_x - match_w) / 2
+                
+                canvas.create_line(src_x + match_w, src_y + 3*match_h/4,
+                                 mid_x, src_y + 3*match_h/4,
+                                 mid_x, dst_y + 3*match_h/4,
+                                 dst_x, dst_y + 3*match_h/4,
+                                 fill='#90A4AE', width=1)
+
+def resolve_team_name(team_ref):
+    """Resolve a team reference (W:G7) to actual team name"""
+    global TOURNAMENT_STATE
+    
+    if not team_ref:
+        return None
+    
+    # If it's a direct team name, return it
+    if not team_ref.startswith('W:'):
+        return team_ref
+    
+    # Extract match ID from W:MATCH_ID
+    source_match_id = team_ref[2:]
+    
+    if source_match_id not in TOURNAMENT_STATE:
+        return None
+    
+    source_match = TOURNAMENT_STATE[source_match_id]
+    
+    # Return the winner of that match
+    return source_match.get('winner') or source_match.get('champion')
+        
+
+
+
+
+
+
+
 def draw_large_bracket(canvas):
     """
-    Draws the large full bracket and adds GF-winner reconstruction
-    in strict view-only mode.
+    Vertical bracket layout - only vertical scroll, no horizontal scroll
+    Winners on top, Losers on bottom, Finals centered
     """
-    global TEAM_ROSTERS, REPLAY_VIEW_ONLY, TOURNAMENT_RANKINGS
+    global TEAM_ROSTERS, REPLAY_VIEW_ONLY, TOURNAMENT_RANKINGS, TOURNAMENT_STATE
 
     canvas.delete('all')
     canvas.configure(bg=THEME['bg_canvas'])
 
-    H_SCALE_PX = 14
-    V_SCALE_PX = 7
-
-    MATCH_W_U = 12
-    MATCH_H_U = 6
-
-    match_w = MATCH_W_U * H_SCALE_PX
-    match_h = MATCH_H_U * V_SCALE_PX
-
-    # Calculate coords
-    match_coords = calculate_dynamic_coords(TOURNAMENT_STATE)
-    if not match_coords:
+    if not TOURNAMENT_STATE:
         return
 
-    max_x_u = 0
-    max_y_u = 0
-    for (mx, my) in match_coords.values():
-        max_x_u = max(max_x_u, mx)
-        max_y_u = max(max_y_u, my)
-
-    total_width = (max_x_u + MATCH_W_U + 5) * H_SCALE_PX
-    total_height = (max_y_u + MATCH_H_U + 5) * V_SCALE_PX
-    canvas.config(scrollregion=(0, 0, total_width, total_height))
-
-    H_PAD = 20
-    V_PAD = 20
-
-    def get_coords(match_id):
-        if match_id not in match_coords:
-            return 0, 0
-        u_x, u_y = match_coords[match_id]
-        return u_x * H_SCALE_PX + H_PAD, u_y * V_SCALE_PX + V_PAD
-
-    # Draw lines
-    draw_angled_lines(canvas, TOURNAMENT_STATE, match_coords,
-                      match_w, match_h, H_SCALE_PX, V_SCALE_PX, H_PAD, V_PAD)
-
-    font_roster_size = 8
-
+    # Organize matches
+    wb_matches = {}
+    lb_matches = {}
+    finals_matches = {}
+    
     for match_id, match_data in TOURNAMENT_STATE.items():
         if not isinstance(match_data, dict) or 'teams' not in match_data:
             continue
-        if match_id not in match_coords:
-            continue
-
-        x, y = get_coords(match_id)
-
-        # Determine background
-        fill_color = 'white'
-        outline = '#263238'
-        if match_data.get('champion'):
-            fill_color = THEME['accent_gold']
-        elif match_id == TOURNAMENT_STATE.get('active_match_id') and match_data['winner'] is None:
-            fill_color = '#FFF9C4' # Light Yellow
-        elif match_data.get('winner_color') == 'red':
-            fill_color = '#FFCDD2' # Light Red
-        elif match_data.get('winner_color') == 'blue':
-            fill_color = '#BBDEFB' # Light Blue
-
-        canvas.create_rectangle(x, y, x + match_w, y + match_h,
-                                fill=fill_color, outline=outline, width=2)
-        canvas.create_text(x + 5, y + 5, text=f"{match_id}",
-                           anchor='w', fill='#000000',
-                           font=('Segoe UI', 8, 'bold'))
-
-        # Determine winner or champion
-        winner = match_data.get('winner') or match_data.get('champion')
-
-        # -----------------------------
-        # GF Reconstruction (strict view-only)
-        # -----------------------------
-        if REPLAY_VIEW_ONLY and match_id == 'GF' and not winner:
-            # Reconstruct from rankings if available
-            winner = TOURNAMENT_RANKINGS.get('1ST')
-
-        # Render teams
-        team_A = match_data['teams'][0]
-        team_B = match_data['teams'][1]
-
-        # Team A
-        txt_A = "TBD"
-        font_A = ('Segoe UI', font_roster_size)
-        if team_A:
-            if not team_A.startswith('W:'):
-                roster_A = TEAM_ROSTERS.get(team_A, ['?','?'])
-                txt_A = f"{team_A} ({roster_A[0]}/{roster_A[1]})"
-            else:
-                txt_A = team_A
-
-            if winner and team_A == winner:
-                txt_A += " \u2713"
-                font_A = ('Segoe UI', font_roster_size, 'bold')
-
-        canvas.create_text(x + 5, y + match_h/4 + 5,
-                           text=txt_A, anchor='w', font=font_A)
-
-        canvas.create_line(x, y + match_h/2,
-                           x + match_w, y + match_h/2,
-                           fill='#B0BEC5')
-
-        # Team B
-        txt_B = "TBD"
-        font_B = ('Segoe UI', font_roster_size)
-        if team_B:
-            if not team_B.startswith('W:'):
-                roster_B = TEAM_ROSTERS.get(team_B, ['?','?'])
-                txt_B = f"{team_B} ({roster_B[0]}/{roster_B[1]})"
-            else:
-                txt_B = team_B
-
-            if winner and team_B == winner:
-                txt_B += " \u2713"
-                font_B = ('Segoe UI', font_roster_size, 'bold')
-
-        canvas.create_text(x + 5, y + 3*match_h/4,
-                           text=txt_B, anchor='w', font=font_B)
         
+        bracket_type = match_data.get('is_winnerbracket', 'unknown')
+        
+        if bracket_type == 'both':
+            finals_matches[match_id] = match_data
+        elif bracket_type == 'false':
+            lb_matches[match_id] = match_data
+        elif bracket_type == 'true':
+            wb_matches[match_id] = match_data
+    
+    # Compact layout - stack matches vertically in a grid
+    MATCH_W = 200
+    MATCH_H = 50
+    MATCHES_PER_ROW = 4  # How many matches fit horizontally
+    COL_WIDTH = 240  # Space each match takes horizontally
+    ROW_HEIGHT = 80   # Space each match takes vertically
+    SECTION_SPACING = 100  # Space between sections
+    SIDE_PAD = 20
+    TOP_PAD = 40
+    
+    # Calculate dimensions
+    wb_rows = (len(wb_matches) + MATCHES_PER_ROW - 1) // MATCHES_PER_ROW if wb_matches else 0
+    lb_rows = (len(lb_matches) + MATCHES_PER_ROW - 1) // MATCHES_PER_ROW if lb_matches else 0
+    final_rows = (len(finals_matches) + MATCHES_PER_ROW - 1) // MATCHES_PER_ROW if finals_matches else 0
+    
+    total_width = (MATCHES_PER_ROW * COL_WIDTH) + (SIDE_PAD * 2)
+    total_height = (
+        (wb_rows * ROW_HEIGHT if wb_matches else 0) +
+        (SECTION_SPACING if wb_matches else 0) +
+        (lb_rows * ROW_HEIGHT if lb_matches else 0) +
+        (SECTION_SPACING if lb_matches else 0) +
+        (final_rows * ROW_HEIGHT if finals_matches else 0) +
+        TOP_PAD * 2 + 150
+    )
+    
+    canvas.config(scrollregion=(0, 0, total_width, total_height))
+    
+    match_positions = {}
+    y_pos = TOP_PAD
+    
+    # Winners Bracket
+    if wb_matches:
+        canvas.create_text(total_width // 2, y_pos, text="WINNER'S BRACKET",
+                          anchor='n', fill='#1976D2',
+                          font=('Segoe UI', 12, 'bold'))
+        y_pos += 35
+        
+        x_pos = SIDE_PAD
+        col_idx = 0
+        
+        for match_id in sorted(wb_matches.keys()):
+            match_data = wb_matches[match_id]
+            match_positions[match_id] = {'x': x_pos, 'y': y_pos, 'w': MATCH_W, 'h': MATCH_H}
+            draw_match_box_internal(canvas, match_id, match_data, x_pos, y_pos, MATCH_W, MATCH_H)
+            
+            col_idx += 1
+            x_pos += COL_WIDTH
+            
+            if col_idx >= MATCHES_PER_ROW:
+                col_idx = 0
+                x_pos = SIDE_PAD
+                y_pos += ROW_HEIGHT
+        
+        y_pos += SECTION_SPACING
+    
+    # Losers Bracket
+    if lb_matches:
+        canvas.create_text(total_width // 2, y_pos, text="LOSER'S BRACKET",
+                          anchor='n', fill='#D32F2F',
+                          font=('Segoe UI', 12, 'bold'))
+        y_pos += 35
+        
+        x_pos = SIDE_PAD
+        col_idx = 0
+        
+        for match_id in sorted(lb_matches.keys()):
+            match_data = lb_matches[match_id]
+            match_positions[match_id] = {'x': x_pos, 'y': y_pos, 'w': MATCH_W, 'h': MATCH_H}
+            draw_match_box_internal(canvas, match_id, match_data, x_pos, y_pos, MATCH_W, MATCH_H)
+            
+            col_idx += 1
+            x_pos += COL_WIDTH
+            
+            if col_idx >= MATCHES_PER_ROW:
+                col_idx = 0
+                x_pos = SIDE_PAD
+                y_pos += ROW_HEIGHT
+        
+        y_pos += SECTION_SPACING
+    
+    # Finals
+    if finals_matches:
+        canvas.create_text(total_width // 2, y_pos, text="FINALS",
+                          anchor='n', fill='#FFB300',
+                          font=('Segoe UI', 12, 'bold'))
+        y_pos += 35
+        
+        x_pos = SIDE_PAD
+        col_idx = 0
+        
+        for match_id in sorted(finals_matches.keys()):
+            match_data = finals_matches[match_id]
+            match_positions[match_id] = {'x': x_pos, 'y': y_pos, 'w': MATCH_W, 'h': MATCH_H}
+            draw_match_box_internal(canvas, match_id, match_data, x_pos, y_pos, MATCH_W, MATCH_H)
+            
+            col_idx += 1
+            x_pos += COL_WIDTH
+            
+            if col_idx >= MATCHES_PER_ROW:
+                col_idx = 0
+                x_pos = SIDE_PAD
+                y_pos += ROW_HEIGHT
+    
+    # Connection lines
+    for source_id, source_info in match_positions.items():
+        source_match = TOURNAMENT_STATE.get(source_id, {})
+        winner = source_match.get('winner') or source_match.get('champion')
+        
+        if not winner:
+            continue
+        
+        for dest_id, dest_info in match_positions.items():
+            dest_match = TOURNAMENT_STATE.get(dest_id, {})
+            teams = dest_match.get('teams', [None, None])
+            
+            for slot_idx, team_ref in enumerate(teams):
+                if isinstance(team_ref, str) and team_ref.startswith('W:'):
+                    if team_ref[2:] == source_id:
+                        src_x = source_info['x'] + source_info['w']
+                        src_y = source_info['y'] + source_info['h'] / 2
+                        
+                        dest_x = dest_info['x']
+                        dest_y = dest_info['y'] + (dest_info['h'] / 4 if slot_idx == 0 else 3 * dest_info['h'] / 4)
+                        
+                        mid_x = (src_x + dest_x) / 2
+                        canvas.create_line(src_x, src_y, mid_x, src_y,
+                                         mid_x, dest_y, dest_x, dest_y,
+                                         fill='#90A4AE', width=1.5, smooth=True)
+
+
+def draw_match_box_internal(canvas, match_id, match_data, x, y, w, h):
+    """Draw a single match box"""
+    global TEAM_ROSTERS, REPLAY_VIEW_ONLY, TOURNAMENT_RANKINGS, TOURNAMENT_STATE
+    
+    # Determine colors
+    fill_color = 'white'
+    outline = '#CCCCCC'
+    outline_width = 1.5
+    
+    if match_data.get('champion'):
+        fill_color = THEME['accent_gold']
+        outline = '#B8860B'
+        outline_width = 2.5
+    elif match_id == TOURNAMENT_STATE.get('active_match_id') and match_data['winner'] is None:
+        fill_color = '#FFF9C4'
+        outline = '#FBC02D'
+        outline_width = 2
+    elif match_data.get('winner_color') == 'red':
+        fill_color = '#FFCDD2'
+        outline = '#E53935'
+        outline_width = 2
+    elif match_data.get('winner_color') == 'blue':
+        fill_color = '#BBDEFB'
+        outline = '#1976D2'
+        outline_width = 2
+    
+    # Draw box
+    canvas.create_rectangle(x, y, x + w, y + h,
+                           fill=fill_color, outline=outline, width=outline_width,
+                           tags=(f'match_{match_id}',))
+    
+    # Match ID
+    canvas.create_text(x + 5, y + 3, text=f"{match_id}",
+                      anchor='nw', fill='#555555',
+                      font=('Segoe UI', 9, 'bold'))
+    
+    # Get winner
+    winner = match_data.get('winner') or match_data.get('champion')
+    
+    if REPLAY_VIEW_ONLY and match_id == 'GF' and not winner:
+        winner = TOURNAMENT_RANKINGS.get('1ST')
+    
+    # Teams
+    team_A = match_data['teams'][0]
+    team_B = match_data['teams'][1]
+    
+    # Team A
+    txt_A = "TBD"
+    color_A = '#000000'
+    weight_A = 'normal'
+    
+    if team_A:
+        if not team_A.startswith('W:'):
+            roster_A = TEAM_ROSTERS.get(team_A, ['?','?'])
+            txt_A = f"{team_A}({roster_A[0]}/{roster_A[1]})"
+        else:
+            txt_A = team_A
+        
+        if winner and team_A == winner:
+            txt_A += " ✓"
+            color_A = '#1B5E20'
+            weight_A = 'bold'
+    
+    canvas.create_text(x + 6, y + 15, text=txt_A,
+                      anchor='nw', fill=color_A,
+                      font=('Segoe UI', 10, weight_A))
+    
+    # Divider
+    canvas.create_line(x + 3, y + h/2, x + w - 3, y + h/2,
+                      fill='#BDBDBD', width=0.5)
+    
+    # Team B
+    txt_B = "TBD"
+    color_B = '#000000'
+    weight_B = 'normal'
+    
+    if team_B:
+        if not team_B.startswith('W:'):
+            roster_B = TEAM_ROSTERS.get(team_B, ['?','?'])
+            txt_B = f"{team_B}({roster_B[0]}/{roster_B[1]})"
+        else:
+            txt_B = team_B
+        
+        if winner and team_B == winner:
+            txt_B += " ✓"
+            color_B = '#1B5E20'
+            weight_B = 'bold'
+    
+    canvas.create_text(x + 6, y + h/2 + 5, text=txt_B,
+                      anchor='nw', fill=color_B,
+                      font=('Segoe UI', 10, weight_B))
+
 def open_full_bracket():
-    """Opens (or lifts) the large scrollable bracket window, adding an exit button in View Only mode."""
+    """Opens (or lifts) the large scrollable bracket window with improved styling and click-to-trace functionality."""
     global full_bracket_root, full_bracket_canvas, REPLAY_VIEW_ONLY
     
     if full_bracket_root is not None:
@@ -1532,39 +1771,60 @@ def open_full_bracket():
             full_bracket_root = None
 
     full_bracket_root = tk.Toplevel(main_root)
-    full_bracket_root.title("Moose Lodge Shuffleboard Bracket")
-    full_bracket_root.geometry("1000x700")
+    full_bracket_root.title("Tournament Bracket")
+    full_bracket_root.geometry("1200x800")
     full_bracket_root.configure(bg=THEME['bg_main'])
-    # This protocol is now the central exit point for the window
     full_bracket_root.protocol("WM_DELETE_WINDOW", on_full_bracket_close)
     
-    container = tk.Frame(full_bracket_root, bg=THEME['bg_main'])
-    container.pack(fill='both', expand=True)
-
+    # ========================================================================
+    # HEADER SECTION
+    # ========================================================================
+    
+    header = tk.Frame(full_bracket_root, bg=THEME['bg_card'], padx=20, pady=12, relief='raised', borderwidth=1)
+    header.pack(fill='x', side='top')
+    
+    # Left side: Title
+    left_header = tk.Frame(header, bg=THEME['bg_card'])
+    left_header.pack(side='left', fill='both', expand=True)
+    
+    tk.Label(left_header, text="🏆 Tournament Bracket", font=THEME['font_title'],
+             bg=THEME['bg_card'], fg=THEME['fg_primary']).pack(anchor='w')
+    
+    tk.Label(left_header, text="Full tournament bracket view", font=('Segoe UI', 9),
+             bg=THEME['bg_card'], fg=THEME['fg_secondary']).pack(anchor='w', pady=(3, 0))
+    
+    # Right side: Info/Buttons
+    right_header = tk.Frame(header, bg=THEME['bg_card'])
+    right_header.pack(side='right', padx=(20, 0))
+    
     if REPLAY_VIEW_ONLY:
-        # Add an explicit exit button when in view-only mode
-        exit_frame = tk.Frame(container, bg=THEME['bg_card'])
-        exit_frame.pack(fill='x', pady=(0, 5))
+        tk.Label(right_header, text="📁 VIEW ONLY MODE", font=THEME['font_bold'],
+                bg=THEME['bg_card'], fg='#FF9800').pack(side='left', padx=10)
         
-        exit_btn = tk.Button(exit_frame, text="EXIT APPLICATION (View Only)", 
-                             command=lambda: on_close(main_root),
-                             bg=THEME['btn_cancel'], fg='white', font=THEME['font_bold'], height=2,
-                             relief='flat', padx=10, pady=5)
-        exit_btn.pack(padx=10, pady=5, fill='x')
-        
-        # Place the canvas in a sub-container to separate it from the exit button
-        bracket_canvas_container = tk.Frame(container, bg=THEME['bg_main'])
-        bracket_canvas_container.pack(fill='both', expand=True, padx=5, pady=5)
+        tk.Button(right_header, text="Exit", command=lambda: on_close(main_root),
+                 bg=THEME['btn_cancel'], fg='white', font=THEME['font_main'],
+                 relief='flat', padx=15, pady=5).pack(side='left', padx=5)
     else:
-        bracket_canvas_container = container
+        # Add clear highlights button (will bind later after canvas is created)
+        clear_btn = tk.Button(right_header, text="Clear Highlights",
+                             bg=THEME['btn_cancel'], fg='white', font=THEME['font_main'],
+                             relief='flat', padx=15, pady=5)
+        clear_btn.pack(side='left', padx=5)
     
-    v_scroll = tk.Scrollbar(bracket_canvas_container, orient='vertical')
-    h_scroll = tk.Scrollbar(bracket_canvas_container, orient='horizontal')
+    # ========================================================================
+    # BRACKET CANVAS
+    # ========================================================================
     
-    full_bracket_canvas = tk.Canvas(bracket_canvas_container, bg=THEME['bg_canvas'], 
-                                    yscrollcommand=v_scroll.set, 
-                                    xscrollcommand=h_scroll.set,
-                                    highlightthickness=0)
+    container = tk.Frame(full_bracket_root, bg=THEME['bg_main'])
+    container.pack(fill='both', expand=True, padx=10, pady=10)
+    
+    v_scroll = tk.Scrollbar(container, orient='vertical')
+    h_scroll = tk.Scrollbar(container, orient='horizontal')
+    
+    full_bracket_canvas = tk.Canvas(container, bg=THEME['bg_canvas'],
+                                   yscrollcommand=v_scroll.set,
+                                   xscrollcommand=h_scroll.set,
+                                   highlightthickness=0, relief='flat')
     
     v_scroll.config(command=full_bracket_canvas.yview)
     h_scroll.config(command=full_bracket_canvas.xview)
@@ -1573,8 +1833,201 @@ def open_full_bracket():
     v_scroll.grid(row=0, column=1, sticky='ns')
     h_scroll.grid(row=1, column=0, sticky='ew')
     
-    bracket_canvas_container.grid_rowconfigure(0, weight=1)
-    bracket_canvas_container.grid_columnconfigure(0, weight=1)
+    container.grid_rowconfigure(0, weight=1)
+    container.grid_columnconfigure(0, weight=1)
+    
+    # Bind mousewheel for smooth scrolling
+    def _on_bracket_mousewheel(event):
+        if event.num == 4 or event.delta > 0:
+            full_bracket_canvas.yview_scroll(-3, "units")
+        elif event.num == 5 or event.delta < 0:
+            full_bracket_canvas.yview_scroll(3, "units")
+    
+    if sys.platform == 'linux':
+        full_bracket_canvas.bind("<Button-4>", _on_bracket_mousewheel)
+        full_bracket_canvas.bind("<Button-5>", _on_bracket_mousewheel)
+    else:
+        full_bracket_canvas.bind("<MouseWheel>", _on_bracket_mousewheel)
+    
+    # Bind clear button command now that canvas exists
+    if not REPLAY_VIEW_ONLY:
+        clear_btn.config(command=lambda: dehighlight_traces(full_bracket_canvas))
+    
+    # ========================================================================
+    # FOOTER
+    # ========================================================================
+    
+    footer = tk.Frame(full_bracket_root, bg=THEME['bg_card'], padx=20, pady=8, relief='raised', borderwidth=1)
+    footer.pack(fill='x', side='bottom')
+    
+    status_text = "Click a match to highlight teams and show player names • Use Clear Highlights button to reset" if not REPLAY_VIEW_ONLY else "Replay View Only - Click matches to trace teams"
+    tk.Label(footer, text=status_text, font=('Segoe UI', 8),
+            bg=THEME['bg_card'], fg=THEME['fg_secondary']).pack(anchor='w')
+    
+    # ========================================================================
+    # CLICK HANDLER FOR TRACING TEAMS
+    # ========================================================================
+    
+    def on_bracket_click(event):
+        """Handle clicks on the bracket to trace a team's path"""
+        canvas = event.widget
+        x, y = canvas.canvasx(event.x), canvas.canvasy(event.y)
+        
+        # Find all items at click location
+        clicked_items = canvas.find_overlapping(x-10, y-10, x+10, y+10)
+        
+        for item in clicked_items:
+            tags = canvas.gettags(item)
+            # Look for match ID tags (format: match_X, match_G1, etc)
+            for tag in tags:
+                if tag.startswith('match_'):
+                    match_id = tag[6:]  # Remove 'match_' prefix
+                    trace_team_path(canvas, match_id)
+                    return
+    
+    def trace_team_path(canvas, match_id):
+        """Highlight the winner's complete path to the clicked match"""
+        global TOURNAMENT_STATE
+        
+        if match_id not in TOURNAMENT_STATE:
+            return
+        
+        match_data = TOURNAMENT_STATE[match_id]
+        
+        # Clear previous traces
+        canvas.delete('trace_highlight')
+        canvas.delete('trace_text')
+        
+        # Get the winner of this match
+        winner = match_data.get('winner') or match_data.get('champion')
+        
+        # If no winner, check if it's GF/GGF with W: references
+        if not winner and match_id in ['GF', 'GGF']:
+            # For GF/GGF, try to resolve the teams to see if they're available
+            team_a = match_data.get('teams', [None, None])[0]
+            team_b = match_data.get('teams', [None, None])[1]
+            
+            resolved_a = resolve_team_name(team_a)
+            resolved_b = resolve_team_name(team_b)
+            
+            if resolved_a and resolved_b:
+                # Both teams are available, but no winner declared yet
+                flash_effect(canvas, match_id, '#FFD700')
+                return
+        
+        # If still no winner, flash and reset
+        if not winner:
+            flash_effect(canvas, match_id, '#FFD700')
+            return
+        
+        # Highlight the clicked match in gold
+        highlight_match_box(canvas, match_id, '#FFD700', None)
+        
+        # Highlight all previous matches the winner played in, with their names
+        highlight_team_matches(canvas, winner, '#FFD700')
+
+    def flash_effect(canvas, match_id, color):
+        """Flash the match box and then clear"""
+        
+        for item_id in canvas.find_all():
+            tags = canvas.gettags(item_id)
+            if f'match_{match_id}' in tags:
+                coords = canvas.coords(item_id)
+                if coords and len(coords) >= 4:
+                    x1, y1, x2, y2 = coords[0], coords[1], coords[2], coords[3]
+                    
+                    # Flash 3 times
+                    for i in range(3):
+                        # Show color
+                        canvas.create_rectangle(x1, y1, x2, y2,
+                                              fill=color, outline='', tags=('trace_highlight',))
+                        canvas.create_rectangle(x1, y1, x2, y2,
+                                              fill='', outline='#263238', width=2, tags=('trace_highlight',))
+                        canvas.update()
+                        canvas.after(200)
+                        
+                        # Clear
+                        canvas.delete('trace_highlight')
+                        canvas.update()
+                        canvas.after(200)
+                break
+    
+    def highlight_team_matches(canvas, team_name, color):
+        """Highlight all matches this team played in, with their names in each box"""
+        global TOURNAMENT_STATE, TEAM_ROSTERS
+        
+        if not team_name:
+            return
+        
+        for match_id, match_data in TOURNAMENT_STATE.items():
+            if not isinstance(match_data, dict) or 'teams' not in match_data:
+                continue
+            
+            team_a = match_data.get('teams', [None, None])[0]
+            team_b = match_data.get('teams', [None, None])[1]
+            
+            # Check if this team appears in this match
+            if team_name in [team_a, team_b]:
+                highlight_match_box(canvas, match_id, color, team_name)
+    
+    def highlight_match_box(canvas, match_id, color, team_name):
+        """Highlight a match box with colored background and team names"""
+        global TEAM_ROSTERS
+        
+        # For GF/GGF, resolve team references to get actual names
+        if match_id in ['GF', 'GGF'] and team_name and team_name.startswith('W:'):
+            team_name = resolve_team_name(team_name)
+        
+        found = False
+        for item_id in canvas.find_all():
+            tags = canvas.gettags(item_id)
+            if f'match_{match_id}' in tags:
+                coords = canvas.coords(item_id)
+                if coords and len(coords) >= 4:
+                    x1, y1, x2, y2 = coords[0], coords[1], coords[2], coords[3]
+                    
+                    # Draw colored background
+                    canvas.create_rectangle(x1, y1, x2, y2,
+                                          fill=color, outline='', tags=('trace_highlight',))
+                    
+                    # Draw border on top
+                    canvas.create_rectangle(x1, y1, x2, y2,
+                                          fill='', outline='#263238', width=2, tags=('trace_highlight',))
+                    
+                    # Add team member names if we have a team name
+                    if team_name and team_name in TEAM_ROSTERS:
+                        roster = TEAM_ROSTERS.get(team_name, ['?', '?'])
+                        
+                        # Add player names with larger font to fill the box
+                        text_x = (x1 + x2) / 2
+                        
+                        # Top player name
+                        canvas.create_text(text_x, y1 + (y2 - y1) / 4,
+                                         text=roster[0],
+                                         font=('Segoe UI', 9, 'bold'),
+                                         fill='black', anchor='center',
+                                         tags=('trace_text',))
+                        
+                        # Bottom player name
+                        canvas.create_text(text_x, y1 + 3 * (y2 - y1) / 4,
+                                         text=roster[1],
+                                         font=('Segoe UI', 9, 'bold'),
+                                         fill='black', anchor='center',
+                                         tags=('trace_text',))
+                    
+                    found = True
+                break
+    
+    def dehighlight_traces(canvas):
+        """Clear all trace highlights"""
+        canvas.delete('trace_highlight')
+        canvas.delete('trace_text')
+    
+    # Bind click on canvas background to dehighlight
+    full_bracket_canvas.bind("<Button-3>", dehighlight_traces)  # Right-click to dehighlight
+    
+    # Bind click event
+    full_bracket_canvas.bind("<Button-1>", on_bracket_click)
     
     draw_large_bracket(full_bracket_canvas)
 
@@ -1728,6 +2181,7 @@ def handle_match_resolution(winner, loser, winning_color, match_id):
             reset_game_id = next((k for k in TOURNAMENT_STATE if k == 'GGF'), 'GGF')
             
             if reset_game_id in TOURNAMENT_STATE:
+                # Use the actual names (winner/loser) since they're already resolved from GF
                 TOURNAMENT_STATE[reset_game_id]['teams'] = [winner, loser]
                 TOURNAMENT_STATE[reset_game_id]['is_reset'] = True
                 
@@ -2249,110 +2703,158 @@ def setup_main_gui(root):
     setup_scoreboard(root, team_A, team_B) 
 
 def show_draw_summary(player_draws, TEAMS, TEAM_ROSTERS, num_teams, total_pool, prizes):
-    """Displays the player draw, team rosters, and prize pool before launching the main GUI."""
+    """Displays the player draw, team rosters, and prize pool with improved styling."""
     
-    # --- Theme Constants ---
-    BG_MAIN = "#121212"
-    BG_CARD = "#1E1E1E"
-    FG_TEXT = "#FFFFFF"
-    FG_ACCENT = "#4CAF50" # Green for headers
-
     summary_root = tk.Tk()
     summary_root.title("Tournament Draw & Prize Pool")
-    summary_root.geometry("550x750")
-    summary_root.configure(bg=BG_MAIN)
-    summary_root.protocol("WM_DELETE_WINDOW", lambda: on_close(summary_root)) 
+    summary_root.geometry("700x850")
+    summary_root.configure(bg=THEME['bg_main'])
+    summary_root.protocol("WM_DELETE_WINDOW", lambda: on_close(summary_root))
     
-    log_message("Displaying Draw Summary and Prize Pool.") 
+    log_message("Displaying Draw Summary and Prize Pool.")
     
-    # Header
-    tk.Label(summary_root, text="Tournament Summary", font=('Segoe UI', 18, 'bold'), 
-             bg=BG_MAIN, fg=FG_ACCENT).pack(pady=(20, 10))
+    # ========================================================================
+    # HEADER
+    # ========================================================================
+    
+    header = tk.Frame(summary_root, bg=THEME['bg_card'], padx=25, pady=18)
+    header.pack(fill='both', expand=False, padx=0, pady=0)
+    
+    tk.Label(header, text="Tournament Summary", font=THEME['font_title'],
+             bg=THEME['bg_card'], fg=THEME['fg_primary']).pack(anchor='w')
+    
+    tk.Label(header, text="Draw results, team rosters & prize pool", font=('Segoe UI', 9),
+             bg=THEME['bg_card'], fg=THEME['fg_secondary']).pack(anchor='w', pady=(5, 0))
 
-    # 1. Draw Results
-    draw_frame = tk.Frame(summary_root, padx=15, pady=10, bg=BG_CARD)
-    draw_frame.pack(fill='both', expand=True, padx=20, pady=5)
+    # ========================================================================
+    # MAIN SCROLLABLE CONTENT
+    # ========================================================================
     
-    tk.Label(draw_frame, text="Player Draw Results", font=('Segoe UI', 11, 'bold'), 
-             bg=BG_CARD, fg="#2196F3", anchor='w').pack(fill='x')
+    # Create scrollable frame
+    canvas_frame = tk.Frame(summary_root, bg=THEME['bg_main'])
+    canvas_frame.pack(fill='both', expand=True, padx=0, pady=0)
     
-    draw_scroll = tk.Scrollbar(draw_frame)
-    draw_scroll.pack(side='right', fill='y')
+    canvas = tk.Canvas(canvas_frame, bg=THEME['bg_main'], highlightthickness=0)
+    scrollbar = tk.Scrollbar(canvas_frame, orient="vertical", command=canvas.yview)
+    scrollable_frame = tk.Frame(canvas, bg=THEME['bg_main'], width=680)
     
-    draw_text_widget = tk.Text(draw_frame, height=6, bg="#2D2D2D", fg="white", 
-                               font=('Consolas', 9), relief='flat', yscrollcommand=draw_scroll.set)
-    draw_text_widget.pack(fill='both', expand=True, pady=5)
-    draw_scroll.config(command=draw_text_widget.yview)
-
+    scrollable_frame.bind(
+        "<Configure>",
+        lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+    )
+    
+    canvas.create_window((0, 0), window=scrollable_frame, anchor="nw", width=680)
+    canvas.configure(yscrollcommand=scrollbar.set, yscrollincrement=5)
+    
+    scrollbar.pack(side="right", fill="y")
+    canvas.pack(side="left", fill="both", expand=True)
+    
+    # ========================================================================
+    # 1. PLAYER DRAW RESULTS SECTION
+    # ========================================================================
+    
+    draw_section = tk.Frame(scrollable_frame, bg=THEME['bg_card'], padx=15, pady=12, relief='raised', borderwidth=1)
+    draw_section.pack(fill='both', expand=True, padx=0, pady=(0, 12))
+    
+    # Section header
+    header_row = tk.Frame(draw_section, bg=THEME['bg_card'])
+    header_row.pack(fill='x', pady=(0, 10))
+    
+    tk.Label(header_row, text="🎲 Player Draw Results", font=THEME['font_bold'],
+             bg=THEME['bg_card'], fg='#2196F3').pack(anchor='w')
+    
+    tk.Label(header_row, text=f"{len(player_draws)} players drawn", font=('Segoe UI', 8),
+             bg=THEME['bg_card'], fg=THEME['fg_secondary']).pack(anchor='w', pady=(3, 0))
+    
+    # Draw content
     draw_content = ""
     for draw_num, player_name in player_draws:
-        draw_content += f"Draw #{draw_num}: {player_name}\n"
-   
-    draw_text_widget.insert('1.0', draw_content)
-    draw_text_widget.config(state='disabled')
+        draw_content += f"  #{draw_num:2d}  {player_name}\n"
+    
+    draw_text = tk.Text(draw_section, height=8, bg=THEME['bg_main'], fg=THEME['fg_primary'],
+                       font=('Consolas', 9), relief='flat', borderwidth=1)
+    draw_text.pack(fill='both', expand=True)
+    draw_text.insert('1.0', draw_content)
+    draw_text.config(state='disabled')
 
-    # 2. Team Rosters
-    team_frame = tk.Frame(summary_root, padx=15, pady=10, bg=BG_CARD)
-    team_frame.pack(fill='both', expand=True, padx=20, pady=5)
+    # ========================================================================
+    # 2. TEAM ROSTERS SECTION
+    # ========================================================================
     
-    tk.Label(team_frame, text="Team Rosters & Seeding", font=('Segoe UI', 11, 'bold'),
-             bg=BG_CARD, fg="#FFC107", anchor='w').pack(fill='x')
+    team_section = tk.Frame(scrollable_frame, bg=THEME['bg_card'], padx=15, pady=12, relief='raised', borderwidth=1)
+    team_section.pack(fill='both', expand=True, padx=0, pady=(0, 12))
     
-    team_text_widget = tk.Text(team_frame, height=6, bg="#2D2D2D", fg="white", 
-                               font=('Consolas', 9), relief='flat')
-    team_text_widget.pack(fill='both', expand=True, pady=5)
+    # Section header
+    header_row2 = tk.Frame(team_section, bg=THEME['bg_card'])
+    header_row2.pack(fill='x', pady=(0, 10))
     
+    tk.Label(header_row2, text="👥 Team Rosters & Seeding", font=THEME['font_bold'],
+             bg=THEME['bg_card'], fg=THEME['accent_gold']).pack(anchor='w')
+    
+    tk.Label(header_row2, text=f"{num_teams} teams", font=('Segoe UI', 8),
+             bg=THEME['bg_card'], fg=THEME['fg_secondary']).pack(anchor='w', pady=(3, 0))
+    
+    # Team content
     team_content = ""
     for i, team_name in enumerate(TEAMS):
         roster = TEAM_ROSTERS.get(team_name, ["N/A", "N/A"])
-        team_content += f"Team {i+1} (T{i+1}): {roster[0]} & {roster[1]}\n"
+        team_content += f"  T{i+1}  {roster[0]} & {roster[1]}\n"
     
-    team_text_widget.insert('1.0', team_content)
-    team_text_widget.config(state='disabled')
+    team_text = tk.Text(team_section, height=8, bg=THEME['bg_main'], fg=THEME['fg_primary'],
+                       font=('Consolas', 9), relief='flat', borderwidth=1)
+    team_text.pack(fill='both', expand=True)
+    team_text.insert('1.0', team_content)
+    team_text.config(state='disabled')
+
+    # ========================================================================
+    # 3. PRIZE POOL SECTION
+    # ========================================================================
     
-    # 3. Prize Pool
-    prize_frame = tk.Frame(summary_root, padx=15, pady=10, bg=BG_CARD)
-    prize_frame.pack(fill='both', expand=True, padx=20, pady=5)
+    prize_section = tk.Frame(scrollable_frame, bg=THEME['bg_card'], padx=15, pady=12, relief='raised', borderwidth=1)
+    prize_section.pack(fill='both', expand=True, padx=0, pady=(0, 0))
     
-    tk.Label(prize_frame, text="Prize Pool", font=('Segoe UI', 11, 'bold'),
-             bg=BG_CARD, fg="#FFC107", anchor='w').pack(fill='x')
+    # Section header
+    header_row3 = tk.Frame(prize_section, bg=THEME['bg_card'])
+    header_row3.pack(fill='x', pady=(0, 10))
     
+    tk.Label(header_row3, text="💰 Prize Pool", font=THEME['font_bold'],
+             bg=THEME['bg_card'], fg=THEME['accent_gold']).pack(anchor='w')
+    
+    # Prize content with better formatting
     per_player_1st = int(prizes.get('1st', 0) / 2)
     per_player_2nd = int(prizes.get('2nd', 0) / 2)
     
-    prize_text = f"Total Pool: ${total_pool}\n\n"
-    prize_text += f"1st Place: ${prizes.get('1st', 0)} (${per_player_1st} per player)\n"
-    prize_text += f"2nd Place: ${prizes.get('2nd', 0)} (${per_player_2nd} per player)\n"
+    prize_content = f"  Total Pool: ${total_pool}\n\n"
+    prize_content += f"  🥇 1st Place: ${prizes.get('1st', 0):>6} (${per_player_1st}/player)\n"
+    prize_content += f"  🥈 2nd Place: ${prizes.get('2nd', 0):>6} (${per_player_2nd}/player)\n"
     
     if prizes.get('3rd') is not None and prizes.get('3rd') > 0:
         per_player_3rd = int(prizes.get('3rd', 0) / 2)
-        prize_text += f"3rd Place: ${prizes.get('3rd', 0)} (${per_player_3rd} per player)\n"
+        prize_content += f"  🥉 3rd Place: ${prizes.get('3rd', 0):>6} (${per_player_3rd}/player)\n"
     else:
-        prize_text += f"3rd Place: Handshake!\n"
-
-    prize_text_widget = tk.Text(
-        prize_frame,
-        height=6,
-        bg="#2D2D2D",
-        fg="white",
-        font=('Consolas', 9),
-        relief='flat'
-    )
-    prize_text_widget.pack(fill='both', expand=True, pady=5)
-
-    prize_text_widget.insert('1.0', prize_text)
-    prize_text_widget.config(state='disabled')
-
-    start_button = tk.Button(summary_root, text="Start Tournament", 
-                             command=summary_root.quit, 
-                             bg=THEME['btn_confirm'], fg='white', font=('Segoe UI', 12, 'bold'), height=2,
-                             relief='flat', padx=20)
-    start_button.pack(fill='x', padx=20, pady=20)
+        prize_content += f"  🥉 3rd Place: Handshake!\n"
     
-    summary_root.mainloop() 
-    summary_root.destroy()
-    log_message("Draw Summary window closed. Proceeding to main GUI.") 
-    return
+    prize_text = tk.Text(prize_section, height=5, bg=THEME['bg_main'], fg=THEME['fg_primary'],
+                        font=('Consolas', 10), relief='flat', borderwidth=1)
+    prize_text.pack(fill='both', expand=True)
+    prize_text.insert('1.0', prize_content)
+    prize_text.config(state='disabled')
+
+    # ========================================================================
+    # START BUTTON
+    # ========================================================================
+    
+    button_frame = tk.Frame(summary_root, bg=THEME['bg_main'], pady=12)
+    button_frame.pack(fill='x', padx=0)
+    
+    start_button = tk.Button(button_frame, text="✓ Start Tournament",
+                            command=summary_root.destroy,
+                            bg=THEME['btn_confirm'], fg='white',
+                            font=THEME['font_header'], relief='flat',
+                            padx=30, pady=8)
+    start_button.pack(fill='x', padx=20)
+
+    summary_root.mainloop()
 
 def generate_dynamic_bracket(teams, config=None):
     """
@@ -2383,7 +2885,8 @@ def generate_dynamic_bracket(teams, config=None):
             'teams': [None, None], 
             'winner': None,
             'winner_color': None,
-            'is_reset': match_id == 'GGF' 
+            'is_reset': match_id == 'GGF',
+            'is_winnerbracket': match_config.get('is_winnerbracket', 'unknown')
         }
         
     for match_id, match_data in config.items():
@@ -2440,104 +2943,442 @@ def toggle_log_game(log_var):
 
 def get_player_setup_dialog(parent):
     """
-    Modern, borderless 'Card' UI for player setup.
-    Features inset input fields, clean borderless checkboxes, and an All Paid toggle.
+    Modern, borderless 'Card' UI for player setup with enhanced features.
+    Features:
+    - Real-time status banner with progress tracking
+    - Team management controls (Add/Remove teams)
+    - Column headers for clarity
+    - Color-coded rows (green for paid, red for missing)
+    - Status indicators (✓ Ready, ⏳ Waiting, ⚠️ Missing)
+    - Smart button state management
+    - Improved error handling with summary messages
     """
-    log_message("Opening refined modern player setup dialog.") 
+    log_message("Opening enhanced modern player setup dialog.")
     
     dialog = tk.Toplevel(parent)
     dialog.title("Tournament Setup")
-    dialog.geometry("650x850") 
+    dialog.geometry("750x950")
     dialog.configure(bg=THEME['bg_main'])
-    dialog.grab_set() 
+    dialog.grab_set()
     
-    result = None 
+    result = None
     is_manual_draw = tk.BooleanVar(value=False)
     log_game_var = tk.BooleanVar(value=LOG_GAME_TO_FILE)
-    all_paid_var = tk.BooleanVar(value=False) # Tracks the "All Paid" state
-    current_player_count = MIN_PLAYERS 
+    all_paid_var = tk.BooleanVar(value=False)
+    current_player_count = MIN_PLAYERS
     player_entries = []
+    status_banner_refs = None
+    header_frame_ref = None
+    btn_add = None
+    btn_remove = None
+    lbl_count = None
 
     def _on_mousewheel(event):
-        # 1. Check if the content actually needs scrolling
-        content_height = canvas.bbox("all")[3]
+        """Handle mousewheel scrolling"""
+        content_height = canvas.bbox("all")[3] if canvas.bbox("all") else 0
         visible_height = canvas.winfo_height()
         if content_height <= visible_height:
             return
 
-        # 2. Handle different OS event types
-        if event.num == 4 or event.delta > 0: # Scroll Up
+        if event.num == 4 or event.delta > 0:
             canvas.yview_scroll(-1, "units")
-        elif event.num == 5 or event.delta < 0: # Scroll Down
+        elif event.num == 5 or event.delta < 0:
             canvas.yview_scroll(1, "units")
 
-    # --- Styling Helper ---
+    # ========================================================================
+    # HEADER SECTION WITH ACTION BUTTONS
+    # ========================================================================
+
+    header = tk.Frame(dialog, bg=THEME['bg_card'], padx=25, pady=12)
+    header.pack(fill='x', padx=20, pady=(15, 10))
+    
+    # Left side: Title
+    left_header = tk.Frame(header, bg=THEME['bg_card'])
+    left_header.pack(side='left', fill='both', expand=True)
+    
+    tk.Label(left_header, text="Configure Players", font=THEME['font_title'],
+             bg=THEME['bg_card'], fg=THEME['fg_primary']).pack(anchor='w')
+    
+    tk.Label(left_header, text="Set up your tournament teams", font=('Segoe UI', 10),
+             bg=THEME['bg_card'], fg=THEME['fg_secondary']).pack(anchor='w', pady=(5, 0))
+    
+    # Right side: Action buttons (will be updated later)
+    button_frame = tk.Frame(header, bg=THEME['bg_card'])
+    button_frame.pack(side='right', padx=(20, 0))
+    
+    # These will be created after confirm function is defined
+    continue_btn = None
+    cancel_btn = None
+
+    # ========================================================================
+    # STATUS BANNER
+    # ========================================================================
+    
+    def _create_status_banner():
+        """Create status banner with real-time progress tracking"""
+        nonlocal status_banner_refs
+        
+        status_frame = tk.Frame(dialog, bg=THEME['bg_card'], padx=15, pady=8,
+                               relief='raised', borderwidth=1)
+        status_frame.pack(fill='x', padx=20, pady=(8, 12))
+        
+        # Left side: count and info
+        left_frame = tk.Frame(status_frame, bg=THEME['bg_card'])
+        left_frame.pack(side='left', fill='both', expand=True)
+        
+        count_circle = tk.Label(left_frame, text="0", font=('Segoe UI', 14, 'bold'),
+                               bg=THEME['accent_gold'], fg='black', width=3, height=1,
+                               padx=5, pady=2, relief='raised', borderwidth=2)
+        count_circle.pack(side='left', padx=(5, 15))
+        
+        status_text_label = tk.Label(left_frame, text="Total Players: 0 | Paid: 0/0",
+                                    font=THEME['font_header'], bg=THEME['bg_card'],
+                                    fg=THEME['fg_primary'])
+        status_text_label.pack(side='left', fill='x', expand=True)
+        
+        # Right side: progress bar
+        right_frame = tk.Frame(status_frame, bg=THEME['bg_card'])
+        right_frame.pack(side='right', padx=10)
+        
+        tk.Label(right_frame, text="Progress", font=THEME['font_main'],
+                bg=THEME['bg_card'], fg=THEME['fg_secondary']).pack(pady=(0, 3))
+        
+        progress_bar = tk.Canvas(right_frame, width=150, height=8, bg=THEME['bg_main'],
+                                highlightthickness=1, borderwidth=0,
+                                highlightbackground=THEME['fg_secondary'])
+        progress_bar.pack()
+        
+        def update_status():
+            """Update banner with current state"""
+            if not player_entries:
+                return
+            
+            total = len(player_entries)
+            paid = sum(1 for _, paid_var, _, _ in player_entries if paid_var.get())
+            
+            count_circle.config(text=str(total))
+            
+            if paid < total:
+                status_text_label.config(
+                    text=f"Total Players: {total} | Paid: {paid}/{total}  ⚠️ {total - paid} awaiting"
+                )
+            else:
+                status_text_label.config(
+                    text=f"Total Players: {total} | Paid: {paid}/{total}  ✓ All set!"
+                )
+            
+            progress_bar.delete('all')
+            if total > 0:
+                progress_width = (paid / total) * 150
+                progress_bar.create_rectangle(0, 0, progress_width, 8,
+                                            fill=THEME['accent_gold'],
+                                            outline=THEME['accent_gold'])
+        
+        status_banner_refs = {'update': update_status, 'frame': status_frame}
+
+    # ========================================================================
+    # COLUMN HEADERS
+    # ========================================================================
+    
+    def _create_column_headers():
+        """Create column headers above player list"""
+        nonlocal header_frame_ref
+        
+        header_frame = tk.Frame(input_container, bg=THEME['bg_canvas'], padx=15, pady=4)
+        header_frame.pack(fill='x', padx=15, pady=(0, 4))
+        
+        tk.Label(header_frame, text="P#", width=4, font=THEME['font_bold'],
+                bg=THEME['bg_canvas'], fg=THEME['fg_secondary']).pack(side='left', padx=5)
+        
+        if is_manual_draw.get():
+            tk.Label(header_frame, text="Draw", width=5, font=THEME['font_bold'],
+                    bg=THEME['bg_canvas'], fg=THEME['fg_secondary']).pack(side='left', padx=5)
+        
+        tk.Label(header_frame, text="Player Name", font=THEME['font_bold'],
+                bg=THEME['bg_canvas'], fg=THEME['fg_secondary']).pack(side='left',
+                                                                       expand=True,
+                                                                       fill='x', padx=5)
+        
+        tk.Label(header_frame, text="Paid", width=8, font=THEME['font_bold'],
+                bg=THEME['bg_canvas'], fg=THEME['fg_secondary']).pack(side='right', padx=5)
+        
+        tk.Label(header_frame, text="Status", width=10, font=THEME['font_bold'],
+                bg=THEME['bg_canvas'], fg=THEME['fg_secondary']).pack(side='right', padx=5)
+        
+        header_frame_ref = header_frame
+
+    # ========================================================================
+    # VISUALS AND UPDATES
+    # ========================================================================
+
     def update_visuals(event=None):
-        current_names = [w[0].get().strip() for w in player_entries]
+        """Update visual state of all player entries and button state"""
+        # Skip if we're in the middle of rebuilding rows
+        if not player_entries:
+            return
+        
         from collections import Counter
+        current_names = [w[0].get().strip() for w in player_entries]
         counts = Counter(current_names)
+        
+        # Get all draw numbers if manual draw is enabled
+        draw_numbers = []
+        if is_manual_draw.get():
+            for widgets in player_entries:
+                draw_entry = widgets[2]
+                if draw_entry:
+                    try:
+                        draw_num = int(draw_entry.get().strip())
+                        # Only count valid range numbers
+                        if 1 <= draw_num <= current_player_count:
+                            draw_numbers.append(draw_num)
+                    except (ValueError, AttributeError):
+                        pass
+        
+        draw_counts = Counter(draw_numbers) if draw_numbers else Counter()
         
         for widgets in player_entries:
             name_entry, paid_var = widgets[0], widgets[1]
             val = name_entry.get().strip()
             
             if val and counts[val] > 1:
-                name_entry.config(bg='#711717', fg='white') # Error Red
+                name_entry.config(bg='#711717', fg='white')
             elif not paid_var.get():
-                name_entry.config(bg='#CED119', fg='black') # Unpaid Deep Orange
+                name_entry.config(bg='#CED119', fg='black')
             else:
-                # Inset style: Darker than the surrounding card
                 name_entry.config(bg=THEME['bg_main'], fg=THEME['fg_primary'])
+        
+        # Update status banner
+        if status_banner_refs:
+            status_banner_refs['update']()
+        
+        # Update continue button state: only enable if all conditions met
+        if continue_btn:
+            can_continue = True
+            
+            if not player_entries:
+                can_continue = False
+            else:
+                for i, widgets in enumerate(player_entries):
+                    name_entry, paid_var, draw_entry, status_label = widgets
+                    name = name_entry.get().strip()
+                    is_paid = paid_var.get()
+                    
+                    # Check 1: Must have a name
+                    if not name:
+                        can_continue = False
+                        break
+                    
+                    # Check 2: No default names (Player 1, Player 2, etc)
+                    if name.lower().startswith('player '):
+                        can_continue = False
+                        break
+                    
+                    # Check 3: Must be marked as paid
+                    if not is_paid:
+                        can_continue = False
+                        break
+                    
+                    # Check 4: If manual draw enabled, must have valid, unique, and in-range draw number
+                    if is_manual_draw.get() and draw_entry:
+                        try:
+                            draw_num = int(draw_entry.get().strip())
+                            
+                            # Check if draw number is in valid range
+                            if draw_num < 1 or draw_num > current_player_count:
+                                can_continue = False
+                                break
+                            
+                            # Check if this draw number is unique
+                            if draw_counts[draw_num] > 1:
+                                can_continue = False
+                                break
+                        except (ValueError, AttributeError):
+                            can_continue = False
+                            break
+            
+            try:
+                if can_continue:
+                    continue_btn.config(state='normal', fg='white')
+                else:
+                    continue_btn.config(state='disabled', fg='#666666')
+            except:
+                pass  # Button not created yet, skip
 
-    # --- Toggle All Paid Function ---
     def toggle_all_paid():
+        """Toggle all players as paid/unpaid with visual feedback"""
         state = all_paid_var.get()
+        
+        # Set the paid variable for each player
         for widgets in player_entries:
-            widgets[1].set(state)  # widgets[1] is the paid_var
+            widgets[1].set(state)
+        
+        # Update visuals after all are set
         update_visuals()
 
-    # --- Row Construction ---
+    # ========================================================================
+    # ROW CONSTRUCTION (IMPROVED)
+    # ========================================================================
+
     def create_player_row(parent_frame, idx, initial_data=None):
-        row_bg = THEME['bg_card']
-        row_frame = tk.Frame(parent_frame, bg=row_bg, pady=4)
+        """Create enhanced player row with status indicators"""
+        # Determine initial row background
+        if initial_data:
+            name = initial_data.get('name', '').strip()
+            paid = initial_data.get('paid', False)
+            
+            if not name:
+                row_bg = '#3d2424'
+            elif paid:
+                row_bg = '#243d2d'
+            else:
+                row_bg = THEME['bg_card']
+        else:
+            row_bg = THEME['bg_card']
+        
+        row_frame = tk.Frame(parent_frame, bg=row_bg, pady=7, padx=12)
         row_frame.pack(fill='x', pady=2, padx=15)
         
-        # Player ID Label
+        original_bg = row_bg
+        
+        # Hover effects
+        def on_hover_enter(event):
+            current_bg = row_frame.cget('bg')
+            hover_bg = '#4a5568' if current_bg == THEME['bg_card'] else current_bg
+            row_frame.config(bg=hover_bg)
+        
+        def on_hover_leave(event):
+            row_frame.config(bg=original_bg)
+        
+        row_frame.bind('<Enter>', on_hover_enter)
+        row_frame.bind('<Leave>', on_hover_leave)
+        
+        # P# Label
         tk.Label(row_frame, text=f"P{idx+1:02}", width=4, font=THEME['font_bold'],
                  bg=row_bg, fg=THEME['fg_secondary']).pack(side='left', padx=5)
 
+        # Draw Entry (conditional)
         draw_entry = None
         if is_manual_draw.get():
-            draw_entry = tk.Entry(row_frame, width=5, justify='center', font=THEME['font_main'],
-                                  bg=THEME['bg_main'], fg=THEME['fg_primary'], 
-                                  insertbackground='white', relief='flat')
+            draw_entry = tk.Entry(row_frame, width=5, justify='center',
+                                 font=THEME['font_main'], bg=THEME['bg_main'],
+                                 fg=THEME['fg_primary'], insertbackground='white',
+                                 relief='flat', borderwidth=1)
             draw_entry.pack(side='left', padx=5)
             val = initial_data.get('draw') if initial_data else str(idx + 1)
             draw_entry.insert(0, val)
+            # Bind to update status when draw number changes
+            draw_entry.bind('<KeyRelease>', lambda e: update_row_status())
 
-        # Name Entry - Inset Look
-        name_entry = tk.Entry(row_frame, bg=THEME['bg_main'], fg=THEME['fg_primary'], 
-                              insertbackground='white', relief='flat', font=THEME['font_main'])
-        name_entry.pack(side='left', fill='x', expand=True, padx=5, ipady=8) 
+        # Name Entry
+        name_entry = tk.Entry(row_frame, bg=THEME['bg_main'], fg=THEME['fg_primary'],
+                             insertbackground='white', relief='flat',
+                             font=THEME['font_main'], borderwidth=1)
+        name_entry.pack(side='left', fill='x', expand=True, padx=5, ipady=8)
         
         name_val = initial_data.get('name') if initial_data else f"Player {idx+1}"
         name_entry.insert(0, name_val)
-        name_entry.bind('<KeyRelease>', update_visuals)
 
-        # Paid Checkbox - Borderless
+        # Paid Checkbox
         paid_var = tk.BooleanVar(value=initial_data.get('paid', False) if initial_data else False)
-        chk = tk.Checkbutton(row_frame, text="Paid", variable=paid_var, 
-                             bg=row_bg, fg=THEME['fg_secondary'], 
-                             selectcolor=THEME['bg_main'], 
-                             activebackground=row_bg, 
-                             activeforeground=THEME['fg_primary'],
-                             borderwidth=0,          
-                             highlightthickness=0,   
-                             padx=10, 
-                             command=update_visuals)
-        chk.pack(side='right')
+        
+        chk = tk.Checkbutton(row_frame, text="✓ Paid", variable=paid_var,
+                            bg=row_bg, fg=THEME['fg_secondary'],
+                            selectcolor=row_bg,
+                            activebackground=row_bg,
+                            activeforeground=THEME['accent_gold'],
+                            font=THEME['font_main'],
+                            borderwidth=0,
+                            highlightthickness=0,
+                            padx=5)
+        chk.pack(side='right', padx=5)
 
-        # Apply robust scrolling to the row and its sub-widgets
+        # Status Indicator
+        status_label = tk.Label(row_frame, text="", font=THEME['font_main'],
+                               bg=row_bg, fg=THEME['accent_gold'], width=12)
+        status_label.pack(side='right', padx=5)
+
+        # Update Row Status Function
+        def update_row_status():
+            """Update row appearance based on name and payment status"""
+            nonlocal original_bg, row_bg
+            
+            name = name_entry.get().strip()
+            is_paid = paid_var.get()
+            draw_num = None
+            draw_valid = True
+            draw_duplicate = False
+            draw_out_of_range = False
+            
+            # Check draw number if manual draw is enabled
+            if is_manual_draw.get() and draw_entry:
+                try:
+                    draw_num = int(draw_entry.get().strip())
+                    # Check if draw number is in valid range (1 to current_player_count)
+                    if draw_num < 1 or draw_num > current_player_count:
+                        draw_out_of_range = True
+                    else:
+                        # Check if this draw number appears in other rows
+                        draw_count = 0
+                        for other_widgets in player_entries:
+                            other_draw_entry = other_widgets[2]
+                            if other_draw_entry:
+                                try:
+                                    other_draw_num = int(other_draw_entry.get().strip())
+                                    if other_draw_num == draw_num:
+                                        draw_count += 1
+                                except (ValueError, AttributeError):
+                                    pass
+                        if draw_count > 1:
+                            draw_duplicate = True
+                except (ValueError, AttributeError):
+                    draw_valid = False
+            
+            if not name:
+                new_bg = '#3d2424'
+                status_text = '⚠️ Missing'
+                status_color = '#ff6b6b'
+            elif not is_paid:
+                new_bg = THEME['bg_card']
+                status_text = '⏳ Waiting'
+                status_color = THEME['accent_gold']
+            elif is_manual_draw.get() and not draw_valid:
+                # Draw number required but invalid
+                new_bg = THEME['bg_card']
+                status_text = '⚠️ No Draw#'
+                status_color = '#ff6b6b'
+            elif is_manual_draw.get() and draw_out_of_range:
+                # Draw number is out of range
+                new_bg = THEME['bg_card']
+                status_text = f'⚠️ 1-{current_player_count}'
+                status_color = '#ff6b6b'
+            elif is_manual_draw.get() and draw_duplicate:
+                # Draw number is a duplicate
+                new_bg = THEME['bg_card']
+                status_text = '⚠️ Dup Draw#'
+                status_color = '#ff6b6b'
+            elif is_paid:
+                new_bg = '#243d2d'
+                status_text = '✓ Ready'
+                status_color = '#51cf66'
+            else:
+                new_bg = THEME['bg_card']
+                status_text = '⏳ Waiting'
+                status_color = THEME['accent_gold']
+            
+            row_bg = new_bg
+            original_bg = new_bg
+            row_frame.config(bg=new_bg)
+            chk.config(bg=new_bg, selectcolor=new_bg, activebackground=new_bg)
+            status_label.config(bg=new_bg, text=status_text, fg=status_color)
+            
+            update_visuals()
+        
+        # Bind updates
+        name_entry.bind('<KeyRelease>', lambda e: update_row_status())
+        chk.config(command=update_row_status)
+
+        # Bind scrolling
         for widget in [row_frame, name_entry, chk]:
             if sys.platform == 'linux':
                 widget.bind("<Button-4>", _on_mousewheel)
@@ -2545,63 +3386,188 @@ def get_player_setup_dialog(parent):
             else:
                 widget.bind("<MouseWheel>", _on_mousewheel)
 
-        return (name_entry, paid_var, draw_entry)
+        # Initial status update
+        update_row_status()
+
+        return (name_entry, paid_var, draw_entry, status_label)
 
     def render_inputs():
+        """Render/refresh all player input rows"""
         saved_data = []
         for w in player_entries:
             saved_data.append({
-                'name': w[0].get(), 
-                'paid': w[1].get(), 
+                'name': w[0].get(),
+                'paid': w[1].get(),
                 'draw': w[2].get() if w[2] else ""
             })
         
+        # Clear only the rows, not the headers
         for widget in input_container.winfo_children():
+            # Skip the header frame (it's the first child)
+            if widget == header_frame_ref:
+                continue
             widget.destroy()
         player_entries.clear()
 
         for i in range(current_player_count):
             existing = saved_data[i] if i < len(saved_data) else None
-            player_entries.append(create_player_row(input_container, i, existing))
+            
+            # For new rows, inherit the all_paid_var state
+            if existing is None and all_paid_var.get():
+                existing = {'name': '', 'paid': True, 'draw': ''}
+            
+            full_widgets = create_player_row(input_container, i, existing)
+            player_entries.append(full_widgets)  # Keep all 4 values (name, paid, draw, status_label)
         
-        update_visuals()
+        update_visuals()  # Call once after all rows are created
 
-    # --- Header Section ---
-    header = tk.Frame(dialog, bg=THEME['bg_card'], padx=25, pady=20)
-    header.pack(fill='x', padx=20, pady=20)
+    # ========================================================================
+    # CREATE STATUS BANNER (call it now)
+    # ========================================================================
     
-    tk.Label(header, text="Configure Players", font=THEME['font_title'], 
-             bg=THEME['bg_card'], fg=THEME['fg_primary']).pack(anchor='w')
-    
-    cb_frame = tk.Frame(header, bg=THEME['bg_card'])
-    cb_frame.pack(fill='x', pady=(15, 0))
-    
-    # Borderless Global Option Checkboxes
-    tk.Checkbutton(cb_frame, text="Manual Draw (Assign #)", variable=is_manual_draw, 
-                   command=render_inputs, bg=THEME['bg_card'], fg=THEME['fg_secondary'],
-                   selectcolor=THEME['bg_main'], borderwidth=0, highlightthickness=0).pack(side='left')
-    
-    tk.Checkbutton(cb_frame, text="Log Game", variable=log_game_var, 
-                   command=lambda: toggle_log_game(log_game_var),
-                   bg=THEME['bg_card'], fg=THEME['fg_secondary'],
-                   selectcolor=THEME['bg_main'], borderwidth=0, highlightthickness=0).pack(side='left', padx=25)
+    _create_status_banner()
 
-    # All Paid Checkbox
-    tk.Checkbutton(cb_frame, text="All Paid", variable=all_paid_var, 
-                   command=toggle_all_paid,
-                   bg=THEME['bg_card'], fg=THEME['fg_secondary'],
-                   selectcolor=THEME['bg_main'], borderwidth=0, highlightthickness=0).pack(side='left')
+    # ========================================================================
+    # OPTIONS SECTION
+    # ========================================================================
 
-    # --- Main List Area ---
-    list_card = tk.Frame(dialog, bg=THEME['bg_card'], padx=5, pady=5)
-    list_card.pack(fill='both', expand=True, padx=20)
+    options_card = tk.Frame(dialog, bg=THEME['bg_card'], padx=15, pady=12,
+                           relief='raised', borderwidth=1)
+    options_card.pack(fill='x', padx=20, pady=(10, 12))
+
+    tk.Label(options_card, text="Tournament Settings", font=THEME['font_bold'],
+            bg=THEME['bg_card'], fg=THEME['fg_primary']).pack(anchor='w', pady=(0, 8))
+
+    def toggle_manual_draw():
+        """Toggle manual draw and recreate headers with/without draw column"""
+        if header_frame_ref:
+            header_frame_ref.destroy()
+        _create_column_headers()
+        render_inputs()
+
+    # Manual Draw option
+    manual_frame = tk.Frame(options_card, bg=THEME['bg_card'])
+    manual_frame.pack(anchor='w', pady=4, fill='x')
+
+    manual_chk = tk.Checkbutton(manual_frame, text="🎲 Manual Draw Assignment",
+                               variable=is_manual_draw,
+                               command=toggle_manual_draw,
+                               bg=THEME['bg_card'], fg=THEME['fg_secondary'],
+                               selectcolor=THEME['bg_main'],
+                               borderwidth=0, highlightthickness=0,
+                               font=THEME['font_main'])
+    manual_chk.pack(side='left')
+
+    tk.Label(manual_frame, text="(specify player order)", font=('Segoe UI', 8),
+            bg=THEME['bg_card'], fg=THEME['fg_secondary']).pack(side='left', padx=10)
+
+    # Log Game option
+    log_frame = tk.Frame(options_card, bg=THEME['bg_card'])
+    log_frame.pack(anchor='w', pady=4, fill='x')
+
+    log_chk = tk.Checkbutton(log_frame, text="📝 Log Game to File",
+                            variable=log_game_var,
+                            command=lambda: toggle_log_game(log_game_var),
+                            bg=THEME['bg_card'], fg=THEME['fg_secondary'],
+                            selectcolor=THEME['bg_main'],
+                            borderwidth=0, highlightthickness=0,
+                            font=THEME['font_main'])
+    log_chk.pack(side='left')
+
+    tk.Label(log_frame, text="(replay file saved)", font=('Segoe UI', 8),
+            bg=THEME['bg_card'], fg=THEME['fg_secondary']).pack(side='left', padx=10)
+
+    # All Paid option with status
+    all_paid_frame = tk.Frame(options_card, bg=THEME['bg_card'])
+    all_paid_frame.pack(anchor='w', pady=4, fill='x')
+
+    all_paid_chk = tk.Checkbutton(all_paid_frame, text="✅ Mark All as Paid",
+                                 variable=all_paid_var,
+                                 command=toggle_all_paid,
+                                 bg=THEME['bg_card'], fg=THEME['fg_secondary'],
+                                 selectcolor=THEME['bg_main'],
+                                 borderwidth=0, highlightthickness=0,
+                                 font=THEME['font_main'])
+    all_paid_chk.pack(side='left')
+
+    all_paid_status = tk.Label(all_paid_frame, text="", font=('Segoe UI', 8),
+                              bg=THEME['bg_card'], fg=THEME['accent_gold'])
+    all_paid_status.pack(side='left', padx=10)
+
+    # ========================================================================
+    # TEAM MANAGEMENT SECTION - BEFORE THE SCROLLABLE LIST - VISIBLE!
+    # ========================================================================
+
+    team_mgmt_card = tk.Frame(dialog, bg=THEME['bg_card'], padx=15, pady=10,
+                             relief='raised', borderwidth=1)
+    team_mgmt_card.pack(fill='x', padx=20, pady=(8, 12))
+
+    # Title
+    tk.Label(team_mgmt_card, text="Team Management", font=THEME['font_bold'],
+            bg=THEME['bg_card'], fg=THEME['fg_primary']).pack(anchor='w', pady=(0, 6))
+
+    # Count display
+    lbl_count = tk.Label(team_mgmt_card, text=f"Total Players: {current_player_count}",
+                        font=THEME['font_header'], bg=THEME['bg_card'],
+                        fg=THEME['fg_primary'])
+    lbl_count.pack(pady=(0, 10))
+
+    # Button row
+    btn_row = tk.Frame(team_mgmt_card, bg=THEME['bg_card'])
+    btn_row.pack(pady=6)
+
+    def _update_button_states():
+        """Enable/disable buttons based on player count"""
+        if current_player_count <= MIN_PLAYERS:
+            btn_remove.config(state='disabled', fg='#666666')
+        else:
+            btn_remove.config(state='normal', fg='white')
+        
+        if current_player_count >= MAX_PLAYERS:
+            btn_add.config(state='disabled', fg='#666666')
+            btn_add.config(text="+ Add Team (max)")
+        else:
+            remaining = MAX_PLAYERS - current_player_count
+            btn_add.config(state='normal', fg='white')
+            btn_add.config(text=f"+ Add Team ({remaining} slots)")
+
+    def change_count(n):
+        nonlocal current_player_count
+        if MIN_PLAYERS <= current_player_count + n <= MAX_PLAYERS:
+            current_player_count += n
+            lbl_count.config(text=f"Total Players: {current_player_count}")
+            _update_button_states()
+            render_inputs()
+
+    btn_add = tk.Button(btn_row, text=f"+ Add Team ({MAX_PLAYERS - current_player_count} slots)",
+                       command=lambda: change_count(2),
+                       bg=THEME['btn_default'], fg='white', relief='flat',
+                       padx=18, pady=6, font=THEME['font_main'])
+    btn_add.pack(side='left', padx=8)
+
+    btn_remove = tk.Button(btn_row, text="- Remove Team", command=lambda: change_count(-2),
+                          bg=THEME['btn_default'], fg='white', relief='flat',
+                          padx=18, pady=6, font=THEME['font_main'])
+    btn_remove.pack(side='left', padx=8)
     
-    canvas = tk.Canvas(list_card, bg=THEME['bg_card'], highlightthickness=0)
-    canvas.configure(yscrollincrement=1)
+    # Info text
+    tk.Label(team_mgmt_card, text=f"({MIN_PLAYERS}-{MAX_PLAYERS} players total)", 
+            font=('Segoe UI', 8), bg=THEME['bg_card'], 
+            fg=THEME['fg_secondary']).pack(pady=(6, 0))
+
+    # ========================================================================
+    # SCROLLABLE PLAYER LIST
+    # ========================================================================
+
+    list_card = tk.Frame(dialog, bg=THEME['bg_card'], padx=6, pady=6)
+    list_card.pack(fill='both', expand=True, padx=20, pady=(4, 15))
+    
+    canvas = tk.Canvas(list_card, bg=THEME['bg_card'], highlightthickness=0, height=220)
+    canvas.configure(yscrollincrement=5)
     scrollbar = tk.Scrollbar(list_card, orient="vertical", command=canvas.yview)
     input_container = tk.Frame(canvas, bg=THEME['bg_card'])
 
-    canvas.create_window((0, 0), window=input_container, anchor="nw", width=580)
+    canvas.create_window((0, 0), window=input_container, anchor="nw", width=600)
     canvas.configure(yscrollcommand=scrollbar.set)
     
     scrollbar.pack(side="right", fill="y")
@@ -2609,69 +3575,73 @@ def get_player_setup_dialog(parent):
     
     input_container.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
 
-    # Bind to the DIALOG and the CANVAS to ensure it catches the movement
     for widget in [dialog, canvas, input_container]:
         if sys.platform == 'linux':
-            widget.bind("<Button-4>", _on_mousewheel)       # Linux Up
-            widget.bind("<Button-5>", _on_mousewheel)       # Linux Down
+            widget.bind("<Button-4>", _on_mousewheel)
+            widget.bind("<Button-5>", _on_mousewheel)
         else:
-            widget.bind("<MouseWheel>", _on_mousewheel)     # Windows/macOS
+            widget.bind("<MouseWheel>", _on_mousewheel)
 
-    # --- Management Footer ---
-    mgmt_frame = tk.Frame(dialog, bg=THEME['bg_card'], pady=20)
-    mgmt_frame.pack(fill='x', padx=20, pady=(0, 20))
-    
-    lbl_count = tk.Label(mgmt_frame, text=f"Total Players: {current_player_count}", 
-                         font=THEME['font_header'], bg=THEME['bg_card'], fg=THEME['fg_primary'])
-    lbl_count.pack()
-
-    btn_row = tk.Frame(mgmt_frame, bg=THEME['bg_card'])
-    btn_row.pack(pady=15)
-
-    def change_count(n):
-        nonlocal current_player_count
-        if MIN_PLAYERS <= current_player_count + n <= MAX_PLAYERS:
-            current_player_count += n
-            lbl_count.config(text=f"Total Players: {current_player_count}")
-            render_inputs()
-
-    tk.Button(btn_row, text="+ Add Team", command=lambda: change_count(2), 
-              bg=THEME['btn_default'], fg='white', relief='flat', padx=20, pady=5).pack(side='left', padx=10)
-    tk.Button(btn_row, text="- Remove Team", command=lambda: change_count(-2), 
-              bg=THEME['btn_default'], fg='white', relief='flat', padx=20, pady=5).pack(side='left', padx=10)
-
-    # --- Action Buttons ---
-    footer = tk.Frame(dialog, bg=THEME['bg_main'], pady=25)
-    footer.pack(fill='x')
+    # ========================================================================
+    # ACTION BUTTONS (at the bottom)
+    # ========================================================================
 
     def confirm():
+        """Validate and confirm setup"""
         nonlocal result
-        update_visuals()
+        
+        errors = []
         data = []
-        for i, (n_entry, p_var, d_entry) in enumerate(player_entries):
-            name = n_entry.get().strip()
-            if not name: return messagebox.showerror("Error", f"P{i+1} is missing a name.")
-            if not p_var.get(): return messagebox.showerror("Payment Error", f"{name} needs to cough up money!")
+        
+        for i, widgets in enumerate(player_entries):
+            name_entry, paid_var, draw_entry, status_label = widgets
+            name = name_entry.get().strip()
+            is_paid = paid_var.get()
+            
+            if not name:
+                errors.append(f"Player {i+1}: Missing name")
+            else:
+                if not is_paid:
+                    errors.append(f"Player {i+1} ({name}): Payment not confirmed")
             
             draw = None
-            if is_manual_draw.get():
-                try: draw = int(d_entry.get().strip())
-                except: return messagebox.showerror("Error", f"Invalid draw for {name}.")
+            if is_manual_draw.get() and draw_entry:
+                try:
+                    draw = int(draw_entry.get().strip())
+                except ValueError:
+                    errors.append(f"Player {i+1}: Invalid draw number")
             
-            data.append((draw, name, p_var.get()))
+            data.append((draw, name, is_paid))
+        
+        if errors:
+            error_msg = "Please fix the following issues:\n\n"
+            for err in errors:
+                error_msg += f"• {err}\n"
+            messagebox.showerror("Validation Error", error_msg)
+            return
         
         result = (is_manual_draw.get(), data)
         dialog.destroy()
 
-    tk.Button(footer, text="Complete Registration", font=THEME['font_header'],
-              bg=THEME['btn_confirm'], fg='white', relief='flat', width=25,
-              command=confirm).pack(side='left', padx=(50, 10))
+    # Create buttons in header
+    continue_btn = tk.Button(button_frame, text="✓ Continue",
+                            font=THEME['font_main'], bg=THEME['btn_confirm'], fg='white',
+                            relief='flat', padx=20, pady=5, command=confirm, state='disabled')
+    continue_btn.pack(side='left', padx=6)
     
-    tk.Button(footer, text="Cancel", font=THEME['font_main'],
-              bg=THEME['btn_cancel'], fg='white', relief='flat', width=12,
-              command=dialog.destroy).pack(side='left')
+    tk.Button(button_frame, text="Cancel",
+             font=THEME['font_main'], bg=THEME['btn_cancel'], fg='white',
+             relief='flat', padx=15, pady=5, command=dialog.destroy).pack(side='left', padx=6)
 
+    # ========================================================================
+    # INITIAL RENDER AND STATE SETUP
+    # ========================================================================
+
+    # Create headers first (before render_inputs which packs rows)
+    _create_column_headers()
+    
     render_inputs()
+    _update_button_states()
     dialog.wait_window()
     return result
 

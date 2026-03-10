@@ -1,9 +1,9 @@
 {
   "tournament_name": "3-team Shuffleboard Tournament",
   "prizes": {
-    "3": 0,
+    "1": 20,
     "2": 10,
-    "1": 20
+    "3": 0
   },
   "games": {
     "G1": {
@@ -18,7 +18,8 @@
       "loser_drops_to": {
         "game": "G3",
         "slot": 0
-      }
+      },
+      "is_winnerbracket": "true"
     },
     "G2": {
       "teams": [
@@ -32,7 +33,8 @@
       "loser_drops_to": {
         "game": "G3",
         "slot": 1
-      }
+      },
+      "is_winnerbracket": "true"
     },
     "G3": {
       "teams": [
@@ -46,7 +48,8 @@
       "loser_drops_to": {
         "result": "ELIMINATED",
         "rank": "3rd"
-      }
+      },
+      "is_winnerbracket": "false"
     },
     "GF": {
       "teams": [
@@ -58,7 +61,8 @@
       },
       "loser_drops_to": {
         "result": "GF_CONDITIONAL"
-      }
+      },
+      "is_winnerbracket": "both"
     },
     "GGF": {
       "teams": [
@@ -71,7 +75,8 @@
       "loser_drops_to": {
         "result": "ELIMINATED",
         "rank": "2nd"
-      }
+      },
+      "is_winnerbracket": "both"
     }
   }
 }
