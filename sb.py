@@ -14,7 +14,7 @@ import time
 import json 
 
 # --- Version ---
-SHUF_VERSION = "1.51"
+SHUF_VERSION = "1.70.C"
 
 # --- Theme Configuration ---
 THEME = {
@@ -3679,7 +3679,7 @@ def get_player_setup_dialog(parent):
                                 borderwidth=0, highlightthickness=0,
                                 font=THEME['font_main'])
     manual_chk.pack(side='left')
-    tk.Label(manual_frame, text="(specify player order)", font=('Segoe UI', 8),
+    tk.Label(manual_frame, text="(specify draw numbers)", font=('Segoe UI', 8),
              bg=THEME['bg_card'], fg=THEME['fg_secondary']).pack(side='left', padx=8)
 
     # Log Game
@@ -3693,7 +3693,7 @@ def get_player_setup_dialog(parent):
                              borderwidth=0, highlightthickness=0,
                              font=THEME['font_main'])
     log_chk.pack(side='left')
-    tk.Label(log_frame, text="(replay file saved)", font=('Segoe UI', 8),
+    tk.Label(log_frame, text="(save console logs)", font=('Segoe UI', 8),
              bg=THEME['bg_card'], fg=THEME['fg_secondary']).pack(side='left', padx=8)
 
     # All Paid
