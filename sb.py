@@ -3430,6 +3430,7 @@ def get_player_setup_dialog(parent):
         
         # Update visuals after all are set
         update_visuals()
+        _update_manual_draw_state()
 
     # ========================================================================
     # ROW CONSTRUCTION (IMPROVED)
@@ -3588,6 +3589,7 @@ def get_player_setup_dialog(parent):
             status_label.config(bg=new_bg, text=status_text, fg=status_color)
             
             update_visuals()
+            _update_manual_draw_state()
         
         # Bind updates
         name_entry.bind('<KeyRelease>', lambda e: update_row_status())
@@ -3681,6 +3683,37 @@ def get_player_setup_dialog(parent):
     manual_chk.pack(side='left')
     tk.Label(manual_frame, text="(specify draw numbers)", font=('Segoe UI', 8),
              bg=THEME['bg_card'], fg=THEME['fg_secondary']).pack(side='left', padx=8)
+    manual_draw_hint = tk.Label(manual_frame, text="", font=('Segoe UI', 7),
+             bg=THEME['bg_card'], fg='#ff6b6b')
+    manual_draw_hint.pack(side='left', padx=4)
+
+    def _update_manual_draw_state():
+        """Enable manual draw only when all players are paid and have non-default names."""
+        if not player_entries:
+            manual_chk.config(state='disabled')
+            manual_draw_hint.config(text="(add players first)")
+            return
+        default_pattern = re.compile(r'^Player\s*\d+$', re.IGNORECASE)
+        all_paid = all(w[1].get() for w in player_entries)
+        all_named = all(
+            w[0].get().strip() and not default_pattern.match(w[0].get().strip())
+            for w in player_entries
+        )
+        if all_paid and all_named:
+            manual_chk.config(state='normal')
+            manual_draw_hint.config(text="")
+        else:
+            manual_chk.config(state='disabled')
+            if not all_paid and not all_named:
+                manual_draw_hint.config(text="(needs names & payment)")
+            elif not all_paid:
+                manual_draw_hint.config(text="(needs all paid)")
+            else:
+                manual_draw_hint.config(text="(needs real names)")
+            # Uncheck if it was on and we're now disabling
+            if is_manual_draw.get():
+                is_manual_draw.set(False)
+                toggle_manual_draw()
 
     # Log Game
     log_frame = tk.Frame(settings_col, bg=THEME['bg_card'])
@@ -3854,6 +3887,7 @@ def get_player_setup_dialog(parent):
     
     render_inputs()
     _update_button_states()
+    _update_manual_draw_state()
     dialog.wait_window()
     return result
 
