@@ -261,8 +261,21 @@ def add_late_team():
     # generate_dynamic_bracket handles all seeding correctly for any bracket size
     generate_dynamic_bracket(TEAMS, new_config)
 
-    # Restore G1 exactly as it was — in progress, timer state and all
-    TOURNAMENT_STATE['G1'] = g1_snapshot
+    # Restore G1 live match state (teams, timer, pause etc.) but keep the NEW
+    # config routing — the new bracket may route G1's winner/loser differently.
+    new_g1_config = TOURNAMENT_STATE['G1']['config']
+    TOURNAMENT_STATE['G1'].update({
+        'teams':            g1_snapshot['teams'],
+        'winner':           g1_snapshot['winner'],
+        'winner_color':     g1_snapshot['winner_color'],
+        'is_reset':         g1_snapshot['is_reset'],
+        'start_time':       g1_snapshot.get('start_time'),
+        'timer_paused':     g1_snapshot.get('timer_paused', True),
+        'elapsed_at_pause': g1_snapshot.get('elapsed_at_pause', 0),
+        '_paused_since':    g1_snapshot.get('_paused_since'),
+        '_flash_state':     g1_snapshot.get('_flash_state', False),
+        'config':           new_g1_config,
+    })
     TOURNAMENT_STATE['active_match_id'] = 'G1'
 
     # --- Refresh all UI without disturbing the active match ---
@@ -337,7 +350,7 @@ def setup_scoreboard(root, team_red_placeholder, team_blue_placeholder):
 
     # + Late Entry button — top right of arena, only visible on first match before any result
     ui_references['late_entry_btn'] = tk.Button(
-        info_frame, text="＋", font=('Segoe UI', 8, 'bold'),
+        info_frame, text="Add Late Entry", font=('Segoe UI', 8, 'bold'),
         bg=THEME['btn_default'], fg=THEME['accent_gold'],
         relief='flat', padx=6, pady=1, cursor='hand2',
         command=add_late_team
