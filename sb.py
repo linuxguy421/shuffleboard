@@ -14,7 +14,7 @@ import time
 import json 
 
 # --- Version ---
-SHUF_VERSION = "1.70.C"
+SHUF_VERSION = "1.71.B"
 
 # --- Theme Configuration ---
 THEME = {
@@ -162,6 +162,128 @@ def update_footer_log_status():
 
     lbl.config(text=text, fg=color)
 
+def add_late_team():
+    """
+    Adds a late-arriving team by prompting for two player names, then rebuilds
+    the bracket for N+1 teams. G1 (currently in progress) is preserved exactly.
+    Only available before any match has been completed.
+    """
+    global TEAMS, TEAM_ROSTERS, TOURNAMENT_STATE, REPLAY_FILEPATH
+
+    # Safety check — should not be reachable, but guard anyway
+    if MATCH_HISTORY:
+        messagebox.showwarning("Late Entry", "Cannot add a team after matches have been completed.")
+        return
+
+    active_id = TOURNAMENT_STATE.get('active_match_id')
+    if active_id != 'G1':
+        return
+
+    # --- Dialog for new player names ---
+    dialog = tk.Toplevel(main_root)
+    dialog.title("Late Entry — Add Team")
+    dialog.configure(bg=THEME['bg_main'])
+    dialog.resizable(False, False)
+    dialog.grab_set()
+    dialog.geometry("360x220")
+
+    tk.Label(dialog, text="Late Team Entry", font=THEME['font_header'],
+             bg=THEME['bg_main'], fg=THEME['accent_gold']).pack(pady=(18, 4))
+    tk.Label(dialog, text="Enter names for the two new players:",
+             font=THEME['font_main'], bg=THEME['bg_main'],
+             fg=THEME['fg_secondary']).pack(pady=(0, 12))
+
+    entry_frame = tk.Frame(dialog, bg=THEME['bg_main'])
+    entry_frame.pack()
+
+    tk.Label(entry_frame, text="Player 1:", font=THEME['font_main'],
+             bg=THEME['bg_main'], fg=THEME['fg_primary'], width=10, anchor='e').grid(row=0, column=0, padx=6, pady=6)
+    p1_entry = tk.Entry(entry_frame, bg=THEME['bg_card'], fg=THEME['fg_primary'],
+                        insertbackground=THEME['fg_primary'], relief='flat', font=THEME['font_main'], width=22)
+    p1_entry.grid(row=0, column=1, padx=6, pady=6)
+
+    tk.Label(entry_frame, text="Player 2:", font=THEME['font_main'],
+             bg=THEME['bg_main'], fg=THEME['fg_primary'], width=10, anchor='e').grid(row=1, column=0, padx=6, pady=6)
+    p2_entry = tk.Entry(entry_frame, bg=THEME['bg_card'], fg=THEME['fg_primary'],
+                        insertbackground=THEME['fg_primary'], relief='flat', font=THEME['font_main'], width=22)
+    p2_entry.grid(row=1, column=1, padx=6, pady=6)
+
+    result = [None]
+
+    def _confirm():
+        p1 = p1_entry.get().strip()
+        p2 = p2_entry.get().strip()
+        if not p1 or not p2:
+            messagebox.showerror("Missing Names", "Both player names are required.", parent=dialog)
+            return
+        result[0] = (p1, p2)
+        dialog.destroy()
+
+    btn_row = tk.Frame(dialog, bg=THEME['bg_main'])
+    btn_row.pack(pady=(14, 0))
+    tk.Button(btn_row, text="✓ Add Team", bg=THEME['btn_confirm'], fg='white',
+              relief='flat', padx=16, pady=5, font=THEME['font_main'],
+              command=_confirm).pack(side='left', padx=8)
+    tk.Button(btn_row, text="Cancel", bg=THEME['btn_cancel'], fg='white',
+              relief='flat', padx=16, pady=5, font=THEME['font_main'],
+              command=dialog.destroy).pack(side='left', padx=8)
+
+    p1_entry.focus_set()
+    main_root.wait_window(dialog)
+
+    if result[0] is None:
+        return  # Cancelled
+
+    p1_name, p2_name = result[0]
+
+    # --- Snapshot G1 state so we can restore it after rebuilding ---
+    g1_snapshot = dict(TOURNAMENT_STATE['G1'])
+    g1_snapshot['config'] = dict(TOURNAMENT_STATE['G1']['config'])
+
+    # --- Add the new team ---
+    new_team_name = f"Team {len(TEAMS) + 1}"
+    TEAMS.append(new_team_name)
+    TEAM_ROSTERS[new_team_name] = [p1_name, p2_name]
+    log_message(f"Late entry: {new_team_name} ({p1_name} & {p2_name}) added — rebuilding bracket")
+
+    # --- Load new bracket config for N+1 teams ---
+    try:
+        new_config, _ = load_bracket_config(len(TEAMS), 'D')
+    except Exception as e:
+        # Rollback
+        TEAMS.pop()
+        del TEAM_ROSTERS[new_team_name]
+        messagebox.showerror("Late Entry Error",
+                             f"No bracket config found for {len(TEAMS)} teams.\n{e}")
+        return
+
+    # --- Rebuild TOURNAMENT_STATE using existing generator, then restore G1 ---
+    # generate_dynamic_bracket handles all seeding correctly for any bracket size
+    generate_dynamic_bracket(TEAMS, new_config)
+
+    # Restore G1 exactly as it was — in progress, timer state and all
+    TOURNAMENT_STATE['G1'] = g1_snapshot
+    TOURNAMENT_STATE['active_match_id'] = 'G1'
+
+    # --- Refresh all UI without disturbing the active match ---
+    update_schedule_tab()
+    update_roster_seeding_vertical()
+
+    if bracket_info_canvas_ref:
+        draw_small_bracket_view(bracket_info_canvas_ref, TOURNAMENT_STATE)
+    if full_bracket_root and full_bracket_canvas:
+        try:
+            draw_large_bracket(full_bracket_canvas)
+        except Exception:
+            pass
+
+    if REPLAY_FILEPATH:
+        append_snapshot_to_file(REPLAY_FILEPATH)
+
+    log_message(f"Bracket rebuilt for {len(TEAMS)} teams. G1 preserved and still active.")
+    messagebox.showinfo("Late Entry", f"{new_team_name} ({p1_name} & {p2_name}) added!\nBracket updated for {len(TEAMS)} teams.")
+
+
 def setup_scoreboard(root, team_red_placeholder, team_blue_placeholder):
     """
     Redesigned Main UI: Uses Tabs to separate concerns and a 'Card' layout for the match.
@@ -211,6 +333,15 @@ def setup_scoreboard(root, team_red_placeholder, team_blue_placeholder):
                                   font=('Segoe UI', 9), fg=THEME['fg_secondary'], bg=THEME['bg_main'])
     game_routing_label.pack()
     ui_references['info_lbl'] = game_routing_label
+
+    # + Late Entry button — top right of arena, only visible on first match before any result
+    ui_references['late_entry_btn'] = tk.Button(
+        info_frame, text="Add Late Team", font=('Segoe UI', 8, 'bold'),
+        bg=THEME['btn_default'], fg=THEME['accent_gold'],
+        relief='flat', padx=6, pady=1, cursor='hand2',
+        command=add_late_team
+    )
+    ui_references['late_entry_btn'].place(relx=1.0, rely=0.5, anchor='e', x=-6)
 
     # 2. The Interaction Area (Cards)
     match_input_frame = tk.Frame(tab_match, bg=THEME['bg_main'])
@@ -693,7 +824,12 @@ def finalize_match_duration(match_id):
     if not match_data or not match_data.get('start_time'):
         return
 
-    duration = int(time.time() - match_data['start_time'])
+    # If timer is currently paused use the saved elapsed, otherwise calculate from start_time
+    if match_data.get('timer_paused') and match_data.get('elapsed_at_pause') is not None:
+        duration = int(match_data['elapsed_at_pause'])
+    else:
+        duration = int(time.time() - match_data['start_time'])
+
     match_data['duration'] = duration
     MATCH_DURATIONS.append(duration)
 
@@ -767,6 +903,26 @@ def update_scoreboard_display():
     update_roster_seeding_vertical()
     update_schedule_tab()
 
+    # --- Late Entry Button visibility ---
+    # Show only on G1, no completed matches, AND the N+1 bracket keeps G1 seeding intact
+    if ui_references.get('late_entry_btn'):
+        show_btn = False
+        if match_id == 'G1' and not MATCH_HISTORY:
+            try:
+                n = len(TEAMS)
+                curr_config, _ = load_bracket_config(n, 'D')
+                next_config, _ = load_bracket_config(n + 1, 'D')
+                curr_g1_slots = sorted(curr_config.get('G1', {}).get('teams', []))
+                next_g1_slots = sorted(next_config.get('G1', {}).get('teams', []))
+                # Safe only if G1 seeding is identical in both bracket sizes
+                show_btn = (curr_g1_slots == next_g1_slots)
+            except Exception:
+                show_btn = False  # Config missing or unreadable
+        if show_btn:
+            ui_references['late_entry_btn'].place(relx=1.0, rely=0.5, anchor='e', x=-6)
+        else:
+            ui_references['late_entry_btn'].place_forget()
+
     # --- Update Footer Progress ---
     if 'footer_progress' in ui_references:
         # Filter TOURNAMENT_STATE to count actual match keys (like G1, G2, GF)
@@ -790,11 +946,8 @@ def declare_winner(color):
     
     log_message(f"Winner declared — Match {match_id_to_confirm}: {winner} ({color})")
 
-    # Pause timer while confirming
-    match_data = TOURNAMENT_STATE.get(match_id_to_confirm)
-    if match_data:
-        match_data['paused_at'] = time.time()
-    stop_match_timer()
+    # Pause timer while confirming — use pause_match_timer so elapsed is saved correctly
+    pause_match_timer()
     
     # Hide the VS Cards, Show the Result Frame
     ui_references['match_tab_frame'].pack_forget()
@@ -907,6 +1060,7 @@ def run_replay_mode(path):
     global REPLAY_FILEPATH, REPLAY_MODE, REPLAY_VIEW_ONLY
     global main_root, TEAMS, TEAM_ROSTERS, TOURNAMENT_STATE, TOURNAMENT_RANKINGS
 
+    reset_global_state()
     REPLAY_MODE = True
     REPLAY_VIEW_ONLY = False
 
@@ -2241,12 +2395,6 @@ def find_next_active_match():
             log_message(f"Next active match: {k} ({data['teams'][0]} vs {data['teams'][1]})", "DEBUG")
             return k
     
-    if sorted_match_keys:
-        last_g_id = sorted_match_keys[-1]
-        if TOURNAMENT_STATE[last_g_id].get('is_reset', False) and TOURNAMENT_STATE[last_g_id].get('winner') is None:
-             log_message(f"Next active match (finals reset): {last_g_id}", "DEBUG")
-             return last_g_id
-         
     log_message("No further matches found — tournament complete")
     return 'TOURNAMENT_OVER'
 
@@ -2284,21 +2432,20 @@ def serialize_snapshot():
         "match_durations": list(MATCH_DURATIONS),
     }
 
-    # Serialize match-level state including champion.
+    # Only save persistent match fields — ephemeral UI/timer fields are deliberately excluded.
+    _MATCH_SAVE_KEYS = ('teams', 'winner', 'winner_color', 'is_reset', 'champion',
+                        'is_winnerbracket', 'start_time', 'duration')
+
     for mid, match_data in TOURNAMENT_STATE.items():
         if isinstance(match_data, dict):
             snapshot["state"][mid] = {
-                "teams": match_data.get("teams"),
-                "winner": match_data.get("winner"),
-                "winner_color": match_data.get("winner_color"),
-                "is_reset": match_data.get("is_reset", False),
-                "champion": match_data.get("champion"),  # ADDED
-                "is_winnerbracket": match_data.get("is_winnerbracket", "unknown"),  # ADDED
-                "start_time": match_data.get("start_time"),
-                "config": {
-                    k: (list(v) if isinstance(v, tuple) else v)
-                    for k, v in match_data.get("config", {}).items()
-                },
+                k: match_data.get(k) for k in _MATCH_SAVE_KEYS
+            }
+            snapshot["state"][mid]['is_reset'] = match_data.get('is_reset', False)
+            snapshot["state"][mid]['is_winnerbracket'] = match_data.get('is_winnerbracket', 'unknown')
+            snapshot["state"][mid]['config'] = {
+                k: (list(v) if isinstance(v, tuple) else v)
+                for k, v in match_data.get('config', {}).items()
             }
 
     return snapshot
@@ -2389,8 +2536,8 @@ def handle_match_resolution(winner, loser, winning_color, match_id):
             messagebox.showwarning("Final Round!", 
                                 f"{w_roster} have demoted {l_roster} from undefeated status!")
             
-            TOURNAMENT_STATE['active_match_id'] = reset_game_id
-            log_message(f"GF bracket reset — {winner} vs {loser} in {reset_game_id}") 
+            TOURNAMENT_STATE['active_match_id'] = 'GGF'
+            log_message(f"GF bracket reset — {winner} vs {loser} in GGF") 
          
             reset_game() 
             return # EXIT after reset handling
@@ -2619,23 +2766,26 @@ def get_team_record(team_name):
     """Calculates the current wins and losses for a given team from TOURNAMENT_STATE."""
     wins = 0
     losses = 0
+
+    ggf_has_result = isinstance(TOURNAMENT_STATE.get('GGF'), dict) and                      TOURNAMENT_STATE['GGF'].get('winner') is not None
+
     for match_id, match_data in TOURNAMENT_STATE.items():
         if not isinstance(match_data, dict):
             continue
-        
+
+        # When GGF has been played it is the authoritative result for the finals.
+        # Skip GF entirely to avoid double-counting wins/losses for both finalists.
+        if match_id == 'GF' and match_data.get('is_reset') and ggf_has_result:
+            continue
+
         winner = match_data.get('winner')
-        
-        if match_id == 'GF' and match_data.get('is_reset') and winner is None:
-            ggf_data = TOURNAMENT_STATE.get('GGF')
-            if ggf_data and ggf_data.get('teams'):
-                 winner = ggf_data['teams'][0]
 
         if winner:
             if team_name == winner:
                 wins += 1
             elif team_name in match_data.get('teams', []) and team_name != winner:
                 losses += 1
-                
+
     return wins, losses
     
 def update_winner_buttons():
@@ -3891,6 +4041,23 @@ def get_player_setup_dialog(parent):
     dialog.wait_window()
     return result
 
+def reset_global_state():
+    """Clears all tournament globals in one place before starting a new game or replay."""
+    global TEAMS, TEAM_ROSTERS, TOURNAMENT_STATE, TOURNAMENT_RANKINGS
+    global MATCH_HISTORY, MATCH_DURATIONS, REPLAY_FILEPATH
+    global last_assigned_match_id, TOURNAMENT_START_TIME
+
+    TEAMS.clear()
+    TEAM_ROSTERS.clear()
+    TOURNAMENT_STATE.clear()
+    TOURNAMENT_RANKINGS.clear()
+    MATCH_HISTORY.clear()
+    MATCH_DURATIONS.clear()
+    REPLAY_FILEPATH = None
+    last_assigned_match_id = None
+    TOURNAMENT_START_TIME = None
+
+
 def start_tournament():
     """
     Prompts for players using the unified dialog, sets up teams, 
@@ -3898,6 +4065,7 @@ def start_tournament():
     """
     global REPLAY_FILEPATH, TEAMS, TEAM_ROSTERS
 
+    reset_global_state()
     log_message("Tournament initialization started")
     
     dialog_root = tk.Tk()
