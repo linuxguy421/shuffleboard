@@ -14,7 +14,7 @@ import time
 import json 
 
 # --- Version ---
-SHUF_VERSION = "1.71.B"
+SHUF_VERSION = "1.70.C"
 
 # --- Theme Configuration ---
 THEME = {
@@ -268,6 +268,7 @@ def add_late_team():
     # --- Refresh all UI without disturbing the active match ---
     update_schedule_tab()
     update_roster_seeding_vertical()
+    update_scoreboard_display()
 
     if bracket_info_canvas_ref:
         draw_small_bracket_view(bracket_info_canvas_ref, TOURNAMENT_STATE)
@@ -336,7 +337,7 @@ def setup_scoreboard(root, team_red_placeholder, team_blue_placeholder):
 
     # + Late Entry button — top right of arena, only visible on first match before any result
     ui_references['late_entry_btn'] = tk.Button(
-        info_frame, text="Add Late Team", font=('Segoe UI', 8, 'bold'),
+        info_frame, text="＋", font=('Segoe UI', 8, 'bold'),
         bg=THEME['btn_default'], fg=THEME['accent_gold'],
         relief='flat', padx=6, pady=1, cursor='hand2',
         command=add_late_team
