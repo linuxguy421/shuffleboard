@@ -402,7 +402,7 @@ class TestSerializeSnapshot(unittest.TestCase):
 
 class TestLoadBracketConfig(unittest.TestCase):
 
-    DATA_DIR = '/home/claude'
+    DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data')
 
     def _load(self, n):
         orig_dir = os.getcwd()
@@ -440,7 +440,7 @@ class TestLoadBracketConfig(unittest.TestCase):
 
 class TestGenerateDynamicBracket(unittest.TestCase):
 
-    DATA_DIR = '/home/claude'
+    DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data')
 
     def setUp(self):
         _reset()
@@ -495,7 +495,7 @@ class TestLateEntryRouting(unittest.TestCase):
     the new bracket (not the old one).
     """
 
-    DATA_DIR = '/home/claude'
+    DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data')
 
     def setUp(self):
         _reset()
