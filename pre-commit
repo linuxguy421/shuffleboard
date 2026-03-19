@@ -1,0 +1,19 @@
+#!/bin/sh
+# Pre-commit hook — runs the test suite before every commit.
+# If any test fails the commit is aborted.
+
+cd "$(git rev-parse --show-toplevel)"
+
+echo "Running tests..."
+python3 -m unittest test_sb -v 2>&1
+STATUS=$?
+
+if [ $STATUS -ne 0 ]; then
+    echo ""
+    echo "Tests failed — commit aborted. Fix the errors above and try again."
+    echo "To bypass in an emergency: git commit --no-verify"
+    exit 1
+fi
+
+echo "All tests passed."
+exit 0
