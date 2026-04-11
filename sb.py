@@ -11,10 +11,160 @@ import os
 from collections import OrderedDict
 import datetime 
 import time
-import json 
+import json
+import threading
+
+try:
+    import serial
+    import serial.tools.list_ports
+    SERIAL_AVAILABLE = True
+except ImportError:
+    SERIAL_AVAILABLE = False
 
 # --- Version ---
 SHUF_VERSION = "1.70.C"
+
+# =============================================================================
+# --- Flipper Zero IR Module ---
+# Sends IR commands to a digital scoreboard via Flipper Zero over USB serial.
+# Uses pyserial (pip install pyserial). Fails silently if not connected so the
+# app works normally without the Flipper attached.
+# =============================================================================
+
+# Flipper Zero USB identifiers (consistent across all platforms)
+FLIPPER_VID = 0x0483
+FLIPPER_PID = 0x5740
+
+# --- IR Code Map (NEC protocol) ---
+# Address and command are plain hex strings (no 0x prefix) taken directly
+# from the .ir file's first byte. Flipper CLI does not accept 0x-prefixed args.
+# file: "address: 00 00 00 00" -> "00"
+# file: "command: 17 00 00 00" -> "17"
+IR_CODES = {
+    'reset':      ('NEC', '00', '03'),
+    'blue_up':    ('NEC', '00', '09'),
+    'red_up':     ('NEC', '00', '17'),
+    'blue_down':  ('NEC', '00', '19'),
+    'red_down':   ('NEC', '00', '50'),
+}
+
+# Minimum delay (seconds) between consecutive IR sends to avoid the scoreboard
+# dropping rapid-fire commands. 0.15 s is a safe starting point for NEC devices.
+IR_SEND_DELAY = 0.15
+
+# --- Internal State ---
+_flipper_port = None        # Open serial.Serial instance, or None
+_flipper_lock = threading.Lock()  # Serialise writes from multiple threads
+_ir_last_sent = 0.0         # Timestamp of last successful IR send
+
+def flipper_connect():
+    """
+    Scan serial ports for a Flipper Zero by USB VID/PID and open it.
+    Returns True if connected, False otherwise.
+    Safe to call multiple times — skips if already open.
+    """
+    global _flipper_port
+
+    if not SERIAL_AVAILABLE:
+        log_message("pyserial not installed — Flipper IR disabled. Run: pip install pyserial", "WARN")
+        return False
+
+    with _flipper_lock:
+        if _flipper_port and _flipper_port.is_open:
+            return True  # Already connected
+
+        for port_info in serial.tools.list_ports.comports():
+            if port_info.vid == FLIPPER_VID and port_info.pid == FLIPPER_PID:
+                try:
+                    _flipper_port = serial.Serial(
+                        port_info.device,
+                        baudrate=230400,
+                        timeout=1,
+                        write_timeout=1,
+                    )
+                    log_message(f"Flipper Zero connected on {port_info.device}")
+                    return True
+                except Exception as e:
+                    log_message(f"Flipper found on {port_info.device} but failed to open: {e}", "WARN")
+                    return False
+
+    log_message("Flipper Zero not found on any serial port", "WARN")
+    return False
+
+def flipper_disconnect():
+    """Cleanly close the serial connection."""
+    global _flipper_port
+    with _flipper_lock:
+        if _flipper_port and _flipper_port.is_open:
+            _flipper_port.close()
+            _flipper_port = None
+            log_message("Flipper Zero disconnected")
+
+def _send_ir_blocking(action, repeat=1):
+    """
+    Internal: sends an IR command `repeat` times with IR_SEND_DELAY between
+    each send. Runs in a background thread. Auto-reconnects once if needed.
+    """
+    global _flipper_port, _ir_last_sent
+
+    if action not in IR_CODES:
+        log_message(f"IR action '{action}' not found in IR_CODES map", "WARN")
+        return
+
+    protocol, address, command = IR_CODES[action]
+    cmd_str = f"ir tx {protocol} {address} {command}\r\n"
+
+    with _flipper_lock:
+        if not _flipper_port or not _flipper_port.is_open:
+            log_message("Flipper not connected — attempting reconnect before IR send", "WARN")
+            _flipper_port = None
+
+    if not _flipper_port or not _flipper_port.is_open:
+        if not flipper_connect():
+            log_message(f"IR send skipped ({action}) — Flipper unavailable", "WARN")
+            return
+
+    for i in range(repeat):
+        # Enforce minimum gap between any two consecutive IR sends
+        now = time.time()
+        gap = IR_SEND_DELAY - (now - _ir_last_sent)
+        if gap > 0:
+            time.sleep(gap)
+        try:
+            with _flipper_lock:
+                _flipper_port.write(cmd_str.encode("ascii"))
+            _ir_last_sent = time.time()
+            log_message(f"IR sent ({i+1}/{repeat}): {cmd_str.strip()}", "DEBUG")
+        except Exception as e:
+            log_message(f"IR send failed ({action}): {e}", "WARN")
+            with _flipper_lock:
+                _flipper_port = None
+            break  # Don't retry remaining repeats on a port error
+
+def ir_send(action, repeat=1):
+    """
+    Public: fire-and-forget IR send. Optional repeat for correction sends.
+    Dispatches to a daemon thread so it never blocks the Tkinter UI.
+    """
+    t = threading.Thread(target=_send_ir_blocking, args=(action, repeat), daemon=True)
+    t.start()
+
+def ir_correct(color, current_val, target_val):
+    """
+    Sends the minimum number of up/down IR commands to reconcile the
+    scoreboard with the on-screen counter after a missed signal.
+    color: 'red' or 'blue'
+    current_val: what the scoreboard currently shows
+    target_val:  what it should show
+    """
+    diff = target_val - current_val
+    if diff == 0:
+        return
+    action = f"{color}_up" if diff > 0 else f"{color}_down"
+    ir_send(action, repeat=abs(diff))
+    log_message(f"IR correction: {color} {current_val} -> {target_val} ({abs(diff)}x {action})")
+
+# =============================================================================
 
 # --- Theme Configuration ---
 THEME = {
@@ -135,7 +285,12 @@ ui_references = {
     'blue_roster_lbl': None,
     'blue_stats_lbl': None,
     'info_lbl': None,
-    'vs_label': None
+    'vs_label': None,
+    # Win animation state
+    '_win_flash_job': None,     # pending after() id for flash loop
+    '_win_glow_job': None,      # pending after() id for glow cancel
+    '_win_color': None,         # 'red' | 'blue' | None
+    '_win_debounce_job': None,  # pending after() id for settle delay
 }
 
 def update_footer_log_status():
@@ -298,6 +453,205 @@ def add_late_team():
     messagebox.showinfo("Late Entry", f"{new_team_name} ({p1_name} & {p2_name}) added!\nBracket updated for {len(TEAMS)} teams.")
 
 
+WIN_SCORE = 15   # Score needed to trigger a win
+
+# Dim glow colours (darker than the team colour, used for persistent win state)
+_WIN_GLOW = {'red': '#5C1A1A', 'blue': '#0D2B4A'}
+# Bright flash colour alternates between team colour and the glow
+_WIN_FLASH = {'red': THEME['red_team'], 'blue': THEME['blue_team']}
+
+def _cancel_win_animation():
+    """Cancel any in-progress flash/glow and restore both cards to normal bg."""
+    global ui_references, main_root
+    for job_key in ('_win_flash_job', '_win_glow_job', '_win_debounce_job'):
+        job = ui_references.get(job_key)
+        if job:
+            try:
+                main_root.after_cancel(job)
+            except Exception:
+                pass
+            ui_references[job_key] = None
+    ui_references['_win_color'] = None
+    # Restore card backgrounds
+    for color in ('red', 'blue'):
+        card = ui_references.get(f'{color}_card_frame')
+        if card:
+            _set_card_bg(card, THEME['bg_card'])
+
+def _set_card_bg(card, bg_color):
+    """Recursively set bg on a card frame and all its child widgets."""
+    try:
+        card.config(bg=bg_color)
+        for child in card.winfo_children():
+            try:
+                child.config(bg=bg_color)
+            except Exception:
+                pass
+            # One level deeper for nested frames (counter frame, etc.)
+            try:
+                for grandchild in child.winfo_children():
+                    try:
+                        grandchild.config(bg=bg_color)
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+def _start_win_animation(winner_color):
+    """
+    Flash the winning card rapidly for FLASH_DURATION seconds, then
+    settle into a persistent dim glow until the next match resets it.
+    """
+    global ui_references, main_root
+
+    _cancel_win_animation()   # clear any previous animation first
+    ui_references['_win_color'] = winner_color
+
+    card = ui_references.get(f'{winner_color}_card_frame')
+    if not card:
+        return
+
+    FLASH_DURATION  = 3000   # ms total flash period
+    FLASH_INTERVAL  = 180    # ms per flash half-cycle
+    glow_color      = _WIN_GLOW[winner_color]
+    bright_color    = _WIN_FLASH[winner_color]
+    flash_end_time  = main_root.tk.call('clock', 'milliseconds') + FLASH_DURATION
+    flash_state     = [False]   # mutable so inner func can toggle it
+
+    def _flash_tick():
+        now = main_root.tk.call('clock', 'milliseconds')
+        if now >= flash_end_time:
+            # Flash done — settle into glow
+            _set_card_bg(card, glow_color)
+            ui_references['_win_flash_job'] = None
+            return
+        flash_state[0] = not flash_state[0]
+        _set_card_bg(card, bright_color if flash_state[0] else glow_color)
+        ui_references['_win_flash_job'] = main_root.after(FLASH_INTERVAL, _flash_tick)
+
+    _flash_tick()
+
+WIN_SETTLE_DELAY = 5000  # ms to wait after last button press before checking win
+
+def _evaluate_win():
+    """
+    The actual win check — runs after the settle delay has elapsed with no
+    further button activity.
+
+    Rules:
+      - A team wins by reaching WIN_SCORE (15).
+      - If both teams are >= WIN_SCORE (e.g. 20-18), the higher score wins.
+      - If both scores are exactly equal and >= WIN_SCORE, do nothing and
+        wait for one to pull ahead (next button press will reschedule).
+    """
+    ui_references['_win_debounce_job'] = None
+
+    if ui_references.get('_win_color'):
+        return   # already animating
+
+    red_val  = ui_references['red_counter_var'].get()
+    blue_val = ui_references['blue_counter_var'].get()
+
+    red_wins  = red_val  >= WIN_SCORE
+    blue_wins = blue_val >= WIN_SCORE
+
+    if not red_wins and not blue_wins:
+        return   # nobody at 15 yet
+
+    if red_wins and blue_wins:
+        if red_val == blue_val:
+            # Dead heat — can't determine winner yet, wait for next press
+            log_message(f"Scores tied at {red_val}-{blue_val} above WIN_SCORE — waiting for one to pull ahead", "INFO")
+            return
+        winner = 'red' if red_val > blue_val else 'blue'
+    elif red_wins:
+        winner = 'red'
+    else:
+        winner = 'blue'
+
+    log_message(f"Win condition confirmed after settle — {winner} ({red_val} vs {blue_val})", "INFO")
+    _start_win_animation(winner)
+
+def _check_win_condition():
+    """
+    Called after every counter change (up or down). Cancels any pending
+    debounce timer and starts a fresh WIN_SETTLE_DELAY countdown. This means
+    the win animation only triggers once the score has been untouched for
+    5 seconds, avoiding false positives during rapid entry.
+    """
+    # Cancel previous pending check (score still being entered)
+    job = ui_references.get('_win_debounce_job')
+    if job:
+        try:
+            main_root.after_cancel(job)
+        except Exception:
+            pass
+
+    # Don't schedule a new check if a win is already showing
+    if ui_references.get('_win_color'):
+        return
+
+    ui_references['_win_debounce_job'] = main_root.after(WIN_SETTLE_DELAY, _evaluate_win)
+
+
+def _show_correction_dialog(color):
+    """
+    Opens a small dialog letting the operator enter what the physical scoreboard
+    currently shows for the given color. Calculates the delta vs the on-screen
+    counter and sends the corrective IR pulses via ir_correct().
+    """
+    team_color  = THEME['red_team'] if color == 'red' else THEME['blue_team']
+    label_color = 'RED' if color == 'red' else 'BLUE'
+    current_val = ui_references[f'{color}_counter_var'].get()
+
+    dialog = tk.Toplevel(main_root)
+    dialog.title(f"Fix {label_color} Score")
+    dialog.configure(bg=THEME['bg_main'])
+    dialog.resizable(False, False)
+    dialog.grab_set()
+    dialog.geometry("280x190")
+
+    tk.Label(dialog, text=f"Fix {label_color} Scoreboard",
+             font=THEME['font_header'], bg=THEME['bg_main'], fg=team_color).pack(pady=(16, 4))
+
+    tk.Label(dialog, text=f"App shows: {current_val}   |   Scoreboard shows:",
+             font=THEME['font_main'], bg=THEME['bg_main'], fg=THEME['fg_secondary']).pack(pady=(0, 8))
+
+    entry_var = tk.StringVar(value=str(current_val))
+    entry = tk.Entry(dialog, textvariable=entry_var, font=('Segoe UI', 18, 'bold'),
+                     width=5, justify='center',
+                     bg=THEME['bg_card'], fg=team_color,
+                     insertbackground=team_color, relief='flat')
+    entry.pack()
+    entry.select_range(0, 'end')
+    entry.focus_set()
+
+    def _confirm(event=None):
+        try:
+            scoreboard_val = int(entry_var.get())
+        except ValueError:
+            messagebox.showerror("Invalid", "Please enter a whole number.", parent=dialog)
+            return
+        if scoreboard_val < 0:
+            messagebox.showerror("Invalid", "Score cannot be negative.", parent=dialog)
+            return
+        ir_correct(color, scoreboard_val, current_val)
+        dialog.destroy()
+
+    entry.bind("<Return>", _confirm)
+
+    btn_row = tk.Frame(dialog, bg=THEME['bg_main'])
+    btn_row.pack(pady=(14, 0))
+    tk.Button(btn_row, text="✓ Correct", bg=THEME['btn_confirm'], fg='white',
+              relief='flat', padx=14, pady=4, font=THEME['font_main'],
+              command=_confirm).pack(side='left', padx=6)
+    tk.Button(btn_row, text="Cancel", bg=THEME['btn_cancel'], fg='white',
+              relief='flat', padx=14, pady=4, font=THEME['font_main'],
+              command=dialog.destroy).pack(side='left', padx=6)
+
+
 def setup_scoreboard(root, team_red_placeholder, team_blue_placeholder):
     """
     Redesigned Main UI: Uses Tabs to separate concerns and a 'Card' layout for the match.
@@ -376,11 +730,43 @@ def setup_scoreboard(root, team_red_placeholder, team_blue_placeholder):
     
     ui_references['red_roster_lbl'] = tk.Label(red_card, text="P1 / P2", font=('Segoe UI', 10, 'bold'), 
                                                fg=THEME['fg_secondary'], bg=THEME['bg_card'])
-    ui_references['red_roster_lbl'].pack(pady=(2,10))
-    
+    ui_references['red_roster_lbl'].pack(pady=(2, 10))
+
+    # -- Red Counter (centered between roster and win button) --
+    ui_references['red_counter_var'] = tk.IntVar(value=0)
+    red_counter_frame = tk.Frame(red_card, bg=THEME['bg_card'])
+    red_counter_frame.pack(expand=True)
+    def _red_down():
+        ui_references['red_counter_var'].set(max(0, ui_references['red_counter_var'].get() - 1))
+        ir_send('red_down')
+        _check_win_condition()
+    tk.Button(red_counter_frame, text="▼", font=('Segoe UI', 13, 'bold'),
+              bg=THEME['bg_main'], fg=THEME['red_team'], relief='flat', width=3,
+              cursor='hand2', command=_red_down,
+              ).pack(side='left', padx=6)
+    tk.Label(red_counter_frame, textvariable=ui_references['red_counter_var'],
+             font=('Segoe UI', 28, 'bold'), fg=THEME['red_team'], bg=THEME['bg_card'],
+             width=3, anchor='center').pack(side='left')
+    def _red_up():
+        ui_references['red_counter_var'].set(ui_references['red_counter_var'].get() + 1)
+        ir_send('red_up')
+        _check_win_condition()
+    tk.Button(red_counter_frame, text="▲", font=('Segoe UI', 13, 'bold'),
+              bg=THEME['bg_main'], fg=THEME['red_team'], relief='flat', width=3,
+              cursor='hand2', command=_red_up,
+              ).pack(side='left', padx=6)
+
+    # -- Red Fix Score button --
+    def _red_fix():
+        _show_correction_dialog('red')
+    tk.Button(red_card, text="✎ Fix Score", font=('Segoe UI', 8),
+              bg=THEME['bg_main'], fg=THEME['fg_secondary'], relief='flat',
+              cursor='hand2', command=_red_fix,
+              ).pack(pady=(0, 4))
+
     ui_references['red_stats_lbl'] = tk.Label(red_card, text="0-0", font=('Consolas', 9), fg=THEME['fg_secondary'], bg=THEME['bg_card'])
     ui_references['red_stats_lbl'].pack(side='bottom', pady=5)
-    
+
     btn_red = tk.Button(red_card, text="🏆 RED WINS", command=lambda: declare_winner('red'),
                         bg=THEME['red_team'], fg='white', font=('Segoe UI', 11, 'bold'),
                         relief='flat', activebackground='#C62828', cursor='hand2')
@@ -406,8 +792,40 @@ def setup_scoreboard(root, team_red_placeholder, team_blue_placeholder):
     
     ui_references['blue_roster_lbl'] = tk.Label(blue_card, text="P3 / P4", font=('Segoe UI', 10), 
                                                 fg=THEME['fg_secondary'], bg=THEME['bg_card'])
-    ui_references['blue_roster_lbl'].pack(pady=(2,10))
-    
+    ui_references['blue_roster_lbl'].pack(pady=(2, 10))
+
+    # -- Blue Counter (centered between roster and win button) --
+    ui_references['blue_counter_var'] = tk.IntVar(value=0)
+    blue_counter_frame = tk.Frame(blue_card, bg=THEME['bg_card'])
+    blue_counter_frame.pack(expand=True)
+    def _blue_down():
+        ui_references['blue_counter_var'].set(max(0, ui_references['blue_counter_var'].get() - 1))
+        ir_send('blue_down')
+        _check_win_condition()
+    tk.Button(blue_counter_frame, text="▼", font=('Segoe UI', 13, 'bold'),
+              bg=THEME['bg_main'], fg=THEME['blue_team'], relief='flat', width=3,
+              cursor='hand2', command=_blue_down,
+              ).pack(side='left', padx=6)
+    tk.Label(blue_counter_frame, textvariable=ui_references['blue_counter_var'],
+             font=('Segoe UI', 28, 'bold'), fg=THEME['blue_team'], bg=THEME['bg_card'],
+             width=3, anchor='center').pack(side='left')
+    def _blue_up():
+        ui_references['blue_counter_var'].set(ui_references['blue_counter_var'].get() + 1)
+        ir_send('blue_up')
+        _check_win_condition()
+    tk.Button(blue_counter_frame, text="▲", font=('Segoe UI', 13, 'bold'),
+              bg=THEME['bg_main'], fg=THEME['blue_team'], relief='flat', width=3,
+              cursor='hand2', command=_blue_up,
+              ).pack(side='left', padx=6)
+
+    # -- Blue Fix Score button --
+    def _blue_fix():
+        _show_correction_dialog('blue')
+    tk.Button(blue_card, text="✎ Fix Score", font=('Segoe UI', 8),
+              bg=THEME['bg_main'], fg=THEME['fg_secondary'], relief='flat',
+              cursor='hand2', command=_blue_fix,
+              ).pack(pady=(0, 4))
+
     ui_references['blue_stats_lbl'] = tk.Label(blue_card, text="0-0", font=('Consolas', 9), fg=THEME['fg_secondary'], bg=THEME['bg_card'])
     ui_references['blue_stats_lbl'].pack(side='bottom', pady=5)
 
@@ -1201,7 +1619,8 @@ def on_close(root):
     global LOG_FILE_HANDLE 
     
     log_message("Application close requested")
-    
+    flipper_disconnect()
+
     if LOG_FILE_HANDLE:
         try:
             LOG_FILE_HANDLE.close()
@@ -3035,6 +3454,14 @@ def display_final_rankings(champion):
 def reset_game(update_teams=True):
     """Resets the game state (only updating teams now)."""
     log_message("Game UI reset", "DEBUG")
+    # Cancel any win animation and restore card backgrounds
+    _cancel_win_animation()
+    # Reset match counters for both teams and send IR reset to scoreboard
+    for color in ('red', 'blue'):
+        counter_var = ui_references.get(f'{color}_counter_var')
+        if counter_var:
+            counter_var.set(0)
+    ir_send('reset')
     if update_teams:
         load_match_data_and_teams()
 
@@ -3069,8 +3496,11 @@ def setup_main_gui(root):
     main_root = root
     root.title("Moose Lodge Shuffleboard")
     root.configure(bg=THEME['bg_main'])
-    root.protocol("WM_DELETE_WINDOW", lambda: on_close(root)) 
-    
+    root.protocol("WM_DELETE_WINDOW", lambda: on_close(root))
+
+    # Attempt to connect Flipper Zero for IR scoreboard control (non-blocking)
+    threading.Thread(target=flipper_connect, daemon=True).start()
+
     root.geometry("470x600") # Taller geometry for better breathing room
 
     g1_teams = TOURNAMENT_STATE.get('G1', {}).get('teams', ["Team Red", "Team Blue"])
