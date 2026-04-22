@@ -21,6 +21,19 @@ try:
 except ImportError:
     SERIAL_AVAILABLE = False
 
+try:
+    from reportlab.lib.pagesizes import letter
+    from reportlab.lib import colors
+    from reportlab.lib.units import inch
+    from reportlab.platypus import (
+        SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, HRFlowable
+    )
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.enums import TA_CENTER, TA_LEFT
+    REPORTLAB_AVAILABLE = True
+except ImportError:
+    REPORTLAB_AVAILABLE = False
+
 # --- Version ---
 SHUF_VERSION = "1.74B"
 
@@ -2625,6 +2638,17 @@ def open_full_bracket():
         tk.Label(right_header, text="📁 VIEW ONLY MODE", font=THEME['font_bold'],
                 bg=THEME['bg_card'], fg='#FF9800').pack(side='left', padx=10)
 
+        def _replay_export_pdf():
+            champ = TOURNAMENT_RANKINGS.get('1ST')
+            if not champ:
+                messagebox.showwarning("Export", "No champion found — cannot export PDF.")
+                return
+            export_results_pdf(champ)
+
+        tk.Button(right_header, text="Export PDF", command=_replay_export_pdf,
+                 bg=THEME['btn_confirm'], fg='white', font=THEME['font_main'],
+                 relief='flat', padx=15, pady=5).pack(side='left', padx=5)
+
         tk.Button(right_header, text="Exit", command=lambda: on_close(main_root),
                  bg=THEME['btn_cancel'], fg='white', font=THEME['font_main'],
                  relief='flat', padx=15, pady=5).pack(side='left', padx=5)
@@ -2991,6 +3015,223 @@ def append_snapshot_to_file(path):
     except Exception as e:
         log_message(f"Failed to write snapshot to {path}: {e}", "ERROR")
 
+def _find_final_stats_in_file(path):
+    """
+    Scan the replay file and return the FINAL_STATS record if one exists,
+    or None if the tournament was not yet complete when the file was written.
+    """
+    if not path or not os.path.exists(path):
+        return None
+    result = None
+    with open(path, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                obj = json.loads(line)
+                if isinstance(obj, dict) and obj.get("type") == "FINAL_STATS":
+                    result = obj
+            except Exception:
+                continue
+    return result
+
+def _compute_final_stats(champion):
+    """
+    Compute the full set of final-screen statistics from current globals and
+    return them as a plain serialisable dict.  Called both when saving to the
+    replay file and when building the PDF from a replay.
+    """
+    stats = {}
+
+    # ── Standings ────────────────────────────────────────────────────────────
+    standings = []
+    for key in ('1ST', '2ND', '3RD'):
+        team = TOURNAMENT_RANKINGS.get(key)
+        if team:
+            wins, losses = get_team_record(team)
+            standings.append({
+                'rank': key,
+                'team': team,
+                'roster': TEAM_ROSTERS.get(team, []),
+                'wins': wins,
+                'losses': losses,
+            })
+    stats['standings'] = standings
+
+    # ── Tournament totals ─────────────────────────────────────────────────────
+    total_teams   = len(TEAMS)
+    total_players = sum(len(r) for r in TEAM_ROSTERS.values())
+    total_matches = len(MATCH_DURATIONS)
+    total_time    = sum(MATCH_DURATIONS)
+    avg_time      = int(total_time / total_matches) if total_matches else 0
+    stats['total_teams']   = total_teams
+    stats['total_players'] = total_players
+    stats['total_matches'] = total_matches
+    stats['total_time_s']  = total_time
+    stats['avg_time_s']    = avg_time
+
+    # Longest win streak
+    if MATCH_HISTORY:
+        best_streak, best_team_s = 0, None
+        cur_streak, cur_team = 0, None
+        for rec in MATCH_HISTORY:
+            if rec['winner'] == cur_team:
+                cur_streak += 1
+            else:
+                cur_team, cur_streak = rec['winner'], 1
+            if cur_streak > best_streak:
+                best_streak, best_team_s = cur_streak, cur_team
+        if best_streak > 1:
+            stats['longest_streak'] = {'team': best_team_s, 'count': best_streak}
+
+    # Champion win rate
+    champ_wins, champ_losses = get_team_record(champion)
+    stats['champion_wins']   = champ_wins
+    stats['champion_losses'] = champ_losses
+
+    # WB / LB / Finals split
+    wb_ids  = {mid for mid, md in TOURNAMENT_STATE.items()
+               if isinstance(md, dict) and md.get('is_winnerbracket') is True}
+    lb_ids  = {mid for mid, md in TOURNAMENT_STATE.items()
+               if isinstance(md, dict) and md.get('is_winnerbracket') is False}
+    fin_ids = {'GF', 'GGF'}
+    stats['wb_played']  = sum(1 for r in MATCH_HISTORY if r.get('id') in wb_ids)
+    stats['lb_played']  = sum(1 for r in MATCH_HISTORY if r.get('id') in lb_ids)
+    stats['fin_played'] = sum(1 for r in MATCH_HISTORY if r.get('id') in fin_ids)
+
+    # ── Match breakdown ───────────────────────────────────────────────────────
+    total_h   = len(MATCH_HISTORY)
+    red_wins  = sum(1 for x in MATCH_HISTORY if x['color'] == 'red')
+    blue_wins = sum(1 for x in MATCH_HISTORY if x['color'] == 'blue')
+    stats['red_wins']  = red_wins
+    stats['blue_wins'] = blue_wins
+
+    if MATCH_DURATIONS and MATCH_HISTORY:
+        paired = list(zip(MATCH_DURATIONS, MATCH_HISTORY))
+        long_dur, long_rec = max(paired, key=lambda x: x[0])
+        shrt_dur, shrt_rec = min(paired, key=lambda x: x[0])
+        stats['longest_match']  = {'duration_s': long_dur,
+                                    'winner': long_rec['winner'],
+                                    'id': long_rec['id']}
+        stats['shortest_match'] = {'duration_s': shrt_dur,
+                                    'winner': shrt_rec['winner'],
+                                    'id': shrt_rec['id']}
+
+    team_wins_map = {}
+    for rec in MATCH_HISTORY:
+        team_wins_map[rec['winner']] = team_wins_map.get(rec['winner'], 0) + 1
+    if team_wins_map:
+        top_team = max(team_wins_map, key=team_wins_map.get)
+        stats['most_wins'] = {'team': top_team, 'count': team_wins_map[top_team]}
+
+    # ── Scoring stats ─────────────────────────────────────────────────────────
+    scored_recs = [r for r in MATCH_HISTORY if 'red_score' in r and 'blue_score' in r]
+    if scored_recs:
+        high_rec    = max(scored_recs, key=lambda x: max(x['red_score'], x['blue_score']))
+        margins     = [abs(r['red_score'] - r['blue_score']) for r in scored_recs]
+        win_scores  = [max(r['red_score'], r['blue_score']) for r in scored_recs]
+        loss_scores = [min(r['red_score'], r['blue_score']) for r in scored_recs]
+        closest     = min(scored_recs, key=lambda x: abs(x['red_score'] - x['blue_score']))
+        blowout     = max(scored_recs, key=lambda x: abs(x['red_score'] - x['blue_score']))
+
+        team_pts = {}
+        for rec in scored_recs:
+            if rec['color'] == 'red':
+                win_pts, loss_pts = rec['red_score'], rec['blue_score']
+            else:
+                win_pts, loss_pts = rec['blue_score'], rec['red_score']
+            team_pts[rec['winner']] = team_pts.get(rec['winner'], 0) + win_pts
+            team_pts[rec['loser']]  = team_pts.get(rec['loser'],  0) + loss_pts
+
+        stats['scoring'] = {
+            'high_score':    max(high_rec['red_score'], high_rec['blue_score']),
+            'high_score_low': min(high_rec['red_score'], high_rec['blue_score']),
+            'high_score_winner': high_rec['winner'],
+            'high_score_id': high_rec['id'],
+            'avg_margin':    round(sum(margins) / len(margins), 2),
+            'avg_win':       round(sum(win_scores)  / len(win_scores),  2),
+            'avg_loss':      round(sum(loss_scores) / len(loss_scores), 2),
+            'closest':  {'id': closest['id'], 'winner': closest['winner'],
+                         'win': max(closest['red_score'], closest['blue_score']),
+                         'loss': min(closest['red_score'], closest['blue_score'])},
+            'blowout':  {'id': blowout['id'], 'winner': blowout['winner'],
+                         'win': max(blowout['red_score'], blowout['blue_score']),
+                         'loss': min(blowout['red_score'], blowout['blue_score'])},
+        }
+        if team_pts:
+            top_scorer = max(team_pts, key=team_pts.get)
+            stats['scoring']['top_scorer'] = {'team': top_scorer,
+                                               'pts': team_pts[top_scorer]}
+
+    # ── Misc ──────────────────────────────────────────────────────────────────
+    team_matches_map = {}
+    for rec in MATCH_HISTORY:
+        for t in [rec['winner'], rec['loser']]:
+            team_matches_map[t] = team_matches_map.get(t, 0) + 1
+    if team_matches_map:
+        busiest = max(team_matches_map, key=team_matches_map.get)
+        stats['most_active'] = {'team': busiest, 'count': team_matches_map[busiest]}
+
+    lb_runs = {}
+    for rec in MATCH_HISTORY:
+        lb_runs[rec['winner']] = lb_runs.get(rec['winner'], 0) + 1
+    lb_contenders = {t: w for t, w in lb_runs.items()
+                     if sum(1 for x in MATCH_HISTORY if x['loser'] == t) > 0}
+    if lb_contenders:
+        grinder = max(lb_contenders, key=lb_contenders.get)
+        grind_losses = sum(1 for x in MATCH_HISTORY if x['loser'] == grinder)
+        stats['best_lb_run'] = {'team': grinder,
+                                 'wins': lb_contenders[grinder],
+                                 'losses': grind_losses}
+
+    all_teams_hist = {r['winner'] for r in MATCH_HISTORY} | {r['loser'] for r in MATCH_HISTORY}
+    team_total_m   = {t: sum(1 for x in MATCH_HISTORY if x['winner']==t or x['loser']==t)
+                      for t in all_teams_hist}
+    eliminated = {t: m for t, m in team_total_m.items() if t != champion}
+    if eliminated:
+        quickest = min(eliminated, key=eliminated.get)
+        stats['quickest_exit'] = {'team': quickest, 'matches': eliminated[quickest]}
+
+    gf_data = TOURNAMENT_STATE.get('GF', {})
+    stats['had_gf_reset'] = bool(isinstance(gf_data, dict) and gf_data.get('is_reset', False))
+
+    stats['match_history'] = list(MATCH_HISTORY)
+
+    return stats
+
+def append_final_stats_to_file(path, champion):
+    """
+    Write a single FINAL_STATS ND-JSON line to the replay file.
+    Called once when active_match_id transitions to TOURNAMENT_OVER.
+    Safe to call if the file already has a FINAL_STATS line — checks first.
+    """
+    if not path:
+        return
+    if _find_final_stats_in_file(path) is not None:
+        log_message("FINAL_STATS already present in replay file — skipping", "DEBUG")
+        return
+    try:
+        record = {
+            "type":      "FINAL_STATS",
+            "version":   SNAPSHOT_VERSION,
+            "timestamp": time.time(),
+            "champion":  champion,
+            "stats":     _compute_final_stats(champion),
+        }
+        line = json.dumps(record, separators=(",", ":")) + "\n"
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(line)
+            f.flush()
+            try:
+                os.fsync(f.fileno())
+            except Exception:
+                pass
+        log_message(f"FINAL_STATS written to replay file: {path}")
+    except Exception as e:
+        log_message(f"Failed to write FINAL_STATS: {e}", "ERROR")
+
+
 def handle_match_resolution(winner, loser, winning_color, match_id):
     """
     Propagates the winner/loser of the *specific* completed match (match_id)
@@ -3323,6 +3564,443 @@ def swap_teams():
 
     update_scoreboard_display()
 
+def export_results_pdf(champion):
+    """
+    Exports the tournament final screen stats to a PDF file using ReportLab.
+    Mirrors the data logic of display_final_rankings().
+    """
+    if not REPORTLAB_AVAILABLE:
+        messagebox.showerror(
+            "Missing Library",
+            "ReportLab is not installed.\n\nRun:  pip install reportlab\n\nthen restart the app."
+        )
+        return
+
+    filepath = filedialog.asksaveasfilename(
+        defaultextension=".pdf",
+        filetypes=[("PDF files", "*.pdf")],
+        initialfile=f"tournament_results_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
+        title="Save Tournament Results PDF"
+    )
+    if not filepath:
+        return  # User cancelled
+
+    try:
+        # ── Colour palette mirroring THEME ──────────────────────────────────
+        C_BG        = colors.HexColor('#263238')
+        C_CARD      = colors.HexColor('#37474F')
+        C_GOLD      = colors.HexColor('#FFD700')
+        C_FG        = colors.HexColor('#ECEFF1')
+        C_FG2       = colors.HexColor('#B0BEC5')
+        C_RED       = colors.HexColor('#E53935')
+        C_BLUE      = colors.HexColor('#1E88E5')
+        C_WHITE     = colors.white
+
+        # ── Paragraph styles ────────────────────────────────────────────────
+        base = ParagraphStyle('base', fontName='Helvetica',
+                              fontSize=10, textColor=C_FG,
+                              backColor=C_BG, leading=14)
+        title_style = ParagraphStyle('title', parent=base,
+                                     fontName='Helvetica-Bold',
+                                     fontSize=18, textColor=C_GOLD,
+                                     alignment=TA_CENTER, spaceAfter=4)
+        champ_name  = ParagraphStyle('champName', parent=base,
+                                     fontName='Helvetica-Bold',
+                                     fontSize=15, textColor=C_FG,
+                                     alignment=TA_CENTER)
+        champ_sub   = ParagraphStyle('champSub', parent=base,
+                                     fontSize=10, textColor=C_FG2,
+                                     alignment=TA_CENTER, spaceAfter=8)
+        sec_hdr     = ParagraphStyle('secHdr', parent=base,
+                                     fontName='Helvetica-Bold',
+                                     fontSize=10, textColor=C_GOLD,
+                                     spaceBefore=10, spaceAfter=4)
+        footer_style= ParagraphStyle('footer', parent=base,
+                                     fontSize=8, textColor=C_FG2,
+                                     alignment=TA_CENTER)
+
+        # ── Table cell styles ────────────────────────────────────────────────
+        LABEL_STYLE = ParagraphStyle('lbl', parent=base,
+                                     fontSize=9, textColor=C_FG2)
+        VALUE_STYLE = ParagraphStyle('val', parent=base,
+                                     fontName='Helvetica-Bold',
+                                     fontSize=9, textColor=C_FG)
+
+        def lbl(text):
+            return Paragraph(text, LABEL_STYLE)
+
+        def val(text, color=None):
+            s = ParagraphStyle('v', parent=VALUE_STYLE,
+                               textColor=color or C_FG)
+            return Paragraph(text, s)
+
+        def section(text):
+            return Paragraph(text, sec_hdr)
+
+        def hr():
+            return HRFlowable(width="100%", thickness=1,
+                              color=C_GOLD, spaceAfter=6, spaceBefore=2)
+
+        # ── Shared table style ───────────────────────────────────────────────
+        def stat_table_style():
+            return TableStyle([
+                ('BACKGROUND',  (0, 0), (-1, -1), C_CARD),
+                ('TEXTCOLOR',   (0, 0), (-1, -1), C_FG),
+                ('ROWBACKGROUNDS', (0, 0), (-1, -1), [C_CARD, colors.HexColor('#2E3C43')]),
+                ('LEFTPADDING',  (0, 0), (-1, -1), 8),
+                ('RIGHTPADDING', (0, 0), (-1, -1), 8),
+                ('TOPPADDING',   (0, 0), (-1, -1), 4),
+                ('BOTTOMPADDING',(0, 0), (-1, -1), 4),
+            ])
+
+        # ── Build story ──────────────────────────────────────────────────────
+        doc = SimpleDocTemplate(
+            filepath,
+            pagesize=letter,
+            leftMargin=0.6*inch, rightMargin=0.6*inch,
+            topMargin=0.6*inch,  bottomMargin=0.6*inch,
+        )
+
+        W = letter[0] - 1.2*inch   # usable width
+        COL_W = (W - 0.15*inch) / 2  # two equal columns
+
+        story = []
+
+        # ── Header ───────────────────────────────────────────────────────────
+        story.append(Paragraph("TOURNAMENT COMPLETE", title_style))
+        story.append(hr())
+
+        # ── Champion block ───────────────────────────────────────────────────
+        champ_roster = " / ".join(TEAM_ROSTERS.get(champion, ['?', '?']))
+        champ_table = Table(
+            [[Paragraph("CHAMPIONS", ParagraphStyle('ct', parent=base,
+                         fontName='Helvetica-Bold', fontSize=10,
+                         textColor=C_GOLD, alignment=TA_CENTER)),],
+             [Paragraph(champ_roster, champ_name)],
+            ],
+            colWidths=[W]
+        )
+        champ_table.setStyle(TableStyle([
+            ('BACKGROUND',   (0, 0), (-1, -1), colors.HexColor('#455A64')),
+            ('ALIGN',        (0, 0), (-1, -1), 'CENTER'),
+            ('TOPPADDING',   (0, 0), (-1, -1), 6),
+            ('BOTTOMPADDING',(0, 0), (-1, -1), 6),
+        ]))
+        story.append(champ_table)
+        story.append(hr())
+
+        # ── Collect all stat rows for left / right columns ────────────────────
+        left_rows  = []
+        right_rows = []
+
+        # LEFT — Final Standings
+        left_rows.append([section("Final Standings"), ""])
+        places = [
+            ('1st Place', '1ST', C_GOLD),
+            ('2nd Place', '2ND', C_FG),
+            ('3rd Place', '3RD', C_FG2),
+        ]
+        for label_text, key, color in places:
+            team = TOURNAMENT_RANKINGS.get(key)
+            if not team:
+                continue
+            roster = " / ".join(TEAM_ROSTERS.get(team, ['?', '?']))
+            wins, losses = get_team_record(team)
+            left_rows.append([lbl(f"{label_text}  (W/L {wins}/{losses})"),
+                               val(roster, color)])
+
+        # LEFT — Tournament Stats
+        left_rows.append([section("Tournament Stats"), ""])
+        total_teams   = len(TEAMS)
+        total_players = sum(len(r) for r in TEAM_ROSTERS.values())
+        total_matches = len(MATCH_DURATIONS)
+        total_time    = sum(MATCH_DURATIONS)
+        avg_time      = int(total_time / total_matches) if total_matches else 0
+
+        left_rows.append([lbl("Teams"),           val(str(total_teams))])
+        left_rows.append([lbl("Players"),         val(str(total_players))])
+        left_rows.append([lbl("Matches played"),  val(str(total_matches))])
+        left_rows.append([lbl("Total time"),      val(format_seconds(total_time))])
+        left_rows.append([lbl("Avg match time"),  val(format_seconds(avg_time))])
+
+        # Longest win streak (consecutive wins by one team across MATCH_HISTORY order)
+        if MATCH_HISTORY:
+            best_streak, best_team_s = 0, None
+            cur_streak,  cur_team    = 0, None
+            for rec in MATCH_HISTORY:
+                if rec['winner'] == cur_team:
+                    cur_streak += 1
+                else:
+                    cur_team   = rec['winner']
+                    cur_streak = 1
+                if cur_streak > best_streak:
+                    best_streak, best_team_s = cur_streak, cur_team
+            if best_streak > 1 and best_team_s:
+                streak_roster = " & ".join(TEAM_ROSTERS.get(best_team_s, ['?', '?']))
+                left_rows.append([lbl("Longest win streak"),
+                                   val(f"{streak_roster}  ({best_streak})")])
+
+        # Champion win rate
+        champ_wins, champ_losses = get_team_record(champion)
+        champ_played = champ_wins + champ_losses
+        champ_pct = int(champ_wins / champ_played * 100) if champ_played else 0
+        left_rows.append([lbl("Champion win rate"),
+                           val(f"{champ_wins}W-{champ_losses}L  ({champ_pct}%)", C_GOLD)])
+
+        # WB vs LB match split
+        wb_count = sum(1 for r in MATCH_HISTORY
+                       if not (r.get('id', '').startswith('G') and
+                               any(r.get('id', '') == mid
+                                   for mid, md in TOURNAMENT_STATE.items()
+                                   if isinstance(md, dict) and not md.get('is_winnerbracket', True))))
+        # Simpler: count by match ID prefix patterns — GF/GGF are finals, Gx depends on is_winnerbracket
+        wb_ids = {mid for mid, md in TOURNAMENT_STATE.items()
+                  if isinstance(md, dict) and md.get('is_winnerbracket') is True}
+        lb_ids = {mid for mid, md in TOURNAMENT_STATE.items()
+                  if isinstance(md, dict) and md.get('is_winnerbracket') is False}
+        fin_ids= {'GF', 'GGF'}
+        wb_played  = sum(1 for r in MATCH_HISTORY if r.get('id') in wb_ids)
+        lb_played  = sum(1 for r in MATCH_HISTORY if r.get('id') in lb_ids)
+        fin_played = sum(1 for r in MATCH_HISTORY if r.get('id') in fin_ids)
+        if wb_played or lb_played or fin_played:
+            parts = []
+            if wb_played:  parts.append(f"{wb_played} WB")
+            if lb_played:  parts.append(f"{lb_played} LB")
+            if fin_played: parts.append(f"{fin_played} Finals")
+            left_rows.append([lbl("Match breakdown"), val("  /  ".join(parts))])
+
+        # RIGHT — Match Breakdown
+        right_rows.append([section("Match Breakdown"), ""])
+        total_h   = len(MATCH_HISTORY)
+        red_wins  = sum(1 for x in MATCH_HISTORY if x['color'] == 'red')
+        blue_wins = sum(1 for x in MATCH_HISTORY if x['color'] == 'blue')
+        red_pct   = int(red_wins  / total_h * 100) if total_h else 0
+        blue_pct  = int(blue_wins / total_h * 100) if total_h else 0
+        right_rows.append([lbl("Red side wins"),  val(f"{red_wins} ({red_pct}%)", C_RED)])
+        right_rows.append([lbl("Blue side wins"), val(f"{blue_wins} ({blue_pct}%)", C_BLUE)])
+
+        if MATCH_DURATIONS and MATCH_HISTORY:
+            paired = list(zip(MATCH_DURATIONS, MATCH_HISTORY))
+            long_dur, long_rec = max(paired, key=lambda x: x[0])
+            shrt_dur, shrt_rec = min(paired, key=lambda x: x[0])
+            lw = " & ".join(TEAM_ROSTERS.get(long_rec['winner'], ['?', '?']))
+            sw = " & ".join(TEAM_ROSTERS.get(shrt_rec['winner'], ['?', '?']))
+            right_rows.append([lbl("Longest match"),  val(f"{format_seconds(long_dur)}  ({lw})")])
+            right_rows.append([lbl("Shortest match"), val(f"{format_seconds(shrt_dur)}  ({sw})")])
+
+        team_wins = {}
+        for rec in MATCH_HISTORY:
+            team_wins[rec['winner']] = team_wins.get(rec['winner'], 0) + 1
+        if team_wins:
+            top_team   = max(team_wins, key=team_wins.get)
+            top_roster = " & ".join(TEAM_ROSTERS.get(top_team, ['?', '?']))
+            right_rows.append([lbl("Most wins"),
+                                val(f"{top_roster} ({team_wins[top_team]})", C_GOLD)])
+
+        # RIGHT — Scoring Stats (only when score data present)
+        scored_recs = [r for r in MATCH_HISTORY if 'red_score' in r and 'blue_score' in r]
+        if scored_recs:
+            high_rec   = max(scored_recs, key=lambda x: max(x['red_score'], x['blue_score']))
+            high_score = max(high_rec['red_score'], high_rec['blue_score'])
+            low_score  = min(high_rec['red_score'], high_rec['blue_score'])
+            high_roster = " & ".join(TEAM_ROSTERS.get(high_rec['winner'], ['?', '?']))
+            right_rows.append([lbl("High score"),
+                                val(f"{high_score}-{low_score}  ({high_rec['id']}, {high_roster})")])
+
+            right_rows.append([section("Scoring Stats"), ""])
+
+            margins    = [abs(r['red_score'] - r['blue_score']) for r in scored_recs]
+            win_scores = [max(r['red_score'], r['blue_score']) for r in scored_recs]
+            loss_scores= [min(r['red_score'], r['blue_score']) for r in scored_recs]
+
+            avg_margin = sum(margins) / len(margins)
+            avg_win    = sum(win_scores)  / len(win_scores)
+            avg_loss   = sum(loss_scores) / len(loss_scores)
+            right_rows.append([lbl("Avg winning margin"), val(f"{avg_margin:.1f} pts")])
+            right_rows.append([lbl("Avg final score"),    val(f"{avg_win:.1f} - {avg_loss:.1f}")])
+
+            closest_rec = min(scored_recs, key=lambda x: abs(x['red_score'] - x['blue_score']))
+            c_gap  = abs(closest_rec['red_score'] - closest_rec['blue_score'])
+            c_win  = max(closest_rec['red_score'], closest_rec['blue_score'])
+            c_loss = min(closest_rec['red_score'], closest_rec['blue_score'])
+            c_roster = " & ".join(TEAM_ROSTERS.get(closest_rec['winner'], ['?', '?']))
+            right_rows.append([lbl("Closest match"),
+                                val(f"{c_win}-{c_loss} (delta {c_gap})  {closest_rec['id']}  {c_roster}")])
+
+            blowout_rec = max(scored_recs, key=lambda x: abs(x['red_score'] - x['blue_score']))
+            b_gap  = abs(blowout_rec['red_score'] - blowout_rec['blue_score'])
+            b_win  = max(blowout_rec['red_score'], blowout_rec['blue_score'])
+            b_loss = min(blowout_rec['red_score'], blowout_rec['blue_score'])
+            b_roster = " & ".join(TEAM_ROSTERS.get(blowout_rec['winner'], ['?', '?']))
+            right_rows.append([lbl("Most lopsided"),
+                                val(f"{b_win}-{b_loss} (delta {b_gap})  {blowout_rec['id']}  {b_roster}")])
+
+            team_pts = {}
+            for rec in scored_recs:
+                r_score = rec['red_score']
+                b_score = rec['blue_score']
+                if rec['color'] == 'red':
+                    win_team,  win_pts  = rec['winner'], r_score
+                    loss_team, loss_pts = rec['loser'],  b_score
+                else:
+                    win_team,  win_pts  = rec['winner'], b_score
+                    loss_team, loss_pts = rec['loser'],  r_score
+                team_pts[win_team]  = team_pts.get(win_team,  0) + win_pts
+                team_pts[loss_team] = team_pts.get(loss_team, 0) + loss_pts
+            if team_pts:
+                top_scorer        = max(team_pts, key=team_pts.get)
+                top_scorer_roster = " & ".join(TEAM_ROSTERS.get(top_scorer, ['?', '?']))
+                right_rows.append([lbl("Most pts scored"),
+                                    val(f"{top_scorer_roster} ({team_pts[top_scorer]} pts)", C_GOLD)])
+
+        # Most active
+        team_matches = {}
+        for rec in MATCH_HISTORY:
+            for t in [rec['winner'], rec['loser']]:
+                team_matches[t] = team_matches.get(t, 0) + 1
+        if team_matches:
+            busiest     = max(team_matches, key=team_matches.get)
+            busy_roster = " & ".join(TEAM_ROSTERS.get(busiest, ['?', '?']))
+            right_rows.append([lbl("Most active"),
+                                val(f"{busy_roster} ({team_matches[busiest]})")])
+
+        # Best LB run
+        lb_runs = {}
+        for rec in MATCH_HISTORY:
+            lb_runs[rec['winner']] = lb_runs.get(rec['winner'], 0) + 1
+        lb_contenders = {t: w for t, w in lb_runs.items()
+                         if sum(1 for x in MATCH_HISTORY if x['loser'] == t) > 0}
+        if lb_contenders:
+            grinder      = max(lb_contenders, key=lb_contenders.get)
+            grind_roster = " & ".join(TEAM_ROSTERS.get(grinder, ['?', '?']))
+            grind_losses = sum(1 for x in MATCH_HISTORY if x['loser'] == grinder)
+            right_rows.append([lbl("Best LB Run"),
+                                val(f"{grind_roster} ({lb_contenders[grinder]}W-{grind_losses}L)")])
+
+        # Quickest exit
+        all_teams_in_history = set()
+        for rec in MATCH_HISTORY:
+            all_teams_in_history.add(rec['winner'])
+            all_teams_in_history.add(rec['loser'])
+        team_total_matches = {t: sum(1 for x in MATCH_HISTORY
+                                     if x['winner'] == t or x['loser'] == t)
+                              for t in all_teams_in_history}
+        eliminated = {t: m for t, m in team_total_matches.items() if t != champion}
+        if eliminated:
+            quickest     = min(eliminated, key=eliminated.get)
+            quick_roster = " & ".join(TEAM_ROSTERS.get(quickest, ['?', '?']))
+            right_rows.append([lbl("Quickest Exit"),
+                                val(f"{quick_roster} ({eliminated[quickest]} match{'es' if eliminated[quickest] != 1 else ''})")])
+
+        # GF reset?
+        gf_data  = TOURNAMENT_STATE.get('GF', {})
+        had_reset = isinstance(gf_data, dict) and gf_data.get('is_reset', False)
+        champ_roster_str = " / ".join(TEAM_ROSTERS.get(champion, ['?', '?']))
+        right_rows.append([lbl("Undefeated Teams"),
+                            val("None" if had_reset else champ_roster_str,
+                                C_FG2 if had_reset else C_GOLD)])
+
+        # ── Build individual column tables ───────────────────────────────────
+        INNER_L = COL_W * 0.45  # label sub-column
+        INNER_V = COL_W * 0.55  # value sub-column
+
+        left_table  = Table(left_rows,  colWidths=[INNER_L, INNER_V])
+        right_table = Table(right_rows, colWidths=[INNER_L, INNER_V])
+        left_table.setStyle(stat_table_style())
+        right_table.setStyle(stat_table_style())
+
+        # ── Combine into a two-column wrapper ────────────────────────────────
+        two_col = Table(
+            [[left_table, right_table]],
+            colWidths=[COL_W, COL_W],
+            hAlign='LEFT',
+        )
+        two_col.setStyle(TableStyle([
+            ('VALIGN',       (0, 0), (-1, -1), 'TOP'),
+            ('LEFTPADDING',  (0, 0), (-1, -1), 0),
+            ('RIGHTPADDING', (0, 0), (-1, -1), 0),
+            ('TOPPADDING',   (0, 0), (-1, -1), 0),
+            ('BOTTOMPADDING',(0, 0), (-1, -1), 0),
+            ('COLPADDING',   (0, 0), (-1, -1), 6),
+        ]))
+        story.append(two_col)
+        story.append(hr())
+
+        # ── Match History table ──────────────────────────────────────────────
+        if MATCH_HISTORY:
+            story.append(section("Match History"))
+            hdr_style = ParagraphStyle('mhHdr', parent=base,
+                                       fontName='Helvetica-Bold',
+                                       fontSize=8, textColor=C_GOLD)
+            cell_style = ParagraphStyle('mhCell', parent=base,
+                                        fontSize=8, textColor=C_FG)
+
+            def mhdr(t): return Paragraph(t, hdr_style)
+            def mcell(t, color=None):
+                s = ParagraphStyle('mc', parent=cell_style,
+                                   textColor=color or C_FG)
+                return Paragraph(t, s)
+
+            history_data = [[mhdr("Match"), mhdr("Winner"), mhdr("Loser"),
+                              mhdr("Score"), mhdr("Duration")]]
+            for rec in MATCH_HISTORY:
+                w_roster = " & ".join(TEAM_ROSTERS.get(rec['winner'], ['?', '?']))
+                l_roster = " & ".join(TEAM_ROSTERS.get(rec['loser'],  ['?', '?']))
+                score_str = ""
+                if 'red_score' in rec and 'blue_score' in rec:
+                    score_str = f"{rec['red_score']}-{rec['blue_score']}"
+                idx = MATCH_HISTORY.index(rec)
+                dur_str = format_seconds(MATCH_DURATIONS[idx]) if idx < len(MATCH_DURATIONS) else "-"
+                w_color = C_RED if rec.get('color') == 'red' else C_BLUE
+                history_data.append([
+                    mcell(rec.get('id', '-')),
+                    mcell(w_roster, w_color),
+                    mcell(l_roster),
+                    mcell(score_str),
+                    mcell(dur_str),
+                ])
+
+            col_w = W / 5
+            hist_table = Table(history_data, colWidths=[col_w]*5)
+            hist_table.setStyle(TableStyle([
+                ('BACKGROUND',    (0, 0), (-1, 0),  C_CARD),
+                ('ROWBACKGROUNDS',(0, 1), (-1, -1), [C_CARD, colors.HexColor('#2E3C43')]),
+                ('LINEBELOW',     (0, 0), (-1, 0),  1, C_GOLD),
+                ('LEFTPADDING',   (0, 0), (-1, -1), 6),
+                ('RIGHTPADDING',  (0, 0), (-1, -1), 6),
+                ('TOPPADDING',    (0, 0), (-1, -1), 3),
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 3),
+            ]))
+            story.append(hist_table)
+
+        story.append(Spacer(1, 14))
+
+        # ── Footer ───────────────────────────────────────────────────────────
+        ts = datetime.datetime.now().strftime("%B %d, %Y  %I:%M %p")
+        story.append(Paragraph(
+            f"Moose Lodge Shuffleboard  •  Generated {ts}  •  v{SHUF_VERSION}",
+            footer_style
+        ))
+
+        # ── Page background colour via onPage callback ────────────────────────
+        def dark_background(canvas_obj, doc_obj):
+            canvas_obj.saveState()
+            canvas_obj.setFillColor(C_BG)
+            canvas_obj.rect(0, 0, letter[0], letter[1], fill=1, stroke=0)
+            canvas_obj.restoreState()
+
+        doc.build(story, onFirstPage=dark_background, onLaterPages=dark_background)
+
+        log_message(f"PDF exported: {filepath}")
+        messagebox.showinfo("Export Successful",
+                            f"Tournament results saved to:\n{filepath}")
+
+    except Exception as e:
+        log_message(f"PDF export failed: {e}", "ERROR")
+        messagebox.showerror("Export Failed",
+                             f"Could not create PDF:\n{e}")
+
+
 def display_final_rankings(champion):
     """Displays the Tournament Complete screen with standings and statistics."""
     global rankings_display_frame_ref, rankings_label_ref
@@ -3594,6 +4272,24 @@ def display_final_rankings(champion):
     tk.Frame(P, bg=THEME['accent_gold'], height=2).pack(fill='x', pady=(10, 6))
 
     # Final controls
+    for w in final_control_frame_ref.winfo_children():
+        w.destroy()
+
+    btn_row = tk.Frame(final_control_frame_ref, bg=THEME['bg_main'])
+    btn_row.pack(pady=6)
+
+    tk.Button(
+        btn_row,
+        text="📄 Export PDF",
+        font=THEME['font_bold'],
+        bg=THEME['btn_confirm'],
+        fg='white',
+        relief='flat',
+        padx=18, pady=6,
+        cursor='hand2',
+        command=lambda: export_results_pdf(champion)
+    ).pack(side='left', padx=8)
+
     final_control_frame_ref.pack(fill='x', pady=(0, 6))
 
 def reset_game(update_teams=True):
@@ -4769,6 +5465,12 @@ def confirm_match_resolution(winner, loser, winning_color, match_id):
     current_match_res_buttons = []
 
     append_snapshot_to_file(REPLAY_FILEPATH)
+
+    # If the tournament just ended, append the final stats record once
+    if TOURNAMENT_STATE.get('active_match_id') == 'TOURNAMENT_OVER' and REPLAY_FILEPATH:
+        champion = TOURNAMENT_RANKINGS.get('1ST')
+        if champion:
+            append_final_stats_to_file(REPLAY_FILEPATH, champion)
 
     reset_game()
 
