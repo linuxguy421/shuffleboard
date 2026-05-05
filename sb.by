@@ -59,6 +59,7 @@ IR_CODES = {
     'red_up':     ('NEC', '00', '17'),
     'blue_down':  ('NEC', '00', '19'),
     'red_down':   ('NEC', '00', '50'),
+    'power':      ('NEC', '00', '14'),
 }
 
 # Minimum delay (seconds) between consecutive IR sends to avoid the scoreboard
@@ -189,6 +190,29 @@ def ir_correct(color, current_val, target_val):
     action = f"{color}_up" if diff > 0 else f"{color}_down"
     ir_send(action, repeat=abs(diff))
     log_message(f"IR correction: {color} {current_val} -> {target_val} ({abs(diff)}x {action})")
+
+def _blink_blocking(cycles, interval):
+    """
+    Internal: sends 'power' IR 2*cycles times (off, on per cycle) with
+    `interval` seconds between each toggle. Runs on a background thread.
+    The scoreboard must start in the ON state for the sequence to end ON.
+    """
+    log_message(f"IR win blink started — {cycles} cycles, {interval}s interval")
+    for i in range(cycles * 2):
+        _send_ir_blocking('power')
+        if i < cycles * 2 - 1:   # no trailing sleep after the last toggle
+            time.sleep(interval)
+    log_message("IR win blink complete")
+
+def ir_blink(cycles=5, interval=0.5):
+    """
+    Public: fire a win-celebration blink sequence on the scoreboard.
+    Sends 'power' 2*cycles times so the board ends back ON.
+    Returns the Thread so the caller can .join() it if needed.
+    """
+    t = threading.Thread(target=_blink_blocking, args=(cycles, interval), daemon=True)
+    t.start()
+    return t
 
 # =============================================================================
 
@@ -599,6 +623,14 @@ def _evaluate_win():
 
     log_message(f"Win condition confirmed after settle — {winner} ({red_val} vs {blue_val})", "INFO")
     _start_win_animation(winner)
+
+    # --- IR win blink: toggle scoreboard power 5× (off/on) over ~5 s ---
+    # Runs on a background thread so the UI stays alive; we pump Tkinter
+    # events while waiting so the flash animation above keeps rendering.
+    blink_thread = ir_blink(cycles=5, interval=0.5)
+    while blink_thread.is_alive():
+        main_root.update()
+        time.sleep(0.05)
 
 def _check_win_condition():
     """
