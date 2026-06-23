@@ -1689,6 +1689,12 @@ def resume_match_timer():
     if not match_data:
         return
 
+    # Cancel any still-pending callback (e.g. the paused-state flash loop)
+    # before kicking off a fresh one — otherwise the old chain keeps firing
+    # independently and stacks with the new one, causing the paused/flash
+    # indicator to blink erratically.
+    stop_match_timer()
+
     elapsed_so_far = match_data.get('elapsed_at_pause', 0)
     match_data['start_time'] = time.time() - elapsed_so_far
     match_data['paused_at'] = None
