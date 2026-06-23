@@ -425,6 +425,7 @@ def bind_debounced_canvas_redraw(canvas, redraw_func, delay=150):
 TEAMS = []
 TEAM_ROSTERS = {}
 TOURNAMENT_RANKINGS = OrderedDict()
+PRIZES = {}  # Current tournament's payout structure: {'1st': int, '2nd': int, '3rd': int}
 ENTRY_FEE_PER_PERSON = 5
 MIN_PLAYERS = 6
 MAX_PLAYERS = 20
@@ -526,6 +527,12 @@ ui_references = {
     '_win_glow_job': None,      # pending after() id for glow cancel
     '_win_color': None,         # 'red' | 'blue' | None
     '_win_debounce_job': None,  # pending after() id for settle delay
+    # Round-settle state (points added per round + who throws first next)
+    'red_round_baseline': 0,    # red score as of the last settle
+    'blue_round_baseline': 0,   # blue score as of the last settle
+    'red_round_delta_lbl': None,
+    'blue_round_delta_lbl': None,
+    '_first_throw_color': None, # 'red' | 'blue' | None — who throws first next round
 }
 
 def update_footer_log_status():
@@ -558,7 +565,7 @@ def add_late_team():
     the bracket for N+1 teams. G1 (currently in progress) is preserved exactly.
     Only available before any match has been completed.
     """
-    global TEAMS, TEAM_ROSTERS, TOURNAMENT_STATE, REPLAY_FILEPATH
+    global TEAMS, TEAM_ROSTERS, TOURNAMENT_STATE, REPLAY_FILEPATH, PRIZES
 
     # Safety check — should not be reachable, but guard anyway
     if MATCH_HISTORY:
@@ -638,7 +645,7 @@ def add_late_team():
 
     # --- Load new bracket config for N+1 teams ---
     try:
-        new_config, _ = load_bracket_config(len(TEAMS), 'D')
+        new_config, new_prizes = load_bracket_config(len(TEAMS), 'D')
     except Exception as e:
         # Rollback
         TEAMS.pop()
@@ -646,6 +653,23 @@ def add_late_team():
         messagebox.showerror("Late Entry Error",
                              f"No bracket config found for {len(TEAMS)} teams.\n{e}")
         return
+
+    # --- Refresh prize pool for the new team count ---
+    # A different team count can map to a different bracket-size config
+    # file with its own payout structure, so re-derive it here and push
+    # the update out to the Rosters tab footer.
+    new_prizes = new_prizes or {}
+    new_prizes['1st'] = new_prizes.get('1st', 0)
+    new_prizes['2nd'] = new_prizes.get('2nd', 0)
+    new_prizes['3rd'] = new_prizes.get('3rd', 0)
+    prizes_changed = (new_prizes != PRIZES)
+    PRIZES.clear()
+    PRIZES.update(new_prizes)
+    new_total_pool = new_prizes['1st'] + new_prizes['2nd'] + new_prizes['3rd']
+    if prizes_changed:
+        log_message(f"Prize pool updated for {len(TEAMS)} teams — "
+                    f"1st: ${new_prizes['1st']}, 2nd: ${new_prizes['2nd']}, "
+                    f"3rd: ${new_prizes['3rd']} (total: ${new_total_pool})")
 
     # --- Rebuild TOURNAMENT_STATE using existing generator, then restore G1 ---
     # generate_dynamic_bracket handles all seeding correctly for any bracket size
@@ -671,6 +695,7 @@ def add_late_team():
     # --- Refresh all UI without disturbing the active match ---
     update_schedule_tab()
     update_roster_seeding_vertical()
+    update_payout_footer_display()
     update_scoreboard_display()
 
     if bracket_info_canvas_ref:
@@ -685,7 +710,10 @@ def add_late_team():
         append_snapshot_to_file(REPLAY_FILEPATH)
 
     log_message(f"Bracket rebuilt for {len(TEAMS)} teams. G1 preserved and still active.")
-    messagebox.showinfo("Late Entry", f"{new_team_name} ({p1_name} & {p2_name}) added!\nBracket updated for {len(TEAMS)} teams.")
+    confirm_msg = f"{new_team_name} ({p1_name} & {p2_name}) added!\nBracket updated for {len(TEAMS)} teams."
+    if prizes_changed:
+        confirm_msg += f"\nPrize pool updated — total: ${new_total_pool}."
+    messagebox.showinfo("Late Entry", confirm_msg)
 
 
 WIN_SCORE = 15   # Score needed to trigger a win
@@ -770,6 +798,85 @@ def _start_win_animation(winner_color):
 
 WIN_SETTLE_DELAY = 5000  # ms to wait after last button press before checking win
 
+_FIRST_THROW_BORDER_WIDTH = 4  # px thickness of the "throws first" glow border
+
+def _set_first_throw_indicator(color):
+    """
+    Highlights the given team's card with a gold border glow to indicate
+    they throw first next round (house rule: higher round score goes
+    first; on a tie, hammer flips to whoever didn't have it). Pass None
+    to clear the indicator on both cards (e.g. when a new match starts,
+    or on a tie with no prior determination to flip).
+    """
+    ui_references['_first_throw_color'] = color
+    for c in ('red', 'blue'):
+        card = ui_references.get(f'{c}_card_frame')
+        if not card:
+            continue
+        try:
+            if c == color:
+                card.config(highlightthickness=_FIRST_THROW_BORDER_WIDTH,
+                            highlightbackground=THEME['accent_gold'])
+            else:
+                card.config(highlightthickness=0)
+        except Exception:
+            pass
+
+def _process_round_settle():
+    """
+    Called every time the score settles (WIN_SETTLE_DELAY elapses with no
+    further button presses). Computes how many points each team added
+    since the previous settle, updates the "+N" label under each team's
+    score, and decides who throws first next round:
+
+      - Whoever added more points this round throws first next round.
+      - On a tie, the hammer flips: whoever was set to throw first THIS
+        round now goes second (hammer) next round, so the other team
+        throws first. If there's no prior determination yet (first round,
+        nobody marked), a tie leaves it undetermined.
+    """
+    red_val  = ui_references['red_counter_var'].get()
+    blue_val = ui_references['blue_counter_var'].get()
+
+    red_base  = ui_references.get('red_round_baseline', 0)
+    blue_base = ui_references.get('blue_round_baseline', 0)
+
+    red_delta  = red_val  - red_base
+    blue_delta = blue_val - blue_base
+
+    # Nothing changed since the last settle — skip (avoids relabeling on a
+    # timer fire that wasn't actually preceded by a score change)
+    if red_delta == 0 and blue_delta == 0:
+        return
+
+    red_lbl  = ui_references.get('red_round_delta_lbl')
+    blue_lbl = ui_references.get('blue_round_delta_lbl')
+    if red_lbl:
+        red_lbl.config(text=f"{red_delta:+d}" if red_delta != 0 else "")
+    if blue_lbl:
+        blue_lbl.config(text=f"{blue_delta:+d}" if blue_delta != 0 else "")
+
+    if red_delta > blue_delta:
+        _set_first_throw_indicator('red')
+    elif blue_delta > red_delta:
+        _set_first_throw_indicator('blue')
+    else:
+        # Tied round — hammer flips: whoever threw first THIS round now
+        # goes second (hammer) next round, so the other team throws first.
+        previous_first = ui_references.get('_first_throw_color')
+        if previous_first == 'red':
+            _set_first_throw_indicator('blue')
+        elif previous_first == 'blue':
+            _set_first_throw_indicator('red')
+        else:
+            _set_first_throw_indicator(None)  # no prior determination to flip
+
+    # Baseline moves forward so the *next* settle measures the next round
+    ui_references['red_round_baseline']  = red_val
+    ui_references['blue_round_baseline'] = blue_val
+
+    log_message(f"Round settled — red {red_delta:+d}, blue {blue_delta:+d}", "DEBUG")
+
 def _evaluate_win():
     """
     The actual win check — runs after the settle delay has elapsed with no
@@ -782,6 +889,9 @@ def _evaluate_win():
         wait for one to pull ahead (next button press will reschedule).
     """
     ui_references['_win_debounce_job'] = None
+
+    # Round-settle bookkeeping runs on every settle, win or not.
+    _process_round_settle()
 
     if ui_references.get('_win_color'):
         return   # already animating
@@ -1003,6 +1113,11 @@ def setup_scoreboard(root, team_red_placeholder, team_blue_placeholder):
               cursor='hand2', command=_red_up,
               ).pack(side='left', padx=6)
 
+    # -- Red round points-added label (under the score, shows after each settle) --
+    ui_references['red_round_delta_lbl'] = tk.Label(red_card, text="", font=scaled_font('Selawik', 11, 'bold'),
+                                                     fg=THEME['red_team'], bg=THEME['bg_card'])
+    ui_references['red_round_delta_lbl'].pack(pady=(0, 2))
+
     # -- Red Fix Score button --
     def _red_fix():
         _show_correction_dialog('red')
@@ -1068,6 +1183,11 @@ def setup_scoreboard(root, team_red_placeholder, team_blue_placeholder):
               bg=THEME['bg_main'], fg=THEME['blue_team'], relief='flat', width=3,
               cursor='hand2', command=_blue_up,
               ).pack(side='left', padx=6)
+
+    # -- Blue round points-added label (under the score, shows after each settle) --
+    ui_references['blue_round_delta_lbl'] = tk.Label(blue_card, text="", font=scaled_font('Selawik', 11, 'bold'),
+                                                      fg=THEME['blue_team'], bg=THEME['bg_card'])
+    ui_references['blue_round_delta_lbl'].pack(pady=(0, 2))
 
     # -- Blue Fix Score button --
     def _blue_fix():
@@ -1176,6 +1296,19 @@ def setup_scoreboard(root, team_red_placeholder, team_blue_placeholder):
     # ==========================
     # TAB 3: ROSTERS
     # ==========================
+    # -- Payout info footer (small, fixed at the bottom of this tab) --
+    payout_footer_frame = tk.Frame(tab_roster, bg=THEME['bg_card'], bd=1, relief='flat')
+    payout_footer_frame.pack(side='bottom', fill='x', padx=6, pady=(0, 6))
+    ui_references['payout_footer_frame'] = payout_footer_frame
+
+    ui_references['payout_footer_lbl'] = tk.Label(
+        payout_footer_frame, text="No prize info available.",
+        font=scaled_font('Consolas', 9), justify='left', anchor='w',
+        bg=THEME['bg_card'], fg=THEME['fg_primary']
+    )
+    ui_references['payout_footer_lbl'].pack(side='top', anchor='w', padx=8, pady=6, fill='x')
+    bind_dynamic_wrap(ui_references['payout_footer_lbl'], payout_footer_frame, margin=16, min_width=160)
+
     # Use the existing roster logic but in a vertical scroll
     roster_scroll = tk.Scrollbar(tab_roster)
     roster_scroll.pack(side='right', fill='y')
@@ -1192,6 +1325,7 @@ def setup_scoreboard(root, team_red_placeholder, team_blue_placeholder):
 
     # Initialize Data
     update_roster_seeding_vertical() # New helper function for vertical roster
+    update_payout_footer_display()
     load_match_data_and_teams()
 
     # --- Flipper Zero status label + reconnect button in footer ---
@@ -1443,6 +1577,41 @@ def update_roster_seeding_vertical():
         ).grid(row=row_index, column=3, sticky='e', padx=35, pady=7)
 
         row_index += 1
+
+def update_payout_footer_display():
+    """
+    Refreshes the small payout summary fixed at the bottom of the Rosters
+    tab, from the global PRIZES dict. PRIZES is populated when a tournament
+    starts (start_tournament) or when a replay is resumed (run_replay_mode).
+    """
+    lbl = ui_references.get('payout_footer_lbl')
+    if not lbl:
+        return
+
+    if not PRIZES:
+        lbl.config(text="No prize info available.")
+        return
+
+    first  = PRIZES.get('1st', 0)
+    second = PRIZES.get('2nd', 0)
+    third  = PRIZES.get('3rd', 0)
+    total  = first + second + third
+
+    per_1st = int(first / 2)
+    per_2nd = int(second / 2)
+
+    parts = [
+        f"💰 Total Pool: ${total}",
+        f"🥇 1st: ${first} (${per_1st}/ea)",
+        f"🥈 2nd: ${second} (${per_2nd}/ea)",
+    ]
+    if third > 0:
+        per_3rd = int(third / 2)
+        parts.append(f"🥉 3rd: ${third} (${per_3rd}/ea)")
+    else:
+        parts.append("🥉 3rd: Handshake!")
+
+    lbl.config(text="   ".join(parts))
 
 def update_timer_display():
     """Updates the match elapsed time every second. Only ticks when timer is running."""
@@ -1808,7 +1977,7 @@ def load_match_data_and_teams():
 
 def run_replay_mode(path):
     global REPLAY_FILEPATH, REPLAY_MODE, REPLAY_VIEW_ONLY
-    global main_root, TEAMS, TEAM_ROSTERS, TOURNAMENT_STATE, TOURNAMENT_RANKINGS
+    global main_root, TEAMS, TEAM_ROSTERS, TOURNAMENT_STATE, TOURNAMENT_RANKINGS, PRIZES
 
     reset_global_state()
     REPLAY_MODE = True
@@ -1845,6 +2014,16 @@ def run_replay_mode(path):
     MATCH_HISTORY.extend(snap.get("match_history", []))
     MATCH_DURATIONS.clear()
     MATCH_DURATIONS.extend(snap.get("match_durations", []))
+
+    # Replay snapshots don't store the prize structure, so recompute it
+    # from the bracket config for this team count (best-effort; payout
+    # footer just stays blank if this fails).
+    PRIZES.clear()
+    try:
+        _, replay_prizes = load_bracket_config(len(TEAMS), 'D')
+        PRIZES.update(replay_prizes or {})
+    except Exception as e:
+        log_message(f"Could not restore prize info for replay: {e}", "WARN")
 
     # Restore match-level state including champion
     TOURNAMENT_STATE.clear()
@@ -4730,6 +4909,15 @@ def reset_game(update_teams=True):
     log_message("Game UI reset", "DEBUG")
     # Cancel any win animation and restore card backgrounds
     _cancel_win_animation()
+    # Reset round-settle tracking: baselines, "+N" labels, and the
+    # "throws first" border indicator all clear for the new match.
+    ui_references['red_round_baseline']  = 0
+    ui_references['blue_round_baseline'] = 0
+    _set_first_throw_indicator(None)
+    for color in ('red', 'blue'):
+        delta_lbl = ui_references.get(f'{color}_round_delta_lbl')
+        if delta_lbl:
+            delta_lbl.config(text="")
     # Reset match counters for both teams and send IR reset to scoreboard
     for color in ('red', 'blue'):
         counter_var = ui_references.get(f'{color}_counter_var')
@@ -5769,7 +5957,7 @@ def reset_global_state():
     """Clears all tournament globals in one place before starting a new game or replay."""
     global TEAMS, TEAM_ROSTERS, TOURNAMENT_STATE, TOURNAMENT_RANKINGS
     global MATCH_HISTORY, MATCH_DURATIONS, REPLAY_FILEPATH
-    global last_assigned_match_id, TOURNAMENT_START_TIME
+    global last_assigned_match_id, TOURNAMENT_START_TIME, PRIZES
 
     TEAMS.clear()
     TEAM_ROSTERS.clear()
@@ -5777,6 +5965,7 @@ def reset_global_state():
     TOURNAMENT_RANKINGS.clear()
     MATCH_HISTORY.clear()
     MATCH_DURATIONS.clear()
+    PRIZES.clear()
     REPLAY_FILEPATH = None
     last_assigned_match_id = None
     TOURNAMENT_START_TIME = None
@@ -5787,7 +5976,7 @@ def start_tournament():
     Prompts for players using the unified dialog, sets up teams,
     generates the bracket, and launches the GUI.
     """
-    global REPLAY_FILEPATH, TEAMS, TEAM_ROSTERS
+    global REPLAY_FILEPATH, TEAMS, TEAM_ROSTERS, PRIZES
 
     reset_global_state()
     log_message("Tournament initialization started")
@@ -5853,6 +6042,9 @@ def start_tournament():
     prizes['1st'] = prizes.get('1st', 0)
     prizes['2nd'] = prizes.get('2nd', 0)
     prizes['3rd'] = prizes.get('3rd', 0)
+
+    PRIZES.clear()
+    PRIZES.update(prizes)
 
     total_pool = prizes['1st'] + prizes['2nd'] + prizes['3rd']
     log_message(f"Prize pool loaded — 1st: ${prizes.get('1st',0)}, 2nd: ${prizes.get('2nd',0)}, 3rd: ${prizes.get('3rd',0)} (total: ${total_pool})")
