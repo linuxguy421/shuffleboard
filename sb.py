@@ -16,9 +16,9 @@ if _sys.platform == "win32":
         except Exception:
             pass
 
-import tkinter as ttk
 import tkinter as tk
 from tkinter import messagebox, simpledialog, filedialog, ttk
+import tkinter.font as tkfont
 from math import log2, ceil
 import sys
 import re
@@ -29,6 +29,7 @@ import datetime
 import time
 import json
 import threading
+import traceback
 
 try:
     import serial
@@ -135,6 +136,12 @@ def _send_ir_blocking(action, repeat=1):
     Internal: sends an IR command `repeat` times with IR_SEND_DELAY between
     each send. Runs in a background thread.
 
+    The connection check and the write happen inside a single _flipper_lock
+    acquisition per attempt (previously the check and the write were two
+    separate lock acquisitions, leaving a window where a concurrent send
+    thread — each button press spawns its own via ir_send() — or the
+    watchdog thread could change _flipper_port in between).
+
     On a write failure the port is cleared and one automatic reconnect attempt
     is made. If reconnect succeeds the failed send is retried once before
     continuing; if it fails the remaining repeats are abandoned and the UI is
@@ -149,11 +156,6 @@ def _send_ir_blocking(action, repeat=1):
     protocol, address, command = IR_CODES[action]
     cmd_str = f"ir tx {protocol} {address} {command}\r\n"
 
-    with _flipper_lock:
-        if not _flipper_port or not _flipper_port.is_open:
-            log_message(f"IR send skipped ({action}) — Flipper not connected, attempting reconnect…", "WARN")
-        # Fall through — reconnect attempt happens below if needed
-
     for i in range(repeat):
         # Enforce minimum gap between any two consecutive IR sends
         now = time.time()
@@ -162,6 +164,8 @@ def _send_ir_blocking(action, repeat=1):
             time.sleep(gap)
         try:
             with _flipper_lock:
+                if not _flipper_port or not _flipper_port.is_open:
+                    raise ConnectionError("Flipper not connected")
                 _flipper_port.write(cmd_str.encode("ascii"))
             _ir_last_sent = time.time()
             log_message(f"IR sent ({i+1}/{repeat}): {cmd_str.strip()}", "DEBUG")
@@ -175,6 +179,8 @@ def _send_ir_blocking(action, repeat=1):
                 log_message(f"Auto-reconnect succeeded — retrying send ({action})", "DEBUG")
                 try:
                     with _flipper_lock:
+                        if not _flipper_port or not _flipper_port.is_open:
+                            raise ConnectionError("Flipper not connected")
                         _flipper_port.write(cmd_str.encode("ascii"))
                     _ir_last_sent = time.time()
                     log_message(f"IR sent after reconnect ({i+1}/{repeat}): {cmd_str.strip()}", "DEBUG")
@@ -200,8 +206,8 @@ def _notify_flipper_disconnected():
             fn = ui_references.get('_set_flipper_ui')
             if fn:
                 main_root.after(0, lambda: fn(False))
-        except Exception:
-            pass
+        except Exception as e:
+            log_message(f"Failed to notify UI of Flipper disconnect: {e}", "WARN")
 
 def ir_send(action, repeat=1):
     """
@@ -274,8 +280,8 @@ def _flipper_watchdog():
                         fn = ui_references.get('_set_flipper_ui')
                         if fn:
                             main_root.after(0, lambda: fn(True))
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        log_message(f"Failed to notify UI of Flipper reconnect: {e}", "WARN")
 
 def start_flipper_watchdog():
     """Spawn the watchdog thread. Call once after the main window is ready."""
@@ -305,6 +311,44 @@ THEME = {
 }
 
 # =============================================================================
+# --- Font Family Resolution ---
+# 'Selawik' and 'Consolas' are Windows-only fonts. On macOS/Linux (or older
+# Windows without Selawik installed), Tk silently substitutes a platform
+# default, which breaks the pixel-width metrics used by SF()/bind_dynamic_wrap.
+# Resolved once, as soon as a Tk root exists, via _resolve_font_families().
+# =============================================================================
+UI_FONT_FAMILY = 'Selawik'        # resolved body/header font, see below
+UI_MONO_FONT_FAMILY = 'Consolas'  # resolved monospace font, see below
+
+# Ordered by preference: first family actually installed on this machine wins.
+_UI_FONT_CANDIDATES = ['Selawik', 'Segoe UI', 'Helvetica Neue', 'Helvetica', 'Arial']
+_UI_MONO_FONT_CANDIDATES = ['Consolas', 'Menlo', 'DejaVu Sans Mono', 'Courier New', 'Courier']
+
+def _resolve_font_families():
+    """
+    Query the fonts actually installed on this machine and pick the best
+    available match for the body font and the monospace font. Safe to call
+    more than once (e.g. once per Tk root created). Requires a Tk root to
+    already exist, since tkfont.families() talks to the underlying Tk
+    interpreter.
+    """
+    global UI_FONT_FAMILY, UI_MONO_FONT_FAMILY
+    try:
+        available = set(tkfont.families())
+    except Exception:
+        return  # no Tk root yet / platform quirk — keep current defaults
+
+    for candidate in _UI_FONT_CANDIDATES:
+        if candidate in available:
+            UI_FONT_FAMILY = candidate
+            break
+
+    for candidate in _UI_MONO_FONT_CANDIDATES:
+        if candidate in available:
+            UI_MONO_FONT_FAMILY = candidate
+            break
+
+# =============================================================================
 # --- DPI / Screen-Size Scaling ---
 # Call init_scaling(root) once, as soon as the first Tk window exists.
 # After that, use SF() to scale any pixel value and scaled_font() for fonts.
@@ -326,6 +370,9 @@ def init_scaling(root):
     the lifetime of the process.
     """
     global _SCALE
+
+    # Resolve actual installed font families now that a Tk root exists.
+    _resolve_font_families()
 
     # --- Method 1: physical DPI ---
     try:
@@ -359,30 +406,40 @@ def init_scaling(root):
     def _sf(n):
         return max(1, int(round(n * _SCALE)))
 
-    THEME['font_main']   = ('Selawik', _sf(10))
-    THEME['font_bold']   = ('Selawik', _sf(10), 'bold')
-    THEME['font_header'] = ('Selawik', _sf(14), 'bold')
-    THEME['font_title']  = ('Selawik', _sf(18), 'bold')
+    THEME['font_main']   = (UI_FONT_FAMILY, _sf(10))
+    THEME['font_bold']   = (UI_FONT_FAMILY, _sf(10), 'bold')
+    THEME['font_header'] = (UI_FONT_FAMILY, _sf(14), 'bold')
+    THEME['font_title']  = (UI_FONT_FAMILY, _sf(18), 'bold')
 
     # Also update the default Tk font so widgets that don't reference THEME
     # (e.g. messagebox, simpledialog) scale consistently.
     try:
-        import tkinter.font as tkfont
         default_font = tkfont.nametofont("TkDefaultFont")
         default_font.configure(size=_sf(10))
         text_font = tkfont.nametofont("TkTextFont")
         text_font.configure(size=_sf(10))
         fixed_font = tkfont.nametofont("TkFixedFont")
         fixed_font.configure(size=_sf(10))
-    except Exception:
-        pass
+    except Exception as e:
+        log_message(f"Failed to scale default Tk fonts: {e}", "WARN")
 
 def SF(px):
     """Scale an absolute pixel / point value by the current scale factor."""
     return max(1, int(round(px * _SCALE)))
 
 def scaled_font(face, size, *extras):
-    """Return a font tuple with the size scaled."""
+    """
+    Return a font tuple with the size scaled.
+
+    `face` is transparently substituted with the resolved fallback if the
+    caller asked for 'Selawik' or 'Consolas' and that font isn't actually
+    installed on this machine (see _resolve_font_families()). Callers don't
+    need to change anything — they can keep writing scaled_font('Selawik', 10).
+    """
+    if face == 'Selawik':
+        face = UI_FONT_FAMILY
+    elif face == 'Consolas':
+        face = UI_MONO_FONT_FAMILY
     return (face, SF(size)) + extras
 
 def scaled_geo(w, h):
@@ -482,6 +539,63 @@ def log_message(message, level="INFO"):
     if LOG_GAME_TO_FILE and LOG_FILE_HANDLE:
         LOG_FILE_HANDLE.write(log_line + "\n")
         LOG_FILE_HANDLE.flush()
+
+# =============================================================================
+# --- Global Exception Handling ---
+# Previously, an uncaught exception inside a Tkinter callback (button click,
+# .after() job, etc.) was swallowed by Tk's default handler: a traceback
+# printed to a console nobody's watching, while the UI stayed alive in
+# whatever half-updated state it was in. Same story for exceptions on the
+# main thread outside any callback, or on one of the background threads
+# (Flipper IR, blink, watchdog). None of these had a safety net.
+#
+# The three handlers below make sure any of those cases get logged (and, for
+# UI callbacks, shown to the person running the tournament) instead of
+# disappearing silently.
+# =============================================================================
+
+def install_exception_handler(root):
+    """
+    Attach a handler so uncaught exceptions raised inside this root's
+    Tkinter callbacks get logged and surfaced with a dialog, instead of
+    Tk's default behaviour of printing to a console and continuing on in a
+    possibly-inconsistent state. Call once per Tk() root created.
+    """
+    def _handle(exc_type, exc_value, exc_tb):
+        log_message(f"UNHANDLED UI EXCEPTION: {exc_value}", "ERROR")
+        log_message("".join(traceback.format_exception(exc_type, exc_value, exc_tb)), "ERROR")
+        try:
+            messagebox.showerror(
+                "Unexpected Error",
+                f"Something went wrong:\n\n{exc_value}\n\nCheck the console/log for details."
+            )
+        except Exception:
+            pass  # showing the dialog itself failed — at least it's logged above
+    root.report_callback_exception = _handle
+
+def _main_thread_excepthook(exc_type, exc_value, exc_tb):
+    """Process-wide safety net for exceptions outside any Tk callback (e.g.
+    during startup/teardown, before a root exists or after one closes)."""
+    log_message(f"UNHANDLED EXCEPTION (main thread): {exc_value}", "ERROR")
+    log_message("".join(traceback.format_exception(exc_type, exc_value, exc_tb)), "ERROR")
+
+def _background_thread_excepthook(args):
+    """Safety net for exceptions on background daemon threads (Flipper IR
+    send/blink/watchdog). Without this, Python's default behaviour is to
+    print to stderr and let the thread quietly die — e.g. the watchdog could
+    stop monitoring the Flipper connection with no indication anything is
+    wrong."""
+    log_message(
+        f"UNHANDLED EXCEPTION (thread '{args.thread.name if args.thread else '?'}'): {args.exc_value}",
+        "ERROR"
+    )
+    log_message(
+        "".join(traceback.format_exception(args.exc_type, args.exc_value, args.exc_traceback)),
+        "ERROR"
+    )
+
+sys.excepthook = _main_thread_excepthook
+threading.excepthook = _background_thread_excepthook
 
 # --- System Functions ---
 def _find_last_snapshot_in_file(path):
@@ -703,8 +817,8 @@ def add_late_team():
     if full_bracket_root and full_bracket_canvas:
         try:
             draw_large_bracket(full_bracket_canvas)
-        except Exception:
-            pass
+        except Exception as e:
+            log_message(f"Failed to redraw full bracket view: {e}", "ERROR")
 
     if REPLAY_FILEPATH:
         append_snapshot_to_file(REPLAY_FILEPATH)
@@ -920,12 +1034,23 @@ def _evaluate_win():
     _start_win_animation(winner)
 
     # --- IR win blink: toggle scoreboard power 5× (off/on) over ~5 s ---
-    # Runs on a background thread so the UI stays alive; we pump Tkinter
-    # events while waiting so the flash animation above keeps rendering.
+    # Runs on a background daemon thread. _start_win_animation() above is
+    # already driven by Tkinter's own .after() scheduler, so it keeps
+    # rendering on its own — we don't need to (and must not) block here.
+    # Polling with .after() instead of a blocking `while ... main_root.update()`
+    # loop avoids re-entering the event loop from inside this callback, which
+    # previously let a stray button click during the ~2.5s blink window fire
+    # its own callback nested inside this one (risking a double-processed
+    # match resolution mid-blink).
     blink_thread = ir_blink(cycles=5, interval=0.5)
-    while blink_thread.is_alive():
-        main_root.update()
-        time.sleep(0.05)
+    _poll_blink_thread(blink_thread)
+
+def _poll_blink_thread(thread):
+    """Non-blocking check for the IR win-blink thread finishing."""
+    if thread.is_alive():
+        main_root.after(100, lambda: _poll_blink_thread(thread))
+    else:
+        log_message("IR win-blink sequence complete", "DEBUG")
 
 def _check_win_condition():
     """
@@ -2078,6 +2203,7 @@ def run_replay_mode(path):
         log_message("Replay loaded — tournament complete, entering view-only mode")
 
         root = tk.Tk()
+        install_exception_handler(root)
         init_scaling(root)
         root.title("Moose Lodge Shuffleboard — Replay (VIEW ONLY)")
         root.configure(bg=THEME['bg_main'])
@@ -2101,6 +2227,7 @@ def run_replay_mode(path):
     log_message(f"Replay loaded — resuming tournament, appending to: {path}")
 
     root = tk.Tk()
+    install_exception_handler(root)
     init_scaling(root)
     root.title("Moose Lodge Shuffleboard — Replay Mode (Continue)")
     root.configure(bg=THEME['bg_main'])
@@ -2149,6 +2276,7 @@ def show_title_screen():
     from PIL import Image, ImageTk
 
     splash = tk.Tk()
+    install_exception_handler(splash)
     splash.title("Moose Lodge Shuffleboard ")
     init_scaling(splash)
     splash.geometry(scaled_geo(500, 550))
@@ -3426,31 +3554,48 @@ def open_full_bracket():
         # Highlight all previous matches the winner played in, with their names
         highlight_team_matches(canvas, winner, '#FFD700')
 
-    def flash_effect(canvas, match_id, color):
-        """Flash the match box and then clear"""
+    def flash_effect(canvas, match_id, color, _step=0, _coords=None):
+        """
+        Flash the match box 3 times (show color, then clear) and stop.
 
-        for item_id in canvas.find_all():
-            tags = canvas.gettags(item_id)
-            if f'match_{match_id}' in tags:
-                coords = canvas.coords(item_id)
-                if coords and len(coords) >= 4:
-                    x1, y1, x2, y2 = coords[0], coords[1], coords[2], coords[3]
+        Non-blocking: scheduled via canvas.after() instead of the previous
+        `for i in range(3): ...; canvas.update(); canvas.after(200)` loop.
+        That loop called canvas.update() from inside this click-handler
+        callback, re-entering the Tkinter event loop for ~1.2s — a click
+        landing during that window could fire its own handler nested inside
+        this one. Scheduling each step via .after() instead lets control
+        return to the event loop between steps, same fix as _evaluate_win.
+        """
+        if _coords is None:
+            # First call: locate the match box's rectangle once.
+            _coords = None
+            for item_id in canvas.find_all():
+                tags = canvas.gettags(item_id)
+                if f'match_{match_id}' in tags:
+                    coords = canvas.coords(item_id)
+                    if coords and len(coords) >= 4:
+                        _coords = (coords[0], coords[1], coords[2], coords[3])
+                    break
+            if _coords is None:
+                return  # match box not found on canvas (e.g. already redrawn)
 
-                    # Flash 3 times
-                    for i in range(3):
-                        # Show color
-                        canvas.create_rectangle(x1, y1, x2, y2,
-                                              fill=color, outline='', tags=('trace_highlight',))
-                        canvas.create_rectangle(x1, y1, x2, y2,
-                                              fill='', outline='#263238', width=2, tags=('trace_highlight',))
-                        canvas.update()
-                        canvas.after(200)
+        try:
+            x1, y1, x2, y2 = _coords
+            if _step % 2 == 0:
+                # Even step: show the flash color
+                canvas.create_rectangle(x1, y1, x2, y2,
+                                      fill=color, outline='', tags=('trace_highlight',))
+                canvas.create_rectangle(x1, y1, x2, y2,
+                                      fill='', outline='#263238', width=2, tags=('trace_highlight',))
+            else:
+                # Odd step: clear it
+                canvas.delete('trace_highlight')
 
-                        # Clear
-                        canvas.delete('trace_highlight')
-                        canvas.update()
-                        canvas.after(200)
-                break
+            next_step = _step + 1
+            if next_step < 6:  # 3 flashes x (show, clear) = 6 steps
+                canvas.after(200, lambda: flash_effect(canvas, match_id, color, next_step, _coords))
+        except tk.TclError:
+            pass  # canvas was destroyed (e.g. window closed) mid-flash
 
     def highlight_team_matches(canvas, team_name, color):
         """Highlight all matches this team played in, with their names in each box"""
@@ -3625,8 +3770,8 @@ def append_snapshot_to_file(path):
             f.flush()
             try:
                 os.fsync(f.fileno())
-            except Exception:
-                pass
+            except Exception as e:
+                log_message(f"fsync failed for snapshot write to {path}: {e}", "WARN")
 
         log_message(f"Snapshot saved: {path}", "DEBUG")
 
@@ -3843,8 +3988,8 @@ def append_final_stats_to_file(path, champion):
             f.flush()
             try:
                 os.fsync(f.fileno())
-            except Exception:
-                pass
+            except Exception as e:
+                log_message(f"fsync failed for FINAL_STATS write to {path}: {e}", "WARN")
         log_message(f"FINAL_STATS written to replay file: {path}")
     except Exception as e:
         log_message(f"Failed to write FINAL_STATS: {e}", "ERROR")
@@ -4973,6 +5118,21 @@ def setup_main_gui(root):
     # Watchdog: silently reconnects if the Flipper drops mid-session
     start_flipper_watchdog()
 
+    # F5 → send IR red-down command to scoreboard (manual nudge, -1)
+    root.bind('<F5>', lambda e: ir_send('red_down'))
+
+    # F6 → send IR red-up command to scoreboard (manual nudge, +1)
+    root.bind('<F6>', lambda e: ir_send('red_up'))
+
+    # F7 → send IR blue-down command to scoreboard (manual nudge, -1)
+    root.bind('<F7>', lambda e: ir_send('blue_down'))
+
+    # F8 → send IR blue-up command to scoreboard (manual nudge, +1)
+    root.bind('<F8>', lambda e: ir_send('blue_up'))
+
+    # F11 → send IR reset command to scoreboard
+    root.bind('<F11>', lambda e: ir_send('reset'))
+
     # F12 → send IR power command to scoreboard
     root.bind('<F12>', lambda e: ir_send('power'))
 
@@ -4991,6 +5151,7 @@ def show_draw_summary(player_draws, TEAMS, TEAM_ROSTERS, num_teams, total_pool, 
     """Displays the player draw, team rosters, and prize pool with improved styling."""
 
     summary_root = tk.Tk()
+    install_exception_handler(summary_root)
     summary_root.title("Tournament Draw & Prize Pool")
     summary_root.geometry(scaled_geo(700, 850))
     summary_root.configure(bg=THEME['bg_main'])
@@ -5988,6 +6149,7 @@ def start_tournament():
     log_message("Tournament initialization started")
 
     dialog_root = tk.Tk()
+    install_exception_handler(dialog_root)
     dialog_root.withdraw()
 
     # --- 1. Combined Player Setup Step ---
@@ -6073,6 +6235,7 @@ def start_tournament():
 
     # --- 7. Launch Main Game GUI ---
     root = tk.Tk()
+    install_exception_handler(root)
     try:
         setup_main_gui(root)
         root.mainloop()
