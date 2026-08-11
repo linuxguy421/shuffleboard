@@ -1,16 +1,13 @@
 {
   "tournament_name": "4-team Shuffleboard Tournament",
   "prizes": {
-    "3": 8,
+    "3": 10,
     "2": 12,
-    "1": 20
+    "1": 18
   },
   "games": {
     "G1": {
-      "teams": [
-        "T1",
-        "T4"
-      ],
+      "teams": ["T1", "T4"],
       "winner_advances_to": {
         "game": "G3",
         "slot": 0
@@ -22,10 +19,7 @@
       "is_winnerbracket": "true"
     },
     "G2": {
-      "teams": [
-        "T2",
-        "T3"
-      ],
+      "teams": ["T2", "T3"],
       "winner_advances_to": {
         "game": "G3",
         "slot": 1
@@ -37,10 +31,7 @@
       "is_winnerbracket": "true"
     },
     "G3": {
-      "teams": [
-        "W-G1",
-        "W-G2"
-      ],
+      "teams": ["W-G1", "W-G2"],
       "winner_advances_to": {
         "game": "GF",
         "slot": 0
@@ -52,10 +43,7 @@
       "is_winnerbracket": "true"
     },
     "G4": {
-      "teams": [
-        "L-G1",
-        "L-G2"
-      ],
+      "teams": ["L-G1", "L-G2"],
       "winner_advances_to": {
         "game": "G5",
         "slot": 1
@@ -67,10 +55,7 @@
       "is_winnerbracket": "false"
     },
     "G5": {
-      "teams": [
-        "L-G3",
-        "W-G4"
-      ],
+      "teams": ["L-G3", "W-G4"],
       "winner_advances_to": {
         "game": "GF",
         "slot": 1
@@ -82,10 +67,7 @@
       "is_winnerbracket": "false"
     },
     "GF": {
-      "teams": [
-        "W-G3",
-        "W-G5"
-      ],
+      "teams": ["W-G3", "W-G5"],
       "winner_advances_to": {
         "result": "CHAMPION"
       },
@@ -95,10 +77,7 @@
       "is_winnerbracket": "both"
     },
     "GGF": {
-      "teams": [
-        "W-GF",
-        "L-GF"
-      ],
+      "teams": ["W-GF", "L-GF"],
       "winner_advances_to": {
         "result": "CHAMPION"
       },

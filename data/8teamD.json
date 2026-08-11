@@ -1,16 +1,13 @@
 {
   "tournament_name": "8-team Shuffleboard Tournament",
   "prizes": {
-    "3": 20,
-    "2": 30,
-    "1": 60
+    "3": 10,
+    "2": 20,
+    "1": 50
   },
   "games": {
     "G1": {
-      "teams": [
-        "T1",
-        "T8"
-      ],
+      "teams": ["T1", "T8"],
       "winner_advances_to": {
         "game": "G7",
         "slot": 0
@@ -22,10 +19,7 @@
       "is_winnerbracket": "true"
     },
     "G2": {
-      "teams": [
-        "T4",
-        "T5"
-      ],
+      "teams": ["T4", "T5"],
       "winner_advances_to": {
         "game": "G7",
         "slot": 1
@@ -37,10 +31,7 @@
       "is_winnerbracket": "true"
     },
     "G3": {
-      "teams": [
-        "T3",
-        "T6"
-      ],
+      "teams": ["T3", "T6"],
       "winner_advances_to": {
         "game": "G8",
         "slot": 0
@@ -52,10 +43,7 @@
       "is_winnerbracket": "true"
     },
     "G4": {
-      "teams": [
-        "T2",
-        "T7"
-      ],
+      "teams": ["T2", "T7"],
       "winner_advances_to": {
         "game": "G8",
         "slot": 1
@@ -67,10 +55,7 @@
       "is_winnerbracket": "true"
     },
     "G5": {
-      "teams": [
-        "L-G1",
-        "L-G2"
-      ],
+      "teams": ["L-G1", "L-G2"],
       "winner_advances_to": {
         "game": "G9",
         "slot": 1
@@ -82,10 +67,7 @@
       "is_winnerbracket": "false"
     },
     "G6": {
-      "teams": [
-        "L-G3",
-        "L-G4"
-      ],
+      "teams": ["L-G3", "L-G4"],
       "winner_advances_to": {
         "game": "G10",
         "slot": 0
@@ -97,10 +79,7 @@
       "is_winnerbracket": "false"
     },
     "G7": {
-      "teams": [
-        "W-G1",
-        "W-G2"
-      ],
+      "teams": ["W-G1", "W-G2"],
       "winner_advances_to": {
         "game": "G11",
         "slot": 0
@@ -112,10 +91,7 @@
       "is_winnerbracket": "true"
     },
     "G8": {
-      "teams": [
-        "W-G3",
-        "W-G4"
-      ],
+      "teams": ["W-G3", "W-G4"],
       "winner_advances_to": {
         "game": "G11",
         "slot": 1
@@ -127,10 +103,7 @@
       "is_winnerbracket": "true"
     },
     "G9": {
-      "teams": [
-        "L-G8",
-        "W-G5"
-      ],
+      "teams": ["L-G8", "W-G5"],
       "winner_advances_to": {
         "game": "G12",
         "slot": 0
@@ -142,10 +115,7 @@
       "is_winnerbracket": "false"
     },
     "G10": {
-      "teams": [
-        "W-G6",
-        "L-G7"
-      ],
+      "teams": ["W-G6", "L-G7"],
       "winner_advances_to": {
         "game": "G12",
         "slot": 1
@@ -157,10 +127,7 @@
       "is_winnerbracket": "false"
     },
     "G11": {
-      "teams": [
-        "W-G7",
-        "W-G8"
-      ],
+      "teams": ["W-G7", "W-G8"],
       "winner_advances_to": {
         "game": "GF",
         "slot": 0
@@ -172,10 +139,7 @@
       "is_winnerbracket": "true"
     },
     "G12": {
-      "teams": [
-        "W-G9",
-        "W-G10"
-      ],
+      "teams": ["W-G9", "W-G10"],
       "winner_advances_to": {
         "game": "G13",
         "slot": 1
@@ -187,10 +151,7 @@
       "is_winnerbracket": "false"
     },
     "G13": {
-      "teams": [
-        "L-G11",
-        "W-G12"
-      ],
+      "teams": ["L-G11", "W-G12"],
       "winner_advances_to": {
         "game": "GF",
         "slot": 1
@@ -202,10 +163,7 @@
       "is_winnerbracket": "false"
     },
     "GF": {
-      "teams": [
-        "W-G11",
-        "W-G13"
-      ],
+      "teams": ["W-G11", "W-G13"],
       "winner_advances_to": {
         "result": "CHAMPION"
       },
@@ -215,10 +173,7 @@
       "is_winnerbracket": "both"
     },
     "GGF": {
-      "teams": [
-        "W-GF",
-        "L-GF"
-      ],
+      "teams": ["W-GF", "L-GF"],
       "winner_advances_to": {
         "result": "CHAMPION"
       },

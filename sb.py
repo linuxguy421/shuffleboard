@@ -30,6 +30,7 @@ import time
 import json
 import threading
 import traceback
+import logging
 
 try:
     import serial
@@ -255,6 +256,39 @@ def ir_blink(cycles=5, interval=0.5):
     t.start()
     return t
 
+def _send_ir_sequence_blocking(actions):
+    """
+    Internal: sends multiple IR actions in strict order on one thread.
+    _send_ir_blocking() already enforces IR_SEND_DELAY between sends based
+    on a shared last-sent timestamp, so running the whole sequence on a
+    single thread (rather than one ir_send() thread per action) guarantees
+    both correct ordering and correct spacing — two independent threads
+    could otherwise race each other to the Flipper connection.
+    """
+    for action in actions:
+        _send_ir_blocking(action)
+
+def ir_power_on_sequence():
+    """
+    Public: turns the physical scoreboard on and resets it to 0-0, ready
+    for the first match. Fire-and-forget, runs on a background thread.
+    """
+    log_message("IR: sending power-on sequence (power, reset)")
+    t = threading.Thread(target=_send_ir_sequence_blocking, args=(['power', 'reset'],), daemon=True)
+    t.start()
+    return t
+
+def ir_power_off_sequence():
+    """
+    Public: resets the physical scoreboard to 0-0 and turns it off.
+    Fire-and-forget, runs on a background thread. Called once when a
+    tournament completes (see confirm_match_resolution).
+    """
+    log_message("IR: sending power-off sequence (reset, power)")
+    t = threading.Thread(target=_send_ir_sequence_blocking, args=(['reset', 'power'],), daemon=True)
+    t.start()
+    return t
+
 # How often the watchdog checks the Flipper connection (seconds)
 FLIPPER_WATCHDOG_INTERVAL = 30
 
@@ -335,8 +369,9 @@ def _resolve_font_families():
     global UI_FONT_FAMILY, UI_MONO_FONT_FAMILY
     try:
         available = set(tkfont.families())
-    except Exception:
-        return  # no Tk root yet / platform quirk — keep current defaults
+    except (tk.TclError, RuntimeError):
+        log_message("Could not enumerate Tk font families (no root yet?) — keeping defaults", "DEBUG")
+        return
 
     for candidate in _UI_FONT_CANDIDATES:
         if candidate in available:
@@ -377,7 +412,8 @@ def init_scaling(root):
     # --- Method 1: physical DPI ---
     try:
         dpi = root.winfo_fpixels('1i')          # pixels per inch
-    except Exception:
+    except tk.TclError:
+        log_message("winfo_fpixels failed, falling back to 96 DPI", "DEBUG")
         dpi = 96.0
     dpi_scale = dpi / 96.0
 
@@ -459,8 +495,8 @@ def bind_dynamic_wrap(label, parent, margin=30, min_width=120):
     def _resize(event):
         try:
             label.config(wraplength=max(SF(min_width), event.width - SF(margin)))
-        except Exception:
-            pass
+        except tk.TclError:
+            pass  # label was destroyed mid-resize
     parent.bind("<Configure>", _resize, add="+")
 
 def bind_debounced_canvas_redraw(canvas, redraw_func, delay=150):
@@ -471,8 +507,8 @@ def bind_debounced_canvas_redraw(canvas, redraw_func, delay=150):
         if state['job']:
             try:
                 canvas.after_cancel(state['job'])
-            except Exception:
-                pass
+            except tk.TclError:
+                pass  # job id already invalid / canvas destroyed
         state['job'] = canvas.after(delay, redraw_func)
 
     canvas.bind("<Configure>", _on_resize, add="+")
@@ -511,7 +547,7 @@ switch_frame_ref = None
 full_bracket_root = None
 full_bracket_canvas = None
 LOG_GAME_TO_FILE = False
-LOG_FILE_HANDLE = None
+_file_log_handler = None    # logging.FileHandler, set/cleared by toggle_log_game()
 final_control_frame_ref = None
 match_details_frame = None
 game_routing_label = None
@@ -525,20 +561,81 @@ match_timer_id = None
 MATCH_DURATIONS = []        # List of completed match durations (seconds)
 TOURNAMENT_START_TIME = None
 
-# --- Console Logging Function ---
+# --- Console/File Logging (Python logging module) ---
+#
+# Preserves the exact original wire format — "[YYYY-MM-DD HH:MM:SS] [LEVEL] message"
+# with LEVEL left-padded to 5 chars — so every existing log_message(...) call site
+# and every parser of the on-disk log files keeps working unchanged. "WARN" (not
+# the logging module's default "WARNING") is kept via addLevelName so the 5-char
+# padding and existing log files stay visually identical.
+logging.addLevelName(logging.WARNING, "WARN")
+
+_LOG_LEVELS = {
+    'DEBUG': logging.DEBUG,
+    'INFO':  logging.INFO,
+    'WARN':  logging.WARNING,
+    'ERROR': logging.ERROR,
+}
+
+class _ShuffleboardLogFormatter(logging.Formatter):
+    def format(self, record):
+        timestamp = self.formatTime(record, "%Y-%m-%d %H:%M:%S")
+        return f"[{timestamp}] [{record.levelname:<5}] {record.getMessage()}"
+
+class _DynamicStdout:
+    """
+    Proxies writes to the *current* sys.stdout, resolved at call time.
+
+    print() looks up sys.stdout fresh on every call, so code that
+    temporarily redirects stdout (tests, output-capturing tools, etc.)
+    transparently redirects print() output too. A plain
+    logging.StreamHandler(sys.stdout) would instead bind to whatever
+    object sys.stdout pointed to when the handler was constructed —
+    it wouldn't follow later reassignment. This proxy keeps the
+    logging-based console handler behaving like the print() it replaces.
+    """
+    def write(self, msg):
+        sys.stdout.write(msg)
+
+    def flush(self):
+        sys.stdout.flush()
+
+_logger = logging.getLogger('shuffleboard')
+_logger.setLevel(logging.DEBUG)
+_logger.propagate = False  # don't also hand records to the root logger
+
+_console_log_handler = logging.StreamHandler(_DynamicStdout())
+_console_log_handler.setFormatter(_ShuffleboardLogFormatter())
+_logger.addHandler(_console_log_handler)
+
+
 def log_message(message, level="INFO"):
-    """Prints a leveled, timestamped message to the console and log file (if enabled).
+    """Logs a leveled, timestamped message to the console and log file (if enabled).
     Levels: DEBUG, INFO, WARN, ERROR
     """
-    global LOG_GAME_TO_FILE, LOG_FILE_HANDLE
-    timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    log_line = f"[{timestamp}] [{level:<5}] {message}"
+    _logger.log(_LOG_LEVELS.get(level, logging.INFO), message)
 
-    print(log_line)
 
-    if LOG_GAME_TO_FILE and LOG_FILE_HANDLE:
-        LOG_FILE_HANDLE.write(log_line + "\n")
-        LOG_FILE_HANDLE.flush()
+def _add_file_log_handler(filename):
+    """
+    Attaches a FileHandler to the shuffleboard logger. Like the FileHandler it
+    replaces, logging.StreamHandler (FileHandler's base class) flushes after
+    every emit, so this matches the original's explicit flush()-per-write —
+    the log stays current on disk even if the app is killed uncleanly.
+    """
+    global _file_log_handler
+    handler = logging.FileHandler(filename, mode='a')
+    handler.setFormatter(_ShuffleboardLogFormatter())
+    _logger.addHandler(handler)
+    _file_log_handler = handler
+
+
+def _remove_file_log_handler():
+    global _file_log_handler
+    if _file_log_handler:
+        _logger.removeHandler(_file_log_handler)
+        _file_log_handler.close()
+        _file_log_handler = None
 
 # =============================================================================
 # --- Global Exception Handling ---
@@ -569,8 +666,8 @@ def install_exception_handler(root):
                 "Unexpected Error",
                 f"Something went wrong:\n\n{exc_value}\n\nCheck the console/log for details."
             )
-        except Exception:
-            pass  # showing the dialog itself failed — at least it's logged above
+        except tk.TclError as dialog_err:
+            log_message(f"Could not display error dialog: {dialog_err}", "ERROR")
     root.report_callback_exception = _handle
 
 def _main_thread_excepthook(exc_type, exc_value, exc_tb):
@@ -617,7 +714,8 @@ def _find_last_snapshot_in_file(path):
                 obj = json.loads(line)
                 if isinstance(obj, dict) and obj.get("type") == "SNAPSHOT":
                     last_snapshot = obj
-            except Exception:
+            except json.JSONDecodeError as e:
+                log_message(f"Skipping corrupted line in {path}: {e}", "WARN")
                 continue
 
     return last_snapshot
@@ -845,8 +943,8 @@ def _cancel_win_animation():
         if job:
             try:
                 main_root.after_cancel(job)
-            except Exception:
-                pass
+            except tk.TclError:
+                pass  # job id already invalid
             ui_references[job_key] = None
     ui_references['_win_color'] = None
     # Restore card backgrounds
@@ -862,18 +960,18 @@ def _set_card_bg(card, bg_color):
         for child in card.winfo_children():
             try:
                 child.config(bg=bg_color)
-            except Exception:
+            except tk.TclError:
                 pass
             # One level deeper for nested frames (counter frame, etc.)
             try:
                 for grandchild in child.winfo_children():
                     try:
                         grandchild.config(bg=bg_color)
-                    except Exception:
+                    except tk.TclError:
                         pass
-            except Exception:
+            except tk.TclError:
                 pass
-    except Exception:
+    except tk.TclError:
         pass
 
 def _start_win_animation(winner_color):
@@ -933,7 +1031,7 @@ def _set_first_throw_indicator(color):
                             highlightbackground=THEME['accent_gold'])
             else:
                 card.config(highlightthickness=0)
-        except Exception:
+        except tk.TclError:
             pass
 
 def _process_round_settle():
@@ -1033,6 +1131,12 @@ def _evaluate_win():
     log_message(f"Win condition confirmed after settle — {winner} ({red_val} vs {blue_val})", "INFO")
     _start_win_animation(winner)
 
+    # Auto-pause the match timer the moment a win is confirmed, so the
+    # clock stops even if the operator doesn't immediately click the
+    # WINS button to confirm the result. (declare_winner() also pauses,
+    # for the manual-declare path — this covers the automatic one.)
+    pause_match_timer()
+
     # --- IR win blink: toggle scoreboard power 5× (off/on) over ~5 s ---
     # Runs on a background daemon thread. _start_win_animation() above is
     # already driven by Tkinter's own .after() scheduler, so it keeps
@@ -1064,7 +1168,7 @@ def _check_win_condition():
     if job:
         try:
             main_root.after_cancel(job)
-        except Exception:
+        except tk.TclError:
             pass
 
     # Don't schedule a new check if a win is already showing
@@ -1128,6 +1232,81 @@ def _show_correction_dialog(color):
     tk.Button(btn_row, text="Cancel", bg=THEME['btn_cancel'], fg='white',
               relief='flat', padx=SF(14), pady=SF(4), font=THEME['font_main'],
               command=dialog.destroy).pack(side='left', padx=SF(6))
+
+
+def _adjust_score(color, delta):
+    """
+    Adjusts the on-screen counter for 'red' or 'blue' by delta (+1 or -1,
+    clamped at 0), fires the matching IR command, and restarts the
+    win-condition debounce timer. Shared by both counter buttons on both
+    team cards (was four near-identical closures: _red_down/_red_up/
+    _blue_down/_blue_up).
+
+    Also auto-starts the match timer the first time a point is added this
+    match, in case the operator forgot to press play. Only fires once per
+    match — start_time is set as soon as the timer starts (manually or
+    via this), so it doesn't re-trigger or fight a later manual pause.
+    """
+    if delta > 0:
+        match_id = TOURNAMENT_STATE.get('active_match_id')
+        if match_id and match_id != 'TOURNAMENT_OVER':
+            match_data = TOURNAMENT_STATE.get(match_id)
+            if match_data and not match_data.get('start_time'):
+                resume_match_timer()
+
+    var = ui_references[f'{color}_counter_var']
+    var.set(max(0, var.get() + delta))
+    ir_send(f"{color}_{'up' if delta > 0 else 'down'}")
+    _check_win_condition()
+
+
+def _set_flipper_ui(connected):
+    """Update Fix Score buttons and footer indicator to reflect connection state."""
+    lbl = ui_references.get('flipper_status_lbl')
+    btn = ui_references.get('flipper_reconnect_btn')
+    for key in ('red_fix_btn', 'blue_fix_btn'):
+        fix_btn = ui_references.get(key)
+        if fix_btn:
+            if connected:
+                fix_btn.pack(pady=(0, 4))
+            else:
+                fix_btn.pack_forget()
+    if lbl:
+        if connected:
+            lbl.config(text="🟢 Flipper", fg=THEME['btn_confirm'])
+            if btn:
+                btn.pack_forget()
+        else:
+            lbl.config(text="🔴 Flipper", fg=THEME['btn_cancel'])
+            if btn:
+                btn.pack(side='left', padx=(0, 4))
+
+
+def _try_reconnect():
+    """One-shot reconnect attempt triggered by the footer button."""
+    reconnect_btn = ui_references.get('flipper_reconnect_btn')
+    if reconnect_btn:
+        reconnect_btn.config(state='disabled', text='...')
+
+    def _do():
+        connected = flipper_connect()
+        main_root.after(0, lambda: _finish(connected))
+
+    def _finish(connected):
+        _set_flipper_ui(connected)
+        btn = ui_references.get('flipper_reconnect_btn')
+        if btn:
+            btn.config(state='normal', text='🔌 Reconnect')
+        log_message(f"Flipper reconnect attempt — {'success' if connected else 'not found'}", "INFO")
+
+    threading.Thread(target=_do, daemon=True).start()
+
+
+def _initial_flipper_check():
+    connected = flipper_connect()
+    main_root.after(0, lambda: _set_flipper_ui(connected))
+    if not connected:
+        log_message("Flipper Zero not detected — Fix Score buttons hidden, reconnect button shown", "INFO")
 
 
 def setup_scoreboard(root, team_red_placeholder, team_blue_placeholder):
@@ -1218,24 +1397,16 @@ def setup_scoreboard(root, team_red_placeholder, team_blue_placeholder):
     ui_references['red_counter_var'] = tk.IntVar(value=0)
     red_counter_frame = tk.Frame(red_card, bg=THEME['bg_card'])
     red_counter_frame.pack(expand=True)
-    def _red_down():
-        ui_references['red_counter_var'].set(max(0, ui_references['red_counter_var'].get() - 1))
-        ir_send('red_down')
-        _check_win_condition()
     tk.Button(red_counter_frame, text="▼", font=scaled_font('Selawik', 13, 'bold'),
               bg=THEME['bg_main'], fg=THEME['red_team'], relief='flat', width=3,
-              cursor='hand2', command=_red_down,
+              cursor='hand2', command=lambda: _adjust_score('red', -1),
               ).pack(side='left', padx=6)
     tk.Label(red_counter_frame, textvariable=ui_references['red_counter_var'],
              font=scaled_font('Selawik', 28, 'bold'), fg=THEME['red_team'], bg=THEME['bg_card'],
              width=3, anchor='center').pack(side='left')
-    def _red_up():
-        ui_references['red_counter_var'].set(ui_references['red_counter_var'].get() + 1)
-        ir_send('red_up')
-        _check_win_condition()
     tk.Button(red_counter_frame, text="▲", font=scaled_font('Selawik', 13, 'bold'),
               bg=THEME['bg_main'], fg=THEME['red_team'], relief='flat', width=3,
-              cursor='hand2', command=_red_up,
+              cursor='hand2', command=lambda: _adjust_score('red', 1),
               ).pack(side='left', padx=6)
 
     # -- Red round points-added label (under the score, shows after each settle) --
@@ -1244,11 +1415,9 @@ def setup_scoreboard(root, team_red_placeholder, team_blue_placeholder):
     ui_references['red_round_delta_lbl'].pack(pady=(0, 2))
 
     # -- Red Fix Score button --
-    def _red_fix():
-        _show_correction_dialog('red')
     ui_references['red_fix_btn'] = tk.Button(red_card, text="✎ Fix Score", font=scaled_font('Selawik', 8),
               bg=THEME['bg_main'], fg=THEME['fg_secondary'], relief='flat',
-              cursor='hand2', command=_red_fix)
+              cursor='hand2', command=lambda: _show_correction_dialog('red'))
     ui_references['red_fix_btn'].pack(pady=(0, 4))
 
     ui_references['red_stats_lbl'] = tk.Label(red_card, text="0-0", font=scaled_font('Consolas', 9), fg=THEME['fg_secondary'], bg=THEME['bg_card'])
@@ -1289,24 +1458,16 @@ def setup_scoreboard(root, team_red_placeholder, team_blue_placeholder):
     ui_references['blue_counter_var'] = tk.IntVar(value=0)
     blue_counter_frame = tk.Frame(blue_card, bg=THEME['bg_card'])
     blue_counter_frame.pack(expand=True)
-    def _blue_down():
-        ui_references['blue_counter_var'].set(max(0, ui_references['blue_counter_var'].get() - 1))
-        ir_send('blue_down')
-        _check_win_condition()
     tk.Button(blue_counter_frame, text="▼", font=scaled_font('Selawik', 13, 'bold'),
               bg=THEME['bg_main'], fg=THEME['blue_team'], relief='flat', width=3,
-              cursor='hand2', command=_blue_down,
+              cursor='hand2', command=lambda: _adjust_score('blue', -1),
               ).pack(side='left', padx=6)
     tk.Label(blue_counter_frame, textvariable=ui_references['blue_counter_var'],
              font=scaled_font('Selawik', 28, 'bold'), fg=THEME['blue_team'], bg=THEME['bg_card'],
              width=3, anchor='center').pack(side='left')
-    def _blue_up():
-        ui_references['blue_counter_var'].set(ui_references['blue_counter_var'].get() + 1)
-        ir_send('blue_up')
-        _check_win_condition()
     tk.Button(blue_counter_frame, text="▲", font=scaled_font('Selawik', 13, 'bold'),
               bg=THEME['bg_main'], fg=THEME['blue_team'], relief='flat', width=3,
-              cursor='hand2', command=_blue_up,
+              cursor='hand2', command=lambda: _adjust_score('blue', 1),
               ).pack(side='left', padx=6)
 
     # -- Blue round points-added label (under the score, shows after each settle) --
@@ -1315,11 +1476,9 @@ def setup_scoreboard(root, team_red_placeholder, team_blue_placeholder):
     ui_references['blue_round_delta_lbl'].pack(pady=(0, 2))
 
     # -- Blue Fix Score button --
-    def _blue_fix():
-        _show_correction_dialog('blue')
     ui_references['blue_fix_btn'] = tk.Button(blue_card, text="✎ Fix Score", font=scaled_font('Selawik', 8),
               bg=THEME['bg_main'], fg=THEME['fg_secondary'], relief='flat',
-              cursor='hand2', command=_blue_fix)
+              cursor='hand2', command=lambda: _show_correction_dialog('blue'))
     ui_references['blue_fix_btn'].pack(pady=(0, 4))
 
     ui_references['blue_stats_lbl'] = tk.Label(blue_card, text="0-0", font=scaled_font('Consolas', 9), fg=THEME['fg_secondary'], bg=THEME['bg_card'])
@@ -1460,42 +1619,7 @@ def setup_scoreboard(root, team_red_placeholder, team_blue_placeholder):
     )
     ui_references['flipper_status_lbl'].pack(side='left')
 
-    def _set_flipper_ui(connected):
-        """Update Fix Score buttons and footer indicator to reflect connection state."""
-        lbl = ui_references.get('flipper_status_lbl')
-        btn = ui_references.get('flipper_reconnect_btn')
-        for key in ('red_fix_btn', 'blue_fix_btn'):
-            fix_btn = ui_references.get(key)
-            if fix_btn:
-                if connected:
-                    fix_btn.pack(pady=(0, 4))
-                else:
-                    fix_btn.pack_forget()
-        if lbl:
-            if connected:
-                lbl.config(text="🟢 Flipper", fg=THEME['btn_confirm'])
-                if btn:
-                    btn.pack_forget()
-            else:
-                lbl.config(text="🔴 Flipper", fg=THEME['btn_cancel'])
-                if btn:
-                    btn.pack(side='left', padx=(0, 4))
     ui_references['_set_flipper_ui'] = _set_flipper_ui
-
-    def _try_reconnect():
-        """One-shot reconnect attempt triggered by the footer button."""
-        reconnect_btn = ui_references.get('flipper_reconnect_btn')
-        if reconnect_btn:
-            reconnect_btn.config(state='disabled', text='...')
-        def _do():
-            connected = flipper_connect()
-            root.after(0, lambda: _finish(connected))
-        def _finish(connected):
-            _set_flipper_ui(connected)
-            if reconnect_btn:
-                reconnect_btn.config(state='normal', text='🔌 Reconnect')
-            log_message(f"Flipper reconnect attempt — {'success' if connected else 'not found'}", "INFO")
-        threading.Thread(target=_do, daemon=True).start()
 
     ui_references['flipper_reconnect_btn'] = tk.Button(
         footer_bar, text="🔌 Reconnect", font=scaled_font('Selawik', 8),
@@ -1504,12 +1628,6 @@ def setup_scoreboard(root, team_red_placeholder, team_blue_placeholder):
         command=_try_reconnect
     )
     # Don't pack yet — _set_flipper_ui will show/hide it
-
-    def _initial_flipper_check():
-        connected = flipper_connect()
-        root.after(0, lambda: _set_flipper_ui(connected))
-        if not connected:
-            log_message("Flipper Zero not detected — Fix Score buttons hidden, reconnect button shown", "INFO")
 
     threading.Thread(target=_initial_flipper_check, daemon=True).start()
 
@@ -1755,32 +1873,18 @@ def update_timer_display():
     if not match_data:
         return
 
-    # If paused, show current elapsed without advancing
+    # If paused, show current elapsed without advancing. Just a static
+    # display now — no more flashing red after 30s paused, since the timer
+    # starts/stops itself automatically and rarely sits paused unexpectedly.
+    # No need to keep re-scheduling every second either: nothing animates
+    # here anymore, and resume/pause each call update_timer_display() on
+    # their own when the state actually changes.
     if match_data.get('timer_paused', True):
         elapsed = int(match_data.get('elapsed_at_pause', 0))
         mins, secs = divmod(elapsed, 60)
-        ui_references['timer_lbl'].config(text=f"{mins:02d}:{secs:02d}")
-
-        # Flash red if paused for more than 30 seconds
-        paused_at = match_data.get('paused_at') or match_data.get('_paused_since')
-        if paused_at is None:
-            match_data['_paused_since'] = time.time()
-            paused_at = match_data['_paused_since']
-
-        paused_duration = time.time() - paused_at
-        if paused_duration >= 30:
-            flash_state = match_data.get('_flash_state', False)
-            flash_color = '#FF0000' if flash_state else THEME['bg_card']
-            ui_references['timer_lbl'].config(fg=flash_color)
-            if ui_references.get('timer_play_btn'):
-                ui_references['timer_play_btn'].config(fg=flash_color)
-            match_data['_flash_state'] = not flash_state
-            match_timer_id = main_root.after(1000, update_timer_display)
-        else:
-            ui_references['timer_lbl'].config(fg=THEME['accent_gold'])
-            if ui_references.get('timer_play_btn'):
-                ui_references['timer_play_btn'].config(fg=THEME['accent_gold'])
-            match_timer_id = main_root.after(1000, update_timer_display)
+        ui_references['timer_lbl'].config(text=f"{mins:02d}:{secs:02d}", fg=THEME['accent_gold'])
+        if ui_references.get('timer_play_btn'):
+            ui_references['timer_play_btn'].config(fg=THEME['accent_gold'])
         return
 
     if 'start_time' not in match_data or not match_data['start_time']:
@@ -1798,7 +1902,7 @@ def stop_match_timer():
     if match_timer_id and main_root:
         try:
             main_root.after_cancel(match_timer_id)
-        except:
+        except tk.TclError:
             pass
         match_timer_id = None
 
@@ -1966,8 +2070,9 @@ def update_scoreboard_display():
                 next_g1_slots = sorted(next_config.get('G1', {}).get('teams', []))
                 # Safe only if G1 seeding is identical in both bracket sizes
                 show_btn = (curr_g1_slots == next_g1_slots)
-            except Exception:
+            except Exception as e:
                 show_btn = False  # Config missing or unreadable
+                log_message(f"Could not evaluate late-entry button visibility: {e}", "DEBUG")
         if show_btn:
             ui_references['late_entry_btn'].place(relx=1.0, rely=0.5, anchor='e', x=-6)
         else:
@@ -2120,19 +2225,19 @@ def run_replay_mode(path):
     try:
         snap = _find_last_snapshot_in_file(path)
     except Exception as e:
-        print(f"Replay error: {e}")
+        log_message(f"Replay error: {e}", "ERROR")
         messagebox.showerror("Replay Error", f"Could not load file: {e}")
         return
 
     if not snap:
-        print("Replay file contains no SNAPSHOT entries.")
+        log_message("Replay file contains no SNAPSHOT entries.", "ERROR")
         sys.exit(1)
 
     # Validate minimal structure
     required_keys = ("teams", "rosters", "state", "active_match_id")
     for key in required_keys:
         if key not in snap:
-            print(f"Snapshot missing required field '{key}'. Cannot continue.")
+            log_message(f"Snapshot missing required field '{key}'. Cannot continue.", "ERROR")
             sys.exit(1)
 
     # Load tournament basic data
@@ -2250,24 +2355,24 @@ def run_replay_mode(path):
 def on_close(root):
     """Handles clean exit when the window or the console is closed/interrupted."""
     global main_root
-    global LOG_FILE_HANDLE
 
     log_message("Application close requested")
     flipper_disconnect()
 
-    if LOG_FILE_HANDLE:
+    if _file_log_handler:
         try:
-            LOG_FILE_HANDLE.close()
+            _remove_file_log_handler()
             print("[Log Manager] Log file closed on exit.")
-        except:
-            pass
+        except OSError as e:
+            print(f"[Log Manager] Failed to close log file cleanly: {e}")
 
     try:
         if root:
             # Destroy the main_root (even if hidden) to stop mainloop()
             root.destroy()
         sys.exit(0)
-    except:
+    except Exception as e:
+        print(f"[Shutdown] Error during clean exit, forcing exit: {e}")
         sys.exit(0)
 
 def show_title_screen():
@@ -2289,7 +2394,7 @@ def show_title_screen():
         tk.Label(splash, image=logo, bg=THEME['bg_main']).pack(pady=20)
     except Exception as e:
         tk.Label(splash, text="Moose Lodge Shuffleboard ", fg=THEME['fg_primary'], bg=THEME['bg_main'], font=scaled_font("Arial", 20, "bold")).pack(pady=60)
-        print(f"[Title Screen] Could not load image: {e}")
+        log_message(f"Could not load title image: {e}", "WARN")
 
     tk.Label(
         splash,
@@ -2351,7 +2456,7 @@ def sort_match_keys(k):
             num_part = k.replace('G', '').split('_')[0]
             if num_part.isdigit():
                  return int(num_part)
-        except:
+        except ValueError:
              pass
 
     if k == 'GF':
@@ -2531,7 +2636,7 @@ def calculate_dynamic_coords(state):
             props['track'] = 'Finals'
         elif mid.startswith('G'):
             try: num = int(mid[1:])
-            except: num = 1
+            except ValueError: num = 1
 
             if num <= 2: r = 1
             elif num <= 4: r = 2
@@ -2822,33 +2927,88 @@ def resolve_team_name(team_ref):
 
 
 
-def draw_large_bracket(canvas):
+def _bracket_sorted_ids(matches):
+    return sorted(matches.keys(), key=sort_match_keys)
+
+
+def _bracket_group_into_rounds(sorted_ids):
     """
-    Modern full-bracket layout.
-
-    Visual upgrades over the old version:
-    - Color-coded lane banners (blue WB / red LB / gold Finals)
-    - Per-column "Round N" labels so the bracket reads like a traditional draw sheet
-    - Taller match boxes to accommodate the two-row team + roster layout
-    - Rounded-corner boxes with drop shadows (via draw_match_box_internal)
-    - Connector lines colored to match the lane they originate from
-    - Score badges inside completed boxes
+    Assign each match to a visual 'round column'.
+    For standard G-numbered matches we use the numeric part bucketed by 2
+    (G1/G2 → R1, G3/G4 → R2, …).  GF and GGF always go into their own columns.
     """
-    global TEAM_ROSTERS, REPLAY_VIEW_ONLY, TOURNAMENT_RANKINGS, TOURNAMENT_STATE
+    round_map = {}   # match_id → round_index (0-based)
+    for mid in sorted_ids:
+        if mid == 'GGF':
+            round_map[mid] = 999
+        elif mid == 'GF':
+            round_map[mid] = 998
+        elif mid.startswith('G'):
+            try:
+                n = int(mid[1:])
+                round_map[mid] = (n - 1) // 2
+            except ValueError:
+                round_map[mid] = 0
+        else:
+            round_map[mid] = 0
+    # Re-index so rounds are 0, 1, 2, …
+    unique = sorted(set(round_map.values()))
+    remap  = {v: i for i, v in enumerate(unique)}
+    return {mid: remap[r] for mid, r in round_map.items()}
 
-    canvas.delete('all')
-    canvas.configure(bg=THEME['bg_canvas'])
-    canvas.update_idletasks()
 
-    if not TOURNAMENT_STATE:
-        return
+def _bracket_round_label(section, round_idx, total_rounds):
+    """Human-readable round name."""
+    if section == 'finals':
+        return {0: 'Grand Final', 1: 'Grand Final Reset'}.get(round_idx, 'Finals')
+    if total_rounds == 1:
+        return 'Match'
+    remaining = total_rounds - round_idx
+    if remaining == 1:
+        return 'Final'
+    if remaining == 2:
+        return 'Semi-Final'
+    if remaining == 3:
+        return 'Quarter-Final'
+    return f'Round {round_idx + 1}'
 
-    # ── Categorise matches ───────────────────────────────────────────────────
+
+def _bracket_layout(canvas):
+    """
+    Computes the fixed layout constants (box sizes, spacing, lane colours)
+    used throughout the full bracket view. Bundled into a dict so it can be
+    threaded explicitly through the drawing helpers instead of via closure.
+    """
+    canvas_w   = max(SF(620), canvas.winfo_width())
+    side_pad   = SF(24)
+    top_pad    = SF(16)
+    match_w    = SF(220)
+    match_h    = SF(68)      # taller to fit two-row layout
+    col_gap    = SF(32)
+    row_gap    = SF(18)
+    banner_h   = SF(28)      # colored lane banner height
+    round_h    = SF(20)      # "Round N" label height below banner
+    section_gap= SF(36)      # vertical gap between lane sections
+    col_step = match_w + col_gap
+
+    return {
+        'canvas_w': canvas_w, 'side_pad': side_pad, 'top_pad': top_pad,
+        'match_w': match_w, 'match_h': match_h, 'col_gap': col_gap,
+        'row_gap': row_gap, 'banner_h': banner_h, 'round_h': round_h,
+        'section_gap': section_gap, 'col_step': col_step,
+        'WB_COLOR': '#1565C0', 'WB_LIGHT': '#1E3A5F', 'WB_LINE': '#42A5F5',
+        'LB_COLOR': '#B71C1C', 'LB_LIGHT': '#3B1010', 'LB_LINE': '#EF5350',
+        'FIN_COLOR': '#E65100', 'FIN_LIGHT': '#3E1F00', 'FIN_LINE': '#FFA726',
+    }
+
+
+def _bracket_categorize_matches(state):
+    """Splits TOURNAMENT_STATE into (wb_matches, lb_matches, finals_matches)."""
     wb_matches     = {}
     lb_matches     = {}
     finals_matches = {}
 
-    for mid, md in TOURNAMENT_STATE.items():
+    for mid, md in state.items():
         if not isinstance(md, dict) or 'teams' not in md:
             continue
         bt = md.get('is_winnerbracket', 'unknown')
@@ -2861,209 +3021,147 @@ def draw_large_bracket(canvas):
         else:
             wb_matches[mid] = md
 
-    # ── Layout constants ─────────────────────────────────────────────────────
-    canvas_w   = max(SF(620), canvas.winfo_width())
-    side_pad   = SF(24)
-    top_pad    = SF(16)
-    match_w    = SF(220)
-    match_h    = SF(68)      # taller to fit two-row layout
-    col_gap    = SF(32)
-    row_gap    = SF(18)
-    banner_h   = SF(28)      # colored lane banner height
-    round_h    = SF(20)      # "Round N" label height below banner
-    section_gap= SF(36)      # vertical gap between lane sections
+    return wb_matches, lb_matches, finals_matches
 
-    col_step = match_w + col_gap
 
-    # ── Lane colours ─────────────────────────────────────────────────────────
-    WB_COLOR     = '#1565C0'   # deep blue
-    WB_LIGHT     = '#1E3A5F'   # dark-blue tint for lane bg
-    WB_LINE      = '#42A5F5'   # connector line
-    LB_COLOR     = '#B71C1C'   # deep red
-    LB_LIGHT     = '#3B1010'
-    LB_LINE      = '#EF5350'
-    FIN_COLOR    = '#E65100'   # deep amber
-    FIN_LIGHT    = '#3E1F00'
-    FIN_LINE     = '#FFA726'
+def _draw_bracket_lane(canvas, layout, section, matches, banner_color, lane_bg, line_color, y_start):
+    """Draws one lane section (WB, LB, or Finals). Returns the next y_cursor."""
+    if not matches:
+        return y_start
 
-    # ── Helper: sort match IDs, group into rounds ────────────────────────────
-    def _sorted_ids(matches):
-        return sorted(matches.keys(), key=sort_match_keys)
+    side_pad, match_w, match_h = layout['side_pad'], layout['match_w'], layout['match_h']
+    col_gap, row_gap = layout['col_gap'], layout['row_gap']
+    banner_h, round_h = layout['banner_h'], layout['round_h']
+    section_gap, col_step, canvas_w = layout['section_gap'], layout['col_step'], layout['canvas_w']
 
-    def _group_into_rounds(sorted_ids):
-        """
-        Assign each match to a visual 'round column'.
-        For standard G-numbered matches we use the numeric part bucketed by 2
-        (G1/G2 → R1, G3/G4 → R2, …).  GF and GGF always go into their own columns.
-        """
-        round_map = {}   # match_id → round_index (0-based)
-        for mid in sorted_ids:
-            if mid == 'GGF':
-                round_map[mid] = 999
-            elif mid == 'GF':
-                round_map[mid] = 998
-            elif mid.startswith('G'):
-                try:
-                    n = int(mid[1:])
-                    round_map[mid] = (n - 1) // 2
-                except ValueError:
-                    round_map[mid] = 0
-            else:
-                round_map[mid] = 0
-        # Re-index so rounds are 0, 1, 2, …
-        unique = sorted(set(round_map.values()))
-        remap  = {v: i for i, v in enumerate(unique)}
-        return {mid: remap[r] for mid, r in round_map.items()}
+    ids        = _bracket_sorted_ids(matches)
+    round_map  = _bracket_group_into_rounds(ids)
+    num_rounds = max(round_map.values()) + 1
 
-    def _round_label(section, round_idx, total_rounds):
-        """Human-readable round name."""
-        if section == 'finals':
-            return {0: 'Grand Final', 1: 'Grand Final Reset'}.get(round_idx, 'Finals')
-        if total_rounds == 1:
-            return 'Match'
-        remaining = total_rounds - round_idx
-        if remaining == 1:
-            return 'Final'
-        if remaining == 2:
-            return 'Semi-Final'
-        if remaining == 3:
-            return 'Quarter-Final'
-        return f'Round {round_idx + 1}'
+    # Group IDs by round
+    by_round = {}
+    for mid in ids:
+        r = round_map[mid]
+        by_round.setdefault(r, []).append(mid)
 
-    # ── Draw one lane section, return next y_cursor ──────────────────────────
-    def draw_lane(section, matches, banner_color, lane_bg, line_color, y_start):
-        if not matches:
-            return y_start
+    # Calculate total canvas height needed for this lane
+    max_in_col = max(len(v) for v in by_round.values())
+    lane_h = (banner_h + round_h
+              + max_in_col * (match_h + row_gap)
+              + section_gap)
 
-        ids        = _sorted_ids(matches)
-        round_map  = _group_into_rounds(ids)
-        num_rounds = max(round_map.values()) + 1
+    # Lane background tint
+    lane_w = num_rounds * col_step - col_gap + side_pad * 2
+    lane_x = 0
+    canvas.create_rectangle(lane_x, y_start,
+                             max(canvas_w, lane_w), y_start + lane_h,
+                             fill=lane_bg, outline='', tags=('lane_bg',))
 
-        # Group IDs by round
-        by_round = {}
-        for mid in ids:
-            r = round_map[mid]
-            by_round.setdefault(r, []).append(mid)
+    # Colored banner strip
+    canvas.create_rectangle(0, y_start, max(canvas_w, lane_w),
+                             y_start + banner_h,
+                             fill=banner_color, outline='')
 
-        # Calculate total canvas height needed for this lane
-        max_in_col = max(len(v) for v in by_round.values())
-        lane_h = (banner_h + round_h
-                  + max_in_col * (match_h + row_gap)
-                  + section_gap)
+    # Banner label
+    section_title = {
+        'wb':     "WINNER'S BRACKET",
+        'lb':     "LOSER'S BRACKET",
+        'finals': 'FINALS',
+    }[section]
+    canvas.create_text(max(canvas_w, lane_w) // 2, y_start + banner_h // 2,
+                       text=section_title, anchor='center',
+                       fill='white',
+                       font=scaled_font('Selawik', 10, 'bold'))
 
-        # Lane background tint
-        lane_w = num_rounds * col_step - col_gap + side_pad * 2
-        lane_x = 0
-        canvas.create_rectangle(lane_x, y_start,
-                                 max(canvas_w, lane_w), y_start + lane_h,
-                                 fill=lane_bg, outline='', tags=('lane_bg',))
+    # Per-column round labels + match boxes
+    match_positions = {}
+    for r in range(num_rounds):
+        col_x      = side_pad + r * col_step
+        label_y    = y_start + banner_h
+        content_y  = label_y + round_h
 
-        # Colored banner strip
-        canvas.create_rectangle(0, y_start, max(canvas_w, lane_w),
-                                 y_start + banner_h,
-                                 fill=banner_color, outline='')
+        # Round label
+        total_rounds_this_section = num_rounds
+        rl = _bracket_round_label(section, r, total_rounds_this_section)
+        canvas.create_text(col_x + match_w // 2, label_y + round_h // 2,
+                           text=rl, anchor='center',
+                           fill='#B0BEC5',
+                           font=scaled_font('Selawik', 8))
 
-        # Banner label
-        section_title = {
-            'wb':     "WINNER'S BRACKET",
-            'lb':     "LOSER'S BRACKET",
-            'finals': 'FINALS',
-        }[section]
-        canvas.create_text(max(canvas_w, lane_w) // 2, y_start + banner_h // 2,
-                           text=section_title, anchor='center',
-                           fill='white',
-                           font=scaled_font('Selawik', 10, 'bold'))
+        # Boxes in this column
+        col_ids = by_round.get(r, [])
+        for row_idx, mid in enumerate(col_ids):
+            bx = col_x
+            by = content_y + row_idx * (match_h + row_gap)
+            match_positions[mid] = {'x': bx, 'y': by, 'w': match_w, 'h': match_h}
+            draw_match_box_internal(canvas, mid, matches[mid], bx, by, match_w, match_h)
 
-        # Per-column round labels + match boxes
-        match_positions = {}
-        for r in range(num_rounds):
-            col_x      = side_pad + r * col_step
-            label_y    = y_start + banner_h
-            content_y  = label_y + round_h
+    # Connection lines between completed boxes
+    for src_id, src_info in match_positions.items():
+        src_match = TOURNAMENT_STATE.get(src_id, {})
+        winner = src_match.get('winner') or src_match.get('champion')
+        if not winner:
+            continue
+        for dst_id, dst_info in match_positions.items():
+            dst_match = TOURNAMENT_STATE.get(dst_id, {})
+            for slot_idx, team_ref in enumerate(dst_match.get('teams', [None, None])):
+                if (isinstance(team_ref, str)
+                        and team_ref.startswith('W:')
+                        and team_ref[2:] == src_id):
+                    sx = src_info['x'] + src_info['w']
+                    sy = src_info['y'] + src_info['h'] / 2
+                    dx = dst_info['x']
+                    dy = (dst_info['y'] + dst_info['h'] / 4
+                          if slot_idx == 0
+                          else dst_info['y'] + 3 * dst_info['h'] / 4)
+                    mx = (sx + dx) / 2
+                    canvas.create_line(sx, sy, mx, sy, mx, dy, dx, dy,
+                                       fill=line_color,
+                                       width=max(1, SF(2)),
+                                       smooth=True)
 
-            # Round label
-            total_rounds_this_section = num_rounds
-            rl = _round_label(section, r, total_rounds_this_section)
-            canvas.create_text(col_x + match_w // 2, label_y + round_h // 2,
-                               text=rl, anchor='center',
-                               fill='#B0BEC5',
-                               font=scaled_font('Selawik', 8))
+    return y_start + lane_h
 
-            # Boxes in this column
-            col_ids = by_round.get(r, [])
-            for row_idx, mid in enumerate(col_ids):
-                bx = col_x
-                by = content_y + row_idx * (match_h + row_gap)
-                match_positions[mid] = {'x': bx, 'y': by, 'w': match_w, 'h': match_h}
-                draw_match_box_internal(canvas, mid, matches[mid], bx, by, match_w, match_h)
 
-        # Connection lines between completed boxes
-        for src_id, src_info in match_positions.items():
-            src_match = TOURNAMENT_STATE.get(src_id, {})
-            winner = src_match.get('winner') or src_match.get('champion')
-            if not winner:
-                continue
-            for dst_id, dst_info in match_positions.items():
-                dst_match = TOURNAMENT_STATE.get(dst_id, {})
-                for slot_idx, team_ref in enumerate(dst_match.get('teams', [None, None])):
-                    if (isinstance(team_ref, str)
-                            and team_ref.startswith('W:')
-                            and team_ref[2:] == src_id):
-                        sx = src_info['x'] + src_info['w']
-                        sy = src_info['y'] + src_info['h'] / 2
-                        dx = dst_info['x']
-                        dy = (dst_info['y'] + dst_info['h'] / 4
-                              if slot_idx == 0
-                              else dst_info['y'] + 3 * dst_info['h'] / 4)
-                        mx = (sx + dx) / 2
-                        canvas.create_line(sx, sy, mx, sy, mx, dy, dx, dy,
-                                           fill=line_color,
-                                           width=max(1, SF(2)),
-                                           smooth=True)
+def _collect_bracket_positions(layout, matches, y_start):
+    """
+    Re-derives box positions for a lane without drawing anything (read-only
+    re-run of the grouping/layout logic used by _draw_bracket_lane), so
+    cross-lane connector lines can be drawn after every lane already exists.
+    """
+    if not matches:
+        return {}, y_start
 
-        return y_start + lane_h
+    side_pad, match_w, match_h = layout['side_pad'], layout['match_w'], layout['match_h']
+    row_gap = layout['row_gap']
+    banner_h, round_h = layout['banner_h'], layout['round_h']
+    section_gap, col_step = layout['section_gap'], layout['col_step']
 
-    # ── Draw all three lanes ─────────────────────────────────────────────────
-    y = top_pad
-    y = draw_lane('wb',     wb_matches,     WB_COLOR,  WB_LIGHT,  WB_LINE,  y)
-    y = draw_lane('lb',     lb_matches,     LB_COLOR,  LB_LIGHT,  LB_LINE,  y)
-    y = draw_lane('finals', finals_matches, FIN_COLOR, FIN_LIGHT, FIN_LINE, y)
+    ids       = _bracket_sorted_ids(matches)
+    rmap      = _bracket_group_into_rounds(ids)
+    by_round  = {}
+    for mid in ids:
+        by_round.setdefault(rmap[mid], []).append(mid)
+    max_in_col = max(len(v) for v in by_round.values())
+    lane_h = banner_h + round_h + max_in_col * (match_h + row_gap) + section_gap
+    positions = {}
+    for r, col_ids in by_round.items():
+        col_x     = side_pad + r * col_step
+        content_y = y_start + banner_h + round_h
+        for row_idx, mid in enumerate(col_ids):
+            positions[mid] = {
+                'x': col_x,
+                'y': content_y + row_idx * (match_h + row_gap),
+                'w': match_w, 'h': match_h,
+            }
+    return positions, y_start + lane_h
 
-    # Cross-lane connector lines (loser drops from WB → LB, winner advances to Finals)
-    # These are drawn after all boxes exist so we can reference both lane positions.
-    # We iterate the full TOURNAMENT_STATE to find inter-lane W: references.
-    all_positions = {}
-    # Rebuild a flat position map by re-running the grouping logic (read-only)
-    def _collect_positions(matches, y_start):
-        if not matches:
-            return {}, y_start
-        ids       = _sorted_ids(matches)
-        rmap      = _group_into_rounds(ids)
-        by_round  = {}
-        for mid in ids:
-            by_round.setdefault(rmap[mid], []).append(mid)
-        max_in_col = max(len(v) for v in by_round.values())
-        lane_h = banner_h + round_h + max_in_col * (match_h + row_gap) + section_gap
-        positions = {}
-        for r, col_ids in by_round.items():
-            col_x     = side_pad + r * col_step
-            content_y = y_start + banner_h + round_h
-            for row_idx, mid in enumerate(col_ids):
-                positions[mid] = {
-                    'x': col_x,
-                    'y': content_y + row_idx * (match_h + row_gap),
-                    'w': match_w, 'h': match_h,
-                }
-        return positions, y_start + lane_h
 
-    pos_wb, y_after_wb = _collect_positions(wb_matches, top_pad)
-    pos_lb, y_after_lb = _collect_positions(lb_matches, y_after_wb)
-    pos_fn, _          = _collect_positions(finals_matches, y_after_lb)
-    all_positions.update(pos_wb)
-    all_positions.update(pos_lb)
-    all_positions.update(pos_fn)
-
-    # Draw cross-lane lines (only for matches with a known winner)
+def _draw_bracket_cross_lane_lines(canvas, all_positions, wb_matches, lb_matches, finals_matches):
+    """
+    Draws dashed connector lines between lanes (loser drops WB → LB, winner
+    advances to Finals). Only for matches with a known winner.
+    """
     for src_id, src_info in all_positions.items():
         src_match = TOURNAMENT_STATE.get(src_id, {})
         winner    = src_match.get('winner') or src_match.get('champion')
@@ -3072,7 +3170,7 @@ def draw_large_bracket(canvas):
         for dst_id, dst_info in all_positions.items():
             if dst_id == src_id:
                 continue
-            # Skip pairs already in the same lane (handled inside draw_lane)
+            # Skip pairs already in the same lane (handled inside _draw_bracket_lane)
             same_lane = ((src_id in wb_matches and dst_id in wb_matches) or
                          (src_id in lb_matches and dst_id in lb_matches) or
                          (src_id in finals_matches and dst_id in finals_matches))
@@ -3095,13 +3193,65 @@ def draw_large_bracket(canvas):
                                        dash=(SF(4), SF(3)),
                                        smooth=True)
 
+
+def draw_large_bracket(canvas):
+    """
+    Modern full-bracket layout.
+
+    Visual upgrades over the old version:
+    - Color-coded lane banners (blue WB / red LB / gold Finals)
+    - Per-column "Round N" labels so the bracket reads like a traditional draw sheet
+    - Taller match boxes to accommodate the two-row team + roster layout
+    - Rounded-corner boxes with drop shadows (via draw_match_box_internal)
+    - Connector lines colored to match the lane they originate from
+    - Score badges inside completed boxes
+
+    Drawing is split into focused helpers:
+      _bracket_categorize_matches — splits state into WB/LB/Finals matches
+      _bracket_layout             — box sizes, spacing, lane colours
+      _draw_bracket_lane          — draws one lane + its internal connectors
+      _collect_bracket_positions  — re-derives positions for cross-lane lines
+      _draw_bracket_cross_lane_lines — WB→LB / →Finals connector lines
+    """
+    global TEAM_ROSTERS, REPLAY_VIEW_ONLY, TOURNAMENT_RANKINGS, TOURNAMENT_STATE
+
+    canvas.delete('all')
+    canvas.configure(bg=THEME['bg_canvas'])
+    canvas.update_idletasks()
+
+    if not TOURNAMENT_STATE:
+        return
+
+    wb_matches, lb_matches, finals_matches = _bracket_categorize_matches(TOURNAMENT_STATE)
+    layout = _bracket_layout(canvas)
+
+    # ── Draw all three lanes ─────────────────────────────────────────────────
+    y = layout['top_pad']
+    y = _draw_bracket_lane(canvas, layout, 'wb',     wb_matches,     layout['WB_COLOR'],  layout['WB_LIGHT'],  layout['WB_LINE'],  y)
+    y = _draw_bracket_lane(canvas, layout, 'lb',     lb_matches,     layout['LB_COLOR'],  layout['LB_LIGHT'],  layout['LB_LINE'],  y)
+    y = _draw_bracket_lane(canvas, layout, 'finals', finals_matches, layout['FIN_COLOR'], layout['FIN_LIGHT'], layout['FIN_LINE'], y)
+
+    # Cross-lane connector lines (loser drops from WB → LB, winner advances to Finals)
+    # These are drawn after all boxes exist so we can reference both lane positions.
+    # We iterate the full TOURNAMENT_STATE to find inter-lane W: references.
+    pos_wb, y_after_wb = _collect_bracket_positions(layout, wb_matches, layout['top_pad'])
+    pos_lb, y_after_lb = _collect_bracket_positions(layout, lb_matches, y_after_wb)
+    pos_fn, _          = _collect_bracket_positions(layout, finals_matches, y_after_lb)
+    all_positions = {}
+    all_positions.update(pos_wb)
+    all_positions.update(pos_lb)
+    all_positions.update(pos_fn)
+
+    _draw_bracket_cross_lane_lines(canvas, all_positions, wb_matches, lb_matches, finals_matches)
+
     # ── Scrollregion ─────────────────────────────────────────────────────────
     canvas.update_idletasks()
     bbox = canvas.bbox('all')
     if bbox:
         canvas.config(scrollregion=(0, 0,
-                                    max(canvas_w, bbox[2] + side_pad),
-                                    bbox[3] + top_pad))
+                                    max(layout['canvas_w'], bbox[2] + layout['side_pad']),
+                                    bbox[3] + layout['top_pad']))
+
 
 def _draw_rounded_rect(canvas, x1, y1, x2, y2, r, fill, outline, width, tags=()):
     """
@@ -3296,6 +3446,227 @@ def draw_match_box_internal(canvas, match_id, match_data, x, y, w, h):
                            font=scaled_font('Selawik', 7),
                            tags=TAGS)
 
+def on_bracket_click(event):
+    """Handle clicks on the bracket to trace a team's path"""
+    canvas = event.widget
+    x, y = canvas.canvasx(event.x), canvas.canvasy(event.y)
+
+    # Find all items at click location
+    clicked_items = canvas.find_overlapping(x-10, y-10, x+10, y+10)
+
+    for item in clicked_items:
+        tags = canvas.gettags(item)
+        # Look for match ID tags (format: match_X, match_G1, etc)
+        for tag in tags:
+            if tag.startswith('match_'):
+                match_id = tag[6:]  # Remove 'match_' prefix
+                trace_team_path(canvas, match_id)
+                return
+
+
+def trace_team_path(canvas, match_id):
+    """Highlight the winner's complete path to the clicked match"""
+    global TOURNAMENT_STATE
+
+    if match_id not in TOURNAMENT_STATE:
+        return
+
+    match_data = TOURNAMENT_STATE[match_id]
+
+    # Clear previous traces
+    canvas.delete('trace_highlight')
+    canvas.delete('trace_text')
+
+    # Get the winner of this match
+    winner = match_data.get('winner') or match_data.get('champion')
+
+    # If no winner, check if it's GF/GGF with W: references
+    if not winner and match_id in ['GF', 'GGF']:
+        # For GF/GGF, try to resolve the teams to see if they're available
+        team_a = match_data.get('teams', [None, None])[0]
+        team_b = match_data.get('teams', [None, None])[1]
+
+        resolved_a = resolve_team_name(team_a)
+        resolved_b = resolve_team_name(team_b)
+
+        if resolved_a and resolved_b:
+            # Both teams are available, but no winner declared yet
+            flash_effect(canvas, match_id, '#FFD700')
+            return
+
+    # If still no winner, flash and reset
+    if not winner:
+        flash_effect(canvas, match_id, '#FFD700')
+        return
+
+    # Highlight the clicked match in gold
+    highlight_match_box(canvas, match_id, '#FFD700', None)
+
+    # Highlight all previous matches the winner played in, with their names
+    highlight_team_matches(canvas, winner, '#FFD700')
+
+
+def flash_effect(canvas, match_id, color, _step=0, _coords=None):
+    """
+    Flash the match box 3 times (show color, then clear) and stop.
+
+    Non-blocking: scheduled via canvas.after() instead of the previous
+    `for i in range(3): ...; canvas.update(); canvas.after(200)` loop.
+    That loop called canvas.update() from inside this click-handler
+    callback, re-entering the Tkinter event loop for ~1.2s — a click
+    landing during that window could fire its own handler nested inside
+    this one. Scheduling each step via .after() instead lets control
+    return to the event loop between steps, same fix as _evaluate_win.
+    """
+    if _coords is None:
+        # First call: locate the match box's rectangle once.
+        _coords = None
+        for item_id in canvas.find_all():
+            tags = canvas.gettags(item_id)
+            if f'match_{match_id}' in tags:
+                coords = canvas.coords(item_id)
+                if coords and len(coords) >= 4:
+                    _coords = (coords[0], coords[1], coords[2], coords[3])
+                break
+        if _coords is None:
+            return  # match box not found on canvas (e.g. already redrawn)
+
+    try:
+        x1, y1, x2, y2 = _coords
+        if _step % 2 == 0:
+            # Even step: show the flash color
+            canvas.create_rectangle(x1, y1, x2, y2,
+                                  fill=color, outline='', tags=('trace_highlight',))
+            canvas.create_rectangle(x1, y1, x2, y2,
+                                  fill='', outline='#263238', width=2, tags=('trace_highlight',))
+        else:
+            # Odd step: clear it
+            canvas.delete('trace_highlight')
+
+        next_step = _step + 1
+        if next_step < 6:  # 3 flashes x (show, clear) = 6 steps
+            canvas.after(200, lambda: flash_effect(canvas, match_id, color, next_step, _coords))
+    except tk.TclError:
+        pass  # canvas was destroyed (e.g. window closed) mid-flash
+
+
+def highlight_team_matches(canvas, team_name, color):
+    """Highlight all matches this team played in, with their names in each box"""
+    global TOURNAMENT_STATE, TEAM_ROSTERS
+
+    if not team_name:
+        return
+
+    for match_id, match_data in TOURNAMENT_STATE.items():
+        if not isinstance(match_data, dict) or 'teams' not in match_data:
+            continue
+
+        team_a = match_data.get('teams', [None, None])[0]
+        team_b = match_data.get('teams', [None, None])[1]
+
+        # Check if this team appears in this match
+        if team_name in [team_a, team_b]:
+            highlight_match_box(canvas, match_id, color, team_name)
+
+
+def highlight_match_box(canvas, match_id, color, team_name):
+    """Highlight a match box with colored background and team names"""
+    global TEAM_ROSTERS
+
+    # For GF/GGF, resolve team references to get actual names
+    if match_id in ['GF', 'GGF'] and team_name and team_name.startswith('W:'):
+        team_name = resolve_team_name(team_name)
+
+    found = False
+    for item_id in canvas.find_all():
+        tags = canvas.gettags(item_id)
+        if f'match_{match_id}' in tags:
+            coords = canvas.coords(item_id)
+            if coords and len(coords) >= 4:
+                x1, y1, x2, y2 = coords[0], coords[1], coords[2], coords[3]
+
+                # Draw colored background
+                canvas.create_rectangle(x1, y1, x2, y2,
+                                      fill=color, outline='', tags=('trace_highlight',))
+
+                # Draw border on top
+                canvas.create_rectangle(x1, y1, x2, y2,
+                                      fill='', outline='#263238', width=2, tags=('trace_highlight',))
+
+                # Add team member names if we have a team name
+                if team_name and team_name in TEAM_ROSTERS:
+                    roster = TEAM_ROSTERS.get(team_name, ['?', '?'])
+
+                    # Add player names with larger font to fill the box
+                    text_x = (x1 + x2) / 2
+
+                    # Top player name
+                    canvas.create_text(text_x, y1 + (y2 - y1) / 4,
+                                     text=roster[0],
+                                     font=scaled_font('Selawik', 9, 'bold'),
+                                     fill='black', anchor='center',
+                                     tags=('trace_text',))
+
+                    # Bottom player name
+                    canvas.create_text(text_x, y1 + 3 * (y2 - y1) / 4,
+                                     text=roster[1],
+                                     font=scaled_font('Selawik', 9, 'bold'),
+                                     fill='black', anchor='center',
+                                     tags=('trace_text',))
+
+                found = True
+            break
+
+
+def dehighlight_traces(canvas):
+    """Clear all trace highlights"""
+    canvas.delete('trace_highlight')
+    canvas.delete('trace_text')
+
+
+def _build_bracket_search_bar(parent):
+    """
+    Builds the 'Search Player' bar (label + entry + button) shown in the
+    full bracket window's header, identical in both replay and normal
+    mode. Matching players are highlighted in green on the given canvas
+    (module-global full_bracket_canvas, resolved at search-time).
+    """
+    search_frame = tk.Frame(parent, bg=THEME['bg_card'])
+    search_frame.pack(side='left', padx=SF(5))
+
+    tk.Label(search_frame, text="Search Player:", font=scaled_font('Selawik', 9),
+            bg=THEME['bg_card'], fg=THEME['fg_secondary']).pack(side='left', padx=(0, 5))
+
+    search_var = tk.StringVar()
+    search_entry = tk.Entry(search_frame, textvariable=search_var, width=15,
+                           font=scaled_font('Selawik', 9), relief='flat')
+    search_entry.pack(side='left', padx=SF(5))
+
+    def search_player(event=None):
+        """Search for player and highlight their matches"""
+        player_name = search_var.get().strip()
+        dehighlight_traces(full_bracket_canvas)
+
+        if not player_name:
+            return
+
+        # Find all teams with this player
+        matching_teams = []
+        for team_name, roster in TEAM_ROSTERS.items():
+            if player_name.lower() in roster[0].lower() or player_name.lower() in roster[1].lower():
+                matching_teams.append(team_name)
+
+        # Highlight all matches with these teams
+        for team_name in matching_teams:
+            highlight_team_matches(full_bracket_canvas, team_name, '#90EE90')
+
+    search_entry.bind('<Return>', search_player)
+
+    tk.Button(search_frame, text="Search", command=search_player,
+             bg=THEME['btn_confirm'], fg='white', font=scaled_font('Selawik', 9),
+             relief='flat', padx=SF(10), pady=SF(2)).pack(side='left', padx=2)
+
+
 def open_full_bracket():
     """Opens (or lifts) the large scrollable bracket window with improved styling and click-to-trace functionality."""
     global full_bracket_root, full_bracket_canvas, REPLAY_VIEW_ONLY
@@ -3304,7 +3675,7 @@ def open_full_bracket():
         try:
             full_bracket_root.lift()
             return
-        except:
+        except tk.TclError:
             full_bracket_root = None
 
     full_bracket_root = tk.Toplevel(main_root)
@@ -3336,41 +3707,7 @@ def open_full_bracket():
     right_header.pack(side='right', padx=(20, 0))
 
     if REPLAY_VIEW_ONLY:
-        # Search bar for player highlighting (also in replay mode)
-        search_frame = tk.Frame(right_header, bg=THEME['bg_card'])
-        search_frame.pack(side='left', padx=SF(5))
-
-        tk.Label(search_frame, text="Search Player:", font=scaled_font('Selawik', 9),
-                bg=THEME['bg_card'], fg=THEME['fg_secondary']).pack(side='left', padx=(0, 5))
-
-        search_var = tk.StringVar()
-        search_entry = tk.Entry(search_frame, textvariable=search_var, width=15,
-                               font=scaled_font('Selawik', 9), relief='flat')
-        search_entry.pack(side='left', padx=SF(5))
-
-        def search_player(event=None):
-            """Search for player and highlight their matches"""
-            player_name = search_var.get().strip()
-            dehighlight_traces(full_bracket_canvas)
-
-            if not player_name:
-                return
-
-            # Find all teams with this player
-            matching_teams = []
-            for team_name, roster in TEAM_ROSTERS.items():
-                if player_name.lower() in roster[0].lower() or player_name.lower() in roster[1].lower():
-                    matching_teams.append(team_name)
-
-            # Highlight all matches with these teams
-            for team_name in matching_teams:
-                highlight_team_matches(full_bracket_canvas, team_name, '#90EE90')
-
-        search_entry.bind('<Return>', search_player)
-
-        tk.Button(search_frame, text="Search", command=search_player,
-                 bg=THEME['btn_confirm'], fg='white', font=scaled_font('Selawik', 9),
-                 relief='flat', padx=SF(10), pady=SF(2)).pack(side='left', padx=2)
+        _build_bracket_search_bar(right_header)
 
         # Add clear highlights button
         clear_btn = tk.Button(right_header, text="Clear Highlights",
@@ -3397,41 +3734,7 @@ def open_full_bracket():
                  bg=THEME['btn_cancel'], fg='white', font=THEME['font_main'],
                  relief='flat', padx=SF(15), pady=SF(5)).pack(side='left', padx=SF(5))
     else:
-        # Search bar for player highlighting
-        search_frame = tk.Frame(right_header, bg=THEME['bg_card'])
-        search_frame.pack(side='left', padx=SF(5))
-
-        tk.Label(search_frame, text="Search Player:", font=scaled_font('Selawik', 9),
-                bg=THEME['bg_card'], fg=THEME['fg_secondary']).pack(side='left', padx=(0, 5))
-
-        search_var = tk.StringVar()
-        search_entry = tk.Entry(search_frame, textvariable=search_var, width=15,
-                               font=scaled_font('Selawik', 9), relief='flat')
-        search_entry.pack(side='left', padx=SF(5))
-
-        def search_player(event=None):
-            """Search for player and highlight their matches"""
-            player_name = search_var.get().strip()
-            dehighlight_traces(full_bracket_canvas)
-
-            if not player_name:
-                return
-
-            # Find all teams with this player
-            matching_teams = []
-            for team_name, roster in TEAM_ROSTERS.items():
-                if player_name.lower() in roster[0].lower() or player_name.lower() in roster[1].lower():
-                    matching_teams.append(team_name)
-
-            # Highlight all matches with these teams
-            for team_name in matching_teams:
-                highlight_team_matches(full_bracket_canvas, team_name, '#90EE90')
-
-        search_entry.bind('<Return>', search_player)
-
-        tk.Button(search_frame, text="Search", command=search_player,
-                 bg=THEME['btn_confirm'], fg='white', font=scaled_font('Selawik', 9),
-                 relief='flat', padx=SF(10), pady=SF(2)).pack(side='left', padx=2)
+        _build_bracket_search_bar(right_header)
 
         # Add clear highlights button
         clear_btn = tk.Button(right_header, text="Clear Highlights",
@@ -3495,181 +3798,12 @@ def open_full_bracket():
     # ========================================================================
     # CLICK HANDLER FOR TRACING TEAMS
     # ========================================================================
-
-    def on_bracket_click(event):
-        """Handle clicks on the bracket to trace a team's path"""
-        canvas = event.widget
-        x, y = canvas.canvasx(event.x), canvas.canvasy(event.y)
-
-        # Find all items at click location
-        clicked_items = canvas.find_overlapping(x-10, y-10, x+10, y+10)
-
-        for item in clicked_items:
-            tags = canvas.gettags(item)
-            # Look for match ID tags (format: match_X, match_G1, etc)
-            for tag in tags:
-                if tag.startswith('match_'):
-                    match_id = tag[6:]  # Remove 'match_' prefix
-                    trace_team_path(canvas, match_id)
-                    return
-
-    def trace_team_path(canvas, match_id):
-        """Highlight the winner's complete path to the clicked match"""
-        global TOURNAMENT_STATE
-
-        if match_id not in TOURNAMENT_STATE:
-            return
-
-        match_data = TOURNAMENT_STATE[match_id]
-
-        # Clear previous traces
-        canvas.delete('trace_highlight')
-        canvas.delete('trace_text')
-
-        # Get the winner of this match
-        winner = match_data.get('winner') or match_data.get('champion')
-
-        # If no winner, check if it's GF/GGF with W: references
-        if not winner and match_id in ['GF', 'GGF']:
-            # For GF/GGF, try to resolve the teams to see if they're available
-            team_a = match_data.get('teams', [None, None])[0]
-            team_b = match_data.get('teams', [None, None])[1]
-
-            resolved_a = resolve_team_name(team_a)
-            resolved_b = resolve_team_name(team_b)
-
-            if resolved_a and resolved_b:
-                # Both teams are available, but no winner declared yet
-                flash_effect(canvas, match_id, '#FFD700')
-                return
-
-        # If still no winner, flash and reset
-        if not winner:
-            flash_effect(canvas, match_id, '#FFD700')
-            return
-
-        # Highlight the clicked match in gold
-        highlight_match_box(canvas, match_id, '#FFD700', None)
-
-        # Highlight all previous matches the winner played in, with their names
-        highlight_team_matches(canvas, winner, '#FFD700')
-
-    def flash_effect(canvas, match_id, color, _step=0, _coords=None):
-        """
-        Flash the match box 3 times (show color, then clear) and stop.
-
-        Non-blocking: scheduled via canvas.after() instead of the previous
-        `for i in range(3): ...; canvas.update(); canvas.after(200)` loop.
-        That loop called canvas.update() from inside this click-handler
-        callback, re-entering the Tkinter event loop for ~1.2s — a click
-        landing during that window could fire its own handler nested inside
-        this one. Scheduling each step via .after() instead lets control
-        return to the event loop between steps, same fix as _evaluate_win.
-        """
-        if _coords is None:
-            # First call: locate the match box's rectangle once.
-            _coords = None
-            for item_id in canvas.find_all():
-                tags = canvas.gettags(item_id)
-                if f'match_{match_id}' in tags:
-                    coords = canvas.coords(item_id)
-                    if coords and len(coords) >= 4:
-                        _coords = (coords[0], coords[1], coords[2], coords[3])
-                    break
-            if _coords is None:
-                return  # match box not found on canvas (e.g. already redrawn)
-
-        try:
-            x1, y1, x2, y2 = _coords
-            if _step % 2 == 0:
-                # Even step: show the flash color
-                canvas.create_rectangle(x1, y1, x2, y2,
-                                      fill=color, outline='', tags=('trace_highlight',))
-                canvas.create_rectangle(x1, y1, x2, y2,
-                                      fill='', outline='#263238', width=2, tags=('trace_highlight',))
-            else:
-                # Odd step: clear it
-                canvas.delete('trace_highlight')
-
-            next_step = _step + 1
-            if next_step < 6:  # 3 flashes x (show, clear) = 6 steps
-                canvas.after(200, lambda: flash_effect(canvas, match_id, color, next_step, _coords))
-        except tk.TclError:
-            pass  # canvas was destroyed (e.g. window closed) mid-flash
-
-    def highlight_team_matches(canvas, team_name, color):
-        """Highlight all matches this team played in, with their names in each box"""
-        global TOURNAMENT_STATE, TEAM_ROSTERS
-
-        if not team_name:
-            return
-
-        for match_id, match_data in TOURNAMENT_STATE.items():
-            if not isinstance(match_data, dict) or 'teams' not in match_data:
-                continue
-
-            team_a = match_data.get('teams', [None, None])[0]
-            team_b = match_data.get('teams', [None, None])[1]
-
-            # Check if this team appears in this match
-            if team_name in [team_a, team_b]:
-                highlight_match_box(canvas, match_id, color, team_name)
-
-    def highlight_match_box(canvas, match_id, color, team_name):
-        """Highlight a match box with colored background and team names"""
-        global TEAM_ROSTERS
-
-        # For GF/GGF, resolve team references to get actual names
-        if match_id in ['GF', 'GGF'] and team_name and team_name.startswith('W:'):
-            team_name = resolve_team_name(team_name)
-
-        found = False
-        for item_id in canvas.find_all():
-            tags = canvas.gettags(item_id)
-            if f'match_{match_id}' in tags:
-                coords = canvas.coords(item_id)
-                if coords and len(coords) >= 4:
-                    x1, y1, x2, y2 = coords[0], coords[1], coords[2], coords[3]
-
-                    # Draw colored background
-                    canvas.create_rectangle(x1, y1, x2, y2,
-                                          fill=color, outline='', tags=('trace_highlight',))
-
-                    # Draw border on top
-                    canvas.create_rectangle(x1, y1, x2, y2,
-                                          fill='', outline='#263238', width=2, tags=('trace_highlight',))
-
-                    # Add team member names if we have a team name
-                    if team_name and team_name in TEAM_ROSTERS:
-                        roster = TEAM_ROSTERS.get(team_name, ['?', '?'])
-
-                        # Add player names with larger font to fill the box
-                        text_x = (x1 + x2) / 2
-
-                        # Top player name
-                        canvas.create_text(text_x, y1 + (y2 - y1) / 4,
-                                         text=roster[0],
-                                         font=scaled_font('Selawik', 9, 'bold'),
-                                         fill='black', anchor='center',
-                                         tags=('trace_text',))
-
-                        # Bottom player name
-                        canvas.create_text(text_x, y1 + 3 * (y2 - y1) / 4,
-                                         text=roster[1],
-                                         font=scaled_font('Selawik', 9, 'bold'),
-                                         fill='black', anchor='center',
-                                         tags=('trace_text',))
-
-                    found = True
-                break
-
-    def dehighlight_traces(canvas):
-        """Clear all trace highlights"""
-        canvas.delete('trace_highlight')
-        canvas.delete('trace_text')
+    # (on_bracket_click, trace_team_path, flash_effect, highlight_team_matches,
+    #  highlight_match_box, and dehighlight_traces are module-level functions
+    #  defined above, shared with any other caller that needs them.)
 
     # Bind click on canvas background to dehighlight
-    full_bracket_canvas.bind("<Button-3>", dehighlight_traces)  # Right-click to dehighlight
+    full_bracket_canvas.bind("<Button-3>", lambda event: dehighlight_traces(event.widget))  # Right-click to dehighlight
 
     # Bind click event
     full_bracket_canvas.bind("<Button-1>", on_bracket_click)
@@ -3795,7 +3929,8 @@ def _find_final_stats_in_file(path):
                 obj = json.loads(line)
                 if isinstance(obj, dict) and obj.get("type") == "FINAL_STATS":
                     result = obj
-            except Exception:
+            except json.JSONDecodeError as e:
+                log_message(f"Skipping corrupted line in {path}: {e}", "WARN")
                 continue
     return result
 
@@ -3949,8 +4084,11 @@ def _compute_final_stats(champion):
                                  'losses': grind_losses}
 
     all_teams_hist = {r['winner'] for r in MATCH_HISTORY} | {r['loser'] for r in MATCH_HISTORY}
+    # Sorted so ties (teams eliminated after the same number of matches)
+    # resolve to the same team every time, instead of depending on
+    # Python's per-process hash-randomized set iteration order.
     team_total_m   = {t: sum(1 for x in MATCH_HISTORY if x['winner']==t or x['loser']==t)
-                      for t in all_teams_hist}
+                      for t in sorted(all_teams_hist)}
     eliminated = {t: m for t, m in team_total_m.items() if t != champion}
     if eliminated:
         quickest = min(eliminated, key=eliminated.get)
@@ -4327,10 +4465,322 @@ def swap_teams():
 
     update_scoreboard_display()
 
+def _build_pdf_styles():
+    """
+    Builds the ReportLab colour palette and paragraph/table styles used
+    throughout the tournament results PDF (mirrors the app's dark THEME).
+    Centralizing this means every PDF section helper draws from the same
+    palette instead of redefining it.
+    """
+    C_BG        = colors.HexColor('#263238')
+    C_CARD      = colors.HexColor('#37474F')
+    C_GOLD      = colors.HexColor('#FFD700')
+    C_FG        = colors.HexColor('#ECEFF1')
+    C_FG2       = colors.HexColor('#B0BEC5')
+    C_RED       = colors.HexColor('#E53935')
+    C_BLUE      = colors.HexColor('#1E88E5')
+    C_WHITE     = colors.white
+
+    base = ParagraphStyle('base', fontName='Helvetica',
+                          fontSize=10, textColor=C_FG,
+                          backColor=C_BG, leading=14)
+    title_style = ParagraphStyle('title', parent=base,
+                                 fontName='Helvetica-Bold',
+                                 fontSize=18, textColor=C_GOLD,
+                                 alignment=TA_CENTER, spaceAfter=4)
+    champ_name  = ParagraphStyle('champName', parent=base,
+                                 fontName='Helvetica-Bold',
+                                 fontSize=15, textColor=C_FG,
+                                 alignment=TA_CENTER)
+    champ_sub   = ParagraphStyle('champSub', parent=base,
+                                 fontSize=10, textColor=C_FG2,
+                                 alignment=TA_CENTER, spaceAfter=8)
+    sec_hdr     = ParagraphStyle('secHdr', parent=base,
+                                 fontName='Helvetica-Bold',
+                                 fontSize=10, textColor=C_GOLD,
+                                 spaceBefore=10, spaceAfter=4)
+    footer_style= ParagraphStyle('footer', parent=base,
+                                 fontSize=8, textColor=C_FG2,
+                                 alignment=TA_CENTER)
+    label_style = ParagraphStyle('lbl', parent=base,
+                                 fontSize=9, textColor=C_FG2)
+    value_style = ParagraphStyle('val', parent=base,
+                                 fontName='Helvetica-Bold',
+                                 fontSize=9, textColor=C_FG)
+
+    return {
+        'bg': C_BG, 'card': C_CARD, 'gold': C_GOLD, 'fg': C_FG, 'fg2': C_FG2,
+        'red': C_RED, 'blue': C_BLUE, 'white': C_WHITE,
+        'base': base, 'title': title_style, 'champ_name': champ_name,
+        'champ_sub': champ_sub, 'sec_hdr': sec_hdr, 'footer': footer_style,
+        'label_style': label_style, 'value_style': value_style,
+    }
+
+
+def _pdf_lbl(styles, text):
+    return Paragraph(text, styles['label_style'])
+
+
+def _pdf_val(styles, text, color=None):
+    s = ParagraphStyle('v', parent=styles['value_style'],
+                       textColor=color or styles['fg'])
+    return Paragraph(text, s)
+
+
+def _pdf_section(styles, text):
+    return Paragraph(text, styles['sec_hdr'])
+
+
+def _pdf_hr(styles):
+    return HRFlowable(width="100%", thickness=1,
+                      color=styles['gold'], spaceAfter=6, spaceBefore=2)
+
+
+def _pdf_stat_table_style(styles):
+    return TableStyle([
+        ('BACKGROUND',  (0, 0), (-1, -1), styles['card']),
+        ('TEXTCOLOR',   (0, 0), (-1, -1), styles['fg']),
+        ('ROWBACKGROUNDS', (0, 0), (-1, -1), [styles['card'], colors.HexColor('#2E3C43')]),
+        ('LEFTPADDING',  (0, 0), (-1, -1), 8),
+        ('RIGHTPADDING', (0, 0), (-1, -1), 8),
+        ('TOPPADDING',   (0, 0), (-1, -1), 4),
+        ('BOTTOMPADDING',(0, 0), (-1, -1), 4),
+    ])
+
+
+def _pdf_champion_table(styles, champion, width):
+    """Builds the 'CHAMPIONS' banner table shown at the top of the PDF."""
+    champ_roster = " / ".join(TEAM_ROSTERS.get(champion, ['?', '?']))
+    champ_table = Table(
+        [[Paragraph("CHAMPIONS", ParagraphStyle('ct', parent=styles['base'],
+                     fontName='Helvetica-Bold', fontSize=10,
+                     textColor=styles['gold'], alignment=TA_CENTER)),],
+         [Paragraph(champ_roster, styles['champ_name'])],
+        ],
+        colWidths=[width]
+    )
+    champ_table.setStyle(TableStyle([
+        ('BACKGROUND',   (0, 0), (-1, -1), colors.HexColor('#455A64')),
+        ('ALIGN',        (0, 0), (-1, -1), 'CENTER'),
+        ('TOPPADDING',   (0, 0), (-1, -1), 6),
+        ('BOTTOMPADDING',(0, 0), (-1, -1), 6),
+    ]))
+    return champ_table
+
+
+def _pdf_left_column_rows(styles, champion, stats):
+    """
+    Builds the left-column stat rows for the results PDF: Final Standings
+    and Tournament Stats. Pure rendering over the stats dict computed by
+    _compute_final_stats() — no computation happens here, so this always
+    agrees with the on-screen display and the replay-file snapshot, which
+    render the same dict.
+    """
+    lbl = lambda text: _pdf_lbl(styles, text)
+    val = lambda text, color=None: _pdf_val(styles, text, color)
+    section = lambda text: _pdf_section(styles, text)
+
+    left_rows = []
+
+    # LEFT — Final Standings
+    left_rows.append([section("Final Standings"), ""])
+    place_labels = {'1ST': '1st Place', '2ND': '2nd Place', '3RD': '3rd Place'}
+    place_colors = {'1ST': styles['gold'], '2ND': styles['fg'], '3RD': styles['fg2']}
+    for entry in stats['standings']:
+        roster = " / ".join(entry['roster'])
+        left_rows.append([lbl(f"{place_labels[entry['rank']]}  (W/L {entry['wins']}/{entry['losses']})"),
+                           val(roster, place_colors[entry['rank']])])
+
+    # LEFT — Tournament Stats
+    left_rows.append([section("Tournament Stats"), ""])
+    left_rows.append([lbl("Teams"),          val(str(stats['total_teams']))])
+    left_rows.append([lbl("Players"),        val(str(stats['total_players']))])
+    left_rows.append([lbl("Matches played"), val(str(stats['total_matches']))])
+    left_rows.append([lbl("Total time"),     val(format_seconds(stats['total_time_s']))])
+    left_rows.append([lbl("Avg match time"), val(format_seconds(stats['avg_time_s']))])
+
+    if 'longest_streak' in stats:
+        ls = stats['longest_streak']
+        streak_roster = " & ".join(TEAM_ROSTERS.get(ls['team'], ['?', '?']))
+        left_rows.append([lbl("Longest win streak"),
+                           val(f"{streak_roster}  ({ls['count']})")])
+
+    # Champion win rate
+    champ_played = stats['champion_wins'] + stats['champion_losses']
+    champ_pct = int(stats['champion_wins'] / champ_played * 100) if champ_played else 0
+    left_rows.append([lbl("Champion win rate"),
+                       val(f"{stats['champion_wins']}W-{stats['champion_losses']}L  ({champ_pct}%)", styles['gold'])])
+
+    # WB vs LB match split
+    if stats['wb_played'] or stats['lb_played'] or stats['fin_played']:
+        parts = []
+        if stats['wb_played']:  parts.append(f"{stats['wb_played']} WB")
+        if stats['lb_played']:  parts.append(f"{stats['lb_played']} LB")
+        if stats['fin_played']: parts.append(f"{stats['fin_played']} Finals")
+        left_rows.append([lbl("Match breakdown"), val("  /  ".join(parts))])
+
+    return left_rows
+
+
+def _pdf_right_column_rows(styles, champion, stats):
+    """
+    Builds the right-column stat rows for the results PDF: Match
+    Breakdown and Scoring Stats. Pure rendering over the stats dict
+    computed by _compute_final_stats() — no computation happens here, so
+    this always agrees with the on-screen display and the replay-file
+    snapshot, which render the same dict.
+    """
+    lbl = lambda text: _pdf_lbl(styles, text)
+    val = lambda text, color=None: _pdf_val(styles, text, color)
+    section = lambda text: _pdf_section(styles, text)
+
+    right_rows = []
+
+    # RIGHT — Match Breakdown
+    right_rows.append([section("Match Breakdown"), ""])
+    total_h  = stats['red_wins'] + stats['blue_wins']
+    red_pct  = int(stats['red_wins']  / total_h * 100) if total_h else 0
+    blue_pct = int(stats['blue_wins'] / total_h * 100) if total_h else 0
+    right_rows.append([lbl("Red side wins"),  val(f"{stats['red_wins']} ({red_pct}%)", styles['red'])])
+    right_rows.append([lbl("Blue side wins"), val(f"{stats['blue_wins']} ({blue_pct}%)", styles['blue'])])
+
+    if 'longest_match' in stats:
+        lm, sm = stats['longest_match'], stats['shortest_match']
+        lw = " & ".join(TEAM_ROSTERS.get(lm['winner'], ['?', '?']))
+        sw = " & ".join(TEAM_ROSTERS.get(sm['winner'], ['?', '?']))
+        right_rows.append([lbl("Longest match"),  val(f"{format_seconds(lm['duration_s'])}  ({lw})")])
+        right_rows.append([lbl("Shortest match"), val(f"{format_seconds(sm['duration_s'])}  ({sw})")])
+
+    if 'most_wins' in stats:
+        mw = stats['most_wins']
+        top_roster = " & ".join(TEAM_ROSTERS.get(mw['team'], ['?', '?']))
+        right_rows.append([lbl("Most wins"),
+                            val(f"{top_roster} ({mw['count']})", styles['gold'])])
+
+    # RIGHT — Scoring Stats (only when score data present)
+    if 'scoring' in stats:
+        sc = stats['scoring']
+        high_roster = " & ".join(TEAM_ROSTERS.get(sc['high_score_winner'], ['?', '?']))
+        right_rows.append([lbl("High score"),
+                            val(f"{sc['high_score']}-{sc['high_score_low']}  ({sc['high_score_id']}, {high_roster})")])
+
+        right_rows.append([section("Scoring Stats"), ""])
+        right_rows.append([lbl("Avg winning margin"), val(f"{sc['avg_margin']:.1f} pts")])
+        right_rows.append([lbl("Avg final score"),    val(f"{sc['avg_win']:.1f} - {sc['avg_loss']:.1f}")])
+
+        c = sc['closest']
+        c_gap = c['win'] - c['loss']
+        c_roster = " & ".join(TEAM_ROSTERS.get(c['winner'], ['?', '?']))
+        right_rows.append([lbl("Closest match"),
+                            val(f"{c['win']}-{c['loss']} (delta {c_gap})  {c['id']}  {c_roster}")])
+
+        b = sc['blowout']
+        b_gap = b['win'] - b['loss']
+        b_roster = " & ".join(TEAM_ROSTERS.get(b['winner'], ['?', '?']))
+        right_rows.append([lbl("Most lopsided"),
+                            val(f"{b['win']}-{b['loss']} (delta {b_gap})  {b['id']}  {b_roster}")])
+
+        if 'top_scorer' in sc:
+            ts = sc['top_scorer']
+            ts_roster = " & ".join(TEAM_ROSTERS.get(ts['team'], ['?', '?']))
+            right_rows.append([lbl("Most pts scored"),
+                                val(f"{ts_roster} ({ts['pts']} pts)", styles['gold'])])
+
+    # Most active
+    if 'most_active' in stats:
+        ma = stats['most_active']
+        busy_roster = " & ".join(TEAM_ROSTERS.get(ma['team'], ['?', '?']))
+        right_rows.append([lbl("Most active"),
+                            val(f"{busy_roster} ({ma['count']})")])
+
+    # Best LB run
+    if 'best_lb_run' in stats:
+        lb = stats['best_lb_run']
+        grind_roster = " & ".join(TEAM_ROSTERS.get(lb['team'], ['?', '?']))
+        right_rows.append([lbl("Best LB Run"),
+                            val(f"{grind_roster} ({lb['wins']}W-{lb['losses']}L)")])
+
+    # Quickest exit
+    if 'quickest_exit' in stats:
+        qe = stats['quickest_exit']
+        quick_roster = " & ".join(TEAM_ROSTERS.get(qe['team'], ['?', '?']))
+        right_rows.append([lbl("Quickest Exit"),
+                            val(f"{quick_roster} ({qe['matches']} match{'es' if qe['matches'] != 1 else ''})")])
+
+    # GF reset?
+    champ_roster_str = " / ".join(TEAM_ROSTERS.get(champion, ['?', '?']))
+    right_rows.append([lbl("Undefeated Teams"),
+                        val("None" if stats['had_gf_reset'] else champ_roster_str,
+                            styles['fg2'] if stats['had_gf_reset'] else styles['gold'])])
+
+    return right_rows
+
+
+def _pdf_match_history_table(styles, width):
+    """
+    Builds the match-history table flowable, or None if there's no match
+    history yet (mirrors the original 'if MATCH_HISTORY:' guard).
+    """
+    if not MATCH_HISTORY:
+        return None
+
+    hdr_style = ParagraphStyle('mhHdr', parent=styles['base'],
+                               fontName='Helvetica-Bold',
+                               fontSize=8, textColor=styles['gold'])
+    cell_style = ParagraphStyle('mhCell', parent=styles['base'],
+                                fontSize=8, textColor=styles['fg'])
+
+    def mhdr(t): return Paragraph(t, hdr_style)
+    def mcell(t, color=None):
+        s = ParagraphStyle('mc', parent=cell_style,
+                           textColor=color or styles['fg'])
+        return Paragraph(t, s)
+
+    history_data = [[mhdr("Match"), mhdr("Winner"), mhdr("Loser"),
+                      mhdr("Score"), mhdr("Duration")]]
+    for rec in MATCH_HISTORY:
+        w_roster = " & ".join(TEAM_ROSTERS.get(rec['winner'], ['?', '?']))
+        l_roster = " & ".join(TEAM_ROSTERS.get(rec['loser'],  ['?', '?']))
+        score_str = ""
+        if 'red_score' in rec and 'blue_score' in rec:
+            score_str = f"{rec['red_score']}-{rec['blue_score']}"
+        idx = MATCH_HISTORY.index(rec)
+        dur_str = format_seconds(MATCH_DURATIONS[idx]) if idx < len(MATCH_DURATIONS) else "-"
+        w_color = styles['red'] if rec.get('color') == 'red' else styles['blue']
+        history_data.append([
+            mcell(rec.get('id', '-')),
+            mcell(w_roster, w_color),
+            mcell(l_roster),
+            mcell(score_str),
+            mcell(dur_str),
+        ])
+
+    col_w = width / 5
+    hist_table = Table(history_data, colWidths=[col_w]*5)
+    hist_table.setStyle(TableStyle([
+        ('BACKGROUND',    (0, 0), (-1, 0),  styles['card']),
+        ('ROWBACKGROUNDS',(0, 1), (-1, -1), [styles['card'], colors.HexColor('#2E3C43')]),
+        ('LINEBELOW',     (0, 0), (-1, 0),  1, styles['gold']),
+        ('LEFTPADDING',   (0, 0), (-1, -1), 6),
+        ('RIGHTPADDING',  (0, 0), (-1, -1), 6),
+        ('TOPPADDING',    (0, 0), (-1, -1), 3),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 3),
+    ]))
+    return hist_table
+
+
 def export_results_pdf(champion):
     """
     Exports the tournament final screen stats to a PDF file using ReportLab.
     Mirrors the data logic of display_final_rankings().
+
+    The heavy lifting is split across a handful of focused helpers so this
+    function reads as a linear "assemble the document" recipe:
+      _build_pdf_styles         — colour palette + paragraph/table styles
+      _pdf_champion_table       — the "CHAMPIONS" banner
+      _pdf_left_column_rows     — Final Standings + Tournament Stats
+      _pdf_right_column_rows    — Match Breakdown + Scoring Stats
+      _pdf_match_history_table  — the per-match results table
     """
     if not REPORTLAB_AVAILABLE:
         messagebox.showerror(
@@ -4349,74 +4799,8 @@ def export_results_pdf(champion):
         return  # User cancelled
 
     try:
-        # ── Colour palette mirroring THEME ──────────────────────────────────
-        C_BG        = colors.HexColor('#263238')
-        C_CARD      = colors.HexColor('#37474F')
-        C_GOLD      = colors.HexColor('#FFD700')
-        C_FG        = colors.HexColor('#ECEFF1')
-        C_FG2       = colors.HexColor('#B0BEC5')
-        C_RED       = colors.HexColor('#E53935')
-        C_BLUE      = colors.HexColor('#1E88E5')
-        C_WHITE     = colors.white
+        S = _build_pdf_styles()
 
-        # ── Paragraph styles ────────────────────────────────────────────────
-        base = ParagraphStyle('base', fontName='Helvetica',
-                              fontSize=10, textColor=C_FG,
-                              backColor=C_BG, leading=14)
-        title_style = ParagraphStyle('title', parent=base,
-                                     fontName='Helvetica-Bold',
-                                     fontSize=18, textColor=C_GOLD,
-                                     alignment=TA_CENTER, spaceAfter=4)
-        champ_name  = ParagraphStyle('champName', parent=base,
-                                     fontName='Helvetica-Bold',
-                                     fontSize=15, textColor=C_FG,
-                                     alignment=TA_CENTER)
-        champ_sub   = ParagraphStyle('champSub', parent=base,
-                                     fontSize=10, textColor=C_FG2,
-                                     alignment=TA_CENTER, spaceAfter=8)
-        sec_hdr     = ParagraphStyle('secHdr', parent=base,
-                                     fontName='Helvetica-Bold',
-                                     fontSize=10, textColor=C_GOLD,
-                                     spaceBefore=10, spaceAfter=4)
-        footer_style= ParagraphStyle('footer', parent=base,
-                                     fontSize=8, textColor=C_FG2,
-                                     alignment=TA_CENTER)
-
-        # ── Table cell styles ────────────────────────────────────────────────
-        LABEL_STYLE = ParagraphStyle('lbl', parent=base,
-                                     fontSize=9, textColor=C_FG2)
-        VALUE_STYLE = ParagraphStyle('val', parent=base,
-                                     fontName='Helvetica-Bold',
-                                     fontSize=9, textColor=C_FG)
-
-        def lbl(text):
-            return Paragraph(text, LABEL_STYLE)
-
-        def val(text, color=None):
-            s = ParagraphStyle('v', parent=VALUE_STYLE,
-                               textColor=color or C_FG)
-            return Paragraph(text, s)
-
-        def section(text):
-            return Paragraph(text, sec_hdr)
-
-        def hr():
-            return HRFlowable(width="100%", thickness=1,
-                              color=C_GOLD, spaceAfter=6, spaceBefore=2)
-
-        # ── Shared table style ───────────────────────────────────────────────
-        def stat_table_style():
-            return TableStyle([
-                ('BACKGROUND',  (0, 0), (-1, -1), C_CARD),
-                ('TEXTCOLOR',   (0, 0), (-1, -1), C_FG),
-                ('ROWBACKGROUNDS', (0, 0), (-1, -1), [C_CARD, colors.HexColor('#2E3C43')]),
-                ('LEFTPADDING',  (0, 0), (-1, -1), 8),
-                ('RIGHTPADDING', (0, 0), (-1, -1), 8),
-                ('TOPPADDING',   (0, 0), (-1, -1), 4),
-                ('BOTTOMPADDING',(0, 0), (-1, -1), 4),
-            ])
-
-        # ── Build story ──────────────────────────────────────────────────────
         doc = SimpleDocTemplate(
             filepath,
             pagesize=letter,
@@ -4430,249 +4814,26 @@ def export_results_pdf(champion):
         story = []
 
         # ── Header ───────────────────────────────────────────────────────────
-        story.append(Paragraph("TOURNAMENT COMPLETE", title_style))
-        story.append(hr())
+        story.append(Paragraph("TOURNAMENT COMPLETE", S['title']))
+        story.append(_pdf_hr(S))
 
         # ── Champion block ───────────────────────────────────────────────────
-        champ_roster = " / ".join(TEAM_ROSTERS.get(champion, ['?', '?']))
-        champ_table = Table(
-            [[Paragraph("CHAMPIONS", ParagraphStyle('ct', parent=base,
-                         fontName='Helvetica-Bold', fontSize=10,
-                         textColor=C_GOLD, alignment=TA_CENTER)),],
-             [Paragraph(champ_roster, champ_name)],
-            ],
-            colWidths=[W]
-        )
-        champ_table.setStyle(TableStyle([
-            ('BACKGROUND',   (0, 0), (-1, -1), colors.HexColor('#455A64')),
-            ('ALIGN',        (0, 0), (-1, -1), 'CENTER'),
-            ('TOPPADDING',   (0, 0), (-1, -1), 6),
-            ('BOTTOMPADDING',(0, 0), (-1, -1), 6),
-        ]))
-        story.append(champ_table)
-        story.append(hr())
+        story.append(_pdf_champion_table(S, champion, W))
+        story.append(_pdf_hr(S))
 
-        # ── Collect all stat rows for left / right columns ────────────────────
-        left_rows  = []
-        right_rows = []
+        # ── Two stat columns ─────────────────────────────────────────────────
+        stats = _compute_final_stats(champion)
+        left_rows = _pdf_left_column_rows(S, champion, stats)
+        right_rows = _pdf_right_column_rows(S, champion, stats)
 
-        # LEFT — Final Standings
-        left_rows.append([section("Final Standings"), ""])
-        places = [
-            ('1st Place', '1ST', C_GOLD),
-            ('2nd Place', '2ND', C_FG),
-            ('3rd Place', '3RD', C_FG2),
-        ]
-        for label_text, key, color in places:
-            team = TOURNAMENT_RANKINGS.get(key)
-            if not team:
-                continue
-            roster = " / ".join(TEAM_ROSTERS.get(team, ['?', '?']))
-            wins, losses = get_team_record(team)
-            left_rows.append([lbl(f"{label_text}  (W/L {wins}/{losses})"),
-                               val(roster, color)])
-
-        # LEFT — Tournament Stats
-        left_rows.append([section("Tournament Stats"), ""])
-        total_teams   = len(TEAMS)
-        total_players = sum(len(r) for r in TEAM_ROSTERS.values())
-        total_matches = len(MATCH_DURATIONS)
-        total_time    = sum(MATCH_DURATIONS)
-        avg_time      = int(total_time / total_matches) if total_matches else 0
-
-        left_rows.append([lbl("Teams"),           val(str(total_teams))])
-        left_rows.append([lbl("Players"),         val(str(total_players))])
-        left_rows.append([lbl("Matches played"),  val(str(total_matches))])
-        left_rows.append([lbl("Total time"),      val(format_seconds(total_time))])
-        left_rows.append([lbl("Avg match time"),  val(format_seconds(avg_time))])
-
-        # Longest win streak (consecutive wins by one team across MATCH_HISTORY order)
-        if MATCH_HISTORY:
-            best_streak, best_team_s = 0, None
-            cur_streak,  cur_team    = 0, None
-            for rec in MATCH_HISTORY:
-                if rec['winner'] == cur_team:
-                    cur_streak += 1
-                else:
-                    cur_team   = rec['winner']
-                    cur_streak = 1
-                if cur_streak > best_streak:
-                    best_streak, best_team_s = cur_streak, cur_team
-            if best_streak > 1 and best_team_s:
-                streak_roster = " & ".join(TEAM_ROSTERS.get(best_team_s, ['?', '?']))
-                left_rows.append([lbl("Longest win streak"),
-                                   val(f"{streak_roster}  ({best_streak})")])
-
-        # Champion win rate
-        champ_wins, champ_losses = get_team_record(champion)
-        champ_played = champ_wins + champ_losses
-        champ_pct = int(champ_wins / champ_played * 100) if champ_played else 0
-        left_rows.append([lbl("Champion win rate"),
-                           val(f"{champ_wins}W-{champ_losses}L  ({champ_pct}%)", C_GOLD)])
-
-        # WB vs LB match split
-        wb_count = sum(1 for r in MATCH_HISTORY
-                       if not (r.get('id', '').startswith('G') and
-                               any(r.get('id', '') == mid
-                                   for mid, md in TOURNAMENT_STATE.items()
-                                   if isinstance(md, dict) and not md.get('is_winnerbracket', True))))
-        # Simpler: count by match ID prefix patterns — GF/GGF are finals, Gx depends on is_winnerbracket
-        wb_ids = {mid for mid, md in TOURNAMENT_STATE.items()
-                  if isinstance(md, dict) and md.get('is_winnerbracket') is True}
-        lb_ids = {mid for mid, md in TOURNAMENT_STATE.items()
-                  if isinstance(md, dict) and md.get('is_winnerbracket') is False}
-        fin_ids= {'GF', 'GGF'}
-        wb_played  = sum(1 for r in MATCH_HISTORY if r.get('id') in wb_ids)
-        lb_played  = sum(1 for r in MATCH_HISTORY if r.get('id') in lb_ids)
-        fin_played = sum(1 for r in MATCH_HISTORY if r.get('id') in fin_ids)
-        if wb_played or lb_played or fin_played:
-            parts = []
-            if wb_played:  parts.append(f"{wb_played} WB")
-            if lb_played:  parts.append(f"{lb_played} LB")
-            if fin_played: parts.append(f"{fin_played} Finals")
-            left_rows.append([lbl("Match breakdown"), val("  /  ".join(parts))])
-
-        # RIGHT — Match Breakdown
-        right_rows.append([section("Match Breakdown"), ""])
-        total_h   = len(MATCH_HISTORY)
-        red_wins  = sum(1 for x in MATCH_HISTORY if x['color'] == 'red')
-        blue_wins = sum(1 for x in MATCH_HISTORY if x['color'] == 'blue')
-        red_pct   = int(red_wins  / total_h * 100) if total_h else 0
-        blue_pct  = int(blue_wins / total_h * 100) if total_h else 0
-        right_rows.append([lbl("Red side wins"),  val(f"{red_wins} ({red_pct}%)", C_RED)])
-        right_rows.append([lbl("Blue side wins"), val(f"{blue_wins} ({blue_pct}%)", C_BLUE)])
-
-        if MATCH_DURATIONS and MATCH_HISTORY:
-            paired = list(zip(MATCH_DURATIONS, MATCH_HISTORY))
-            long_dur, long_rec = max(paired, key=lambda x: x[0])
-            shrt_dur, shrt_rec = min(paired, key=lambda x: x[0])
-            lw = " & ".join(TEAM_ROSTERS.get(long_rec['winner'], ['?', '?']))
-            sw = " & ".join(TEAM_ROSTERS.get(shrt_rec['winner'], ['?', '?']))
-            right_rows.append([lbl("Longest match"),  val(f"{format_seconds(long_dur)}  ({lw})")])
-            right_rows.append([lbl("Shortest match"), val(f"{format_seconds(shrt_dur)}  ({sw})")])
-
-        team_wins = {}
-        for rec in MATCH_HISTORY:
-            team_wins[rec['winner']] = team_wins.get(rec['winner'], 0) + 1
-        if team_wins:
-            top_team   = max(team_wins, key=team_wins.get)
-            top_roster = " & ".join(TEAM_ROSTERS.get(top_team, ['?', '?']))
-            right_rows.append([lbl("Most wins"),
-                                val(f"{top_roster} ({team_wins[top_team]})", C_GOLD)])
-
-        # RIGHT — Scoring Stats (only when score data present)
-        scored_recs = [r for r in MATCH_HISTORY if 'red_score' in r and 'blue_score' in r]
-        if scored_recs:
-            high_rec   = max(scored_recs, key=lambda x: max(x['red_score'], x['blue_score']))
-            high_score = max(high_rec['red_score'], high_rec['blue_score'])
-            low_score  = min(high_rec['red_score'], high_rec['blue_score'])
-            high_roster = " & ".join(TEAM_ROSTERS.get(high_rec['winner'], ['?', '?']))
-            right_rows.append([lbl("High score"),
-                                val(f"{high_score}-{low_score}  ({high_rec['id']}, {high_roster})")])
-
-            right_rows.append([section("Scoring Stats"), ""])
-
-            margins    = [abs(r['red_score'] - r['blue_score']) for r in scored_recs]
-            win_scores = [max(r['red_score'], r['blue_score']) for r in scored_recs]
-            loss_scores= [min(r['red_score'], r['blue_score']) for r in scored_recs]
-
-            avg_margin = sum(margins) / len(margins)
-            avg_win    = sum(win_scores)  / len(win_scores)
-            avg_loss   = sum(loss_scores) / len(loss_scores)
-            right_rows.append([lbl("Avg winning margin"), val(f"{avg_margin:.1f} pts")])
-            right_rows.append([lbl("Avg final score"),    val(f"{avg_win:.1f} - {avg_loss:.1f}")])
-
-            closest_rec = min(scored_recs, key=lambda x: abs(x['red_score'] - x['blue_score']))
-            c_gap  = abs(closest_rec['red_score'] - closest_rec['blue_score'])
-            c_win  = max(closest_rec['red_score'], closest_rec['blue_score'])
-            c_loss = min(closest_rec['red_score'], closest_rec['blue_score'])
-            c_roster = " & ".join(TEAM_ROSTERS.get(closest_rec['winner'], ['?', '?']))
-            right_rows.append([lbl("Closest match"),
-                                val(f"{c_win}-{c_loss} (delta {c_gap})  {closest_rec['id']}  {c_roster}")])
-
-            blowout_rec = max(scored_recs, key=lambda x: abs(x['red_score'] - x['blue_score']))
-            b_gap  = abs(blowout_rec['red_score'] - blowout_rec['blue_score'])
-            b_win  = max(blowout_rec['red_score'], blowout_rec['blue_score'])
-            b_loss = min(blowout_rec['red_score'], blowout_rec['blue_score'])
-            b_roster = " & ".join(TEAM_ROSTERS.get(blowout_rec['winner'], ['?', '?']))
-            right_rows.append([lbl("Most lopsided"),
-                                val(f"{b_win}-{b_loss} (delta {b_gap})  {blowout_rec['id']}  {b_roster}")])
-
-            team_pts = {}
-            for rec in scored_recs:
-                r_score = rec['red_score']
-                b_score = rec['blue_score']
-                if rec['color'] == 'red':
-                    win_team,  win_pts  = rec['winner'], r_score
-                    loss_team, loss_pts = rec['loser'],  b_score
-                else:
-                    win_team,  win_pts  = rec['winner'], b_score
-                    loss_team, loss_pts = rec['loser'],  r_score
-                team_pts[win_team]  = team_pts.get(win_team,  0) + win_pts
-                team_pts[loss_team] = team_pts.get(loss_team, 0) + loss_pts
-            if team_pts:
-                top_scorer        = max(team_pts, key=team_pts.get)
-                top_scorer_roster = " & ".join(TEAM_ROSTERS.get(top_scorer, ['?', '?']))
-                right_rows.append([lbl("Most pts scored"),
-                                    val(f"{top_scorer_roster} ({team_pts[top_scorer]} pts)", C_GOLD)])
-
-        # Most active
-        team_matches = {}
-        for rec in MATCH_HISTORY:
-            for t in [rec['winner'], rec['loser']]:
-                team_matches[t] = team_matches.get(t, 0) + 1
-        if team_matches:
-            busiest     = max(team_matches, key=team_matches.get)
-            busy_roster = " & ".join(TEAM_ROSTERS.get(busiest, ['?', '?']))
-            right_rows.append([lbl("Most active"),
-                                val(f"{busy_roster} ({team_matches[busiest]})")])
-
-        # Best LB run
-        lb_runs = {}
-        for rec in MATCH_HISTORY:
-            lb_runs[rec['winner']] = lb_runs.get(rec['winner'], 0) + 1
-        lb_contenders = {t: w for t, w in lb_runs.items()
-                         if sum(1 for x in MATCH_HISTORY if x['loser'] == t) > 0}
-        if lb_contenders:
-            grinder      = max(lb_contenders, key=lb_contenders.get)
-            grind_roster = " & ".join(TEAM_ROSTERS.get(grinder, ['?', '?']))
-            grind_losses = sum(1 for x in MATCH_HISTORY if x['loser'] == grinder)
-            right_rows.append([lbl("Best LB Run"),
-                                val(f"{grind_roster} ({lb_contenders[grinder]}W-{grind_losses}L)")])
-
-        # Quickest exit
-        all_teams_in_history = set()
-        for rec in MATCH_HISTORY:
-            all_teams_in_history.add(rec['winner'])
-            all_teams_in_history.add(rec['loser'])
-        team_total_matches = {t: sum(1 for x in MATCH_HISTORY
-                                     if x['winner'] == t or x['loser'] == t)
-                              for t in all_teams_in_history}
-        eliminated = {t: m for t, m in team_total_matches.items() if t != champion}
-        if eliminated:
-            quickest     = min(eliminated, key=eliminated.get)
-            quick_roster = " & ".join(TEAM_ROSTERS.get(quickest, ['?', '?']))
-            right_rows.append([lbl("Quickest Exit"),
-                                val(f"{quick_roster} ({eliminated[quickest]} match{'es' if eliminated[quickest] != 1 else ''})")])
-
-        # GF reset?
-        gf_data  = TOURNAMENT_STATE.get('GF', {})
-        had_reset = isinstance(gf_data, dict) and gf_data.get('is_reset', False)
-        champ_roster_str = " / ".join(TEAM_ROSTERS.get(champion, ['?', '?']))
-        right_rows.append([lbl("Undefeated Teams"),
-                            val("None" if had_reset else champ_roster_str,
-                                C_FG2 if had_reset else C_GOLD)])
-
-        # ── Build individual column tables ───────────────────────────────────
         INNER_L = COL_W * 0.45  # label sub-column
         INNER_V = COL_W * 0.55  # value sub-column
 
         left_table  = Table(left_rows,  colWidths=[INNER_L, INNER_V])
         right_table = Table(right_rows, colWidths=[INNER_L, INNER_V])
-        left_table.setStyle(stat_table_style())
-        right_table.setStyle(stat_table_style())
+        left_table.setStyle(_pdf_stat_table_style(S))
+        right_table.setStyle(_pdf_stat_table_style(S))
 
-        # ── Combine into a two-column wrapper ────────────────────────────────
         two_col = Table(
             [[left_table, right_table]],
             colWidths=[COL_W, COL_W],
@@ -4687,53 +4848,12 @@ def export_results_pdf(champion):
             ('COLPADDING',   (0, 0), (-1, -1), 6),
         ]))
         story.append(two_col)
-        story.append(hr())
+        story.append(_pdf_hr(S))
 
         # ── Match History table ──────────────────────────────────────────────
-        if MATCH_HISTORY:
-            story.append(section("Match History"))
-            hdr_style = ParagraphStyle('mhHdr', parent=base,
-                                       fontName='Helvetica-Bold',
-                                       fontSize=8, textColor=C_GOLD)
-            cell_style = ParagraphStyle('mhCell', parent=base,
-                                        fontSize=8, textColor=C_FG)
-
-            def mhdr(t): return Paragraph(t, hdr_style)
-            def mcell(t, color=None):
-                s = ParagraphStyle('mc', parent=cell_style,
-                                   textColor=color or C_FG)
-                return Paragraph(t, s)
-
-            history_data = [[mhdr("Match"), mhdr("Winner"), mhdr("Loser"),
-                              mhdr("Score"), mhdr("Duration")]]
-            for rec in MATCH_HISTORY:
-                w_roster = " & ".join(TEAM_ROSTERS.get(rec['winner'], ['?', '?']))
-                l_roster = " & ".join(TEAM_ROSTERS.get(rec['loser'],  ['?', '?']))
-                score_str = ""
-                if 'red_score' in rec and 'blue_score' in rec:
-                    score_str = f"{rec['red_score']}-{rec['blue_score']}"
-                idx = MATCH_HISTORY.index(rec)
-                dur_str = format_seconds(MATCH_DURATIONS[idx]) if idx < len(MATCH_DURATIONS) else "-"
-                w_color = C_RED if rec.get('color') == 'red' else C_BLUE
-                history_data.append([
-                    mcell(rec.get('id', '-')),
-                    mcell(w_roster, w_color),
-                    mcell(l_roster),
-                    mcell(score_str),
-                    mcell(dur_str),
-                ])
-
-            col_w = W / 5
-            hist_table = Table(history_data, colWidths=[col_w]*5)
-            hist_table.setStyle(TableStyle([
-                ('BACKGROUND',    (0, 0), (-1, 0),  C_CARD),
-                ('ROWBACKGROUNDS',(0, 1), (-1, -1), [C_CARD, colors.HexColor('#2E3C43')]),
-                ('LINEBELOW',     (0, 0), (-1, 0),  1, C_GOLD),
-                ('LEFTPADDING',   (0, 0), (-1, -1), 6),
-                ('RIGHTPADDING',  (0, 0), (-1, -1), 6),
-                ('TOPPADDING',    (0, 0), (-1, -1), 3),
-                ('BOTTOMPADDING', (0, 0), (-1, -1), 3),
-            ]))
+        hist_table = _pdf_match_history_table(S, W)
+        if hist_table is not None:
+            story.append(_pdf_section(S, "Match History"))
             story.append(hist_table)
 
         story.append(Spacer(1, 14))
@@ -4742,13 +4862,13 @@ def export_results_pdf(champion):
         ts = datetime.datetime.now().strftime("%B %d, %Y  %I:%M %p")
         story.append(Paragraph(
             f"Moose Lodge Shuffleboard  •  Generated {ts}  •  v{SHUF_VERSION}",
-            footer_style
+            S['footer']
         ))
 
         # ── Page background colour via onPage callback ────────────────────────
         def dark_background(canvas_obj, doc_obj):
             canvas_obj.saveState()
-            canvas_obj.setFillColor(C_BG)
+            canvas_obj.setFillColor(S['bg'])
             canvas_obj.rect(0, 0, letter[0], letter[1], fill=1, stroke=0)
             canvas_obj.restoreState()
 
@@ -4793,6 +4913,11 @@ def display_final_rankings(champion):
     rankings_display_frame_ref.pack(fill='both', expand=True, padx=15, pady=10)
 
     P = rankings_display_frame_ref  # short alias
+
+    # All derived stats come from one shared computation (see
+    # _compute_final_stats) — the same dict that feeds the PDF export and
+    # the replay-file snapshot, so all three always agree.
+    stats = _compute_final_stats(champion)
 
     # ==============================
     # HEADER
@@ -4850,32 +4975,21 @@ def display_final_rankings(champion):
 
     section_header(left, "Final Standings", 0)
 
-    places = [
-        ('🥇 1st', '1ST', THEME['accent_gold']),
-        ('🥈 2nd', '2ND', THEME['fg_primary']),
-        ('🥉 3rd', '3RD', THEME['fg_secondary']),
-    ]
+    place_icons = {'1ST': '🥇 1st', '2ND': '🥈 2nd', '3RD': '🥉 3rd'}
+    place_colors = {'1ST': THEME['accent_gold'], '2ND': THEME['fg_primary'], '3RD': THEME['fg_secondary']}
     r = 1
-    for label_text, key, color in places:
-        team = TOURNAMENT_RANKINGS.get(key)
-        if not team:
-            continue
-        roster = " / ".join(TEAM_ROSTERS.get(team, ['?', '?']))
-        wins, losses = get_team_record(team)
-        stat_row(left, r, f"{label_text}  W/L {wins}/{losses}", roster, color)
+    for entry in stats['standings']:
+        roster = " / ".join(entry['roster'])
+        stat_row(left, r, f"{place_icons[entry['rank']]}  W/L {entry['wins']}/{entry['losses']}",
+                  roster, place_colors[entry['rank']])
         r += 1
 
     section_header(left, "Tournament Stats", r); r += 1
 
-    total_teams   = len(TEAMS)
-    total_matches = len(MATCH_DURATIONS)
-    total_time    = sum(MATCH_DURATIONS)
-    avg_time      = int(total_time / total_matches) if total_matches else 0
-
-    stat_row(left, r, "Teams",         str(total_teams));  r += 1
-    stat_row(left, r, "Matches played", str(total_matches)); r += 1
-    stat_row(left, r, "Total time",    format_seconds(total_time)); r += 1
-    stat_row(left, r, "Avg match time", format_seconds(avg_time)); r += 1
+    stat_row(left, r, "Teams",          str(stats['total_teams']));  r += 1
+    stat_row(left, r, "Matches played", str(stats['total_matches'])); r += 1
+    stat_row(left, r, "Total time",     format_seconds(stats['total_time_s'])); r += 1
+    stat_row(left, r, "Avg match time", format_seconds(stats['avg_time_s'])); r += 1
 
     # ---- RIGHT COLUMN: Match Breakdown ----
     right = tk.Frame(body, bg=THEME['bg_card'])
@@ -4887,150 +5001,84 @@ def display_final_rankings(champion):
     r = 1
 
     # Red vs Blue
-    total_h   = len(MATCH_HISTORY)
-    red_wins  = sum(1 for x in MATCH_HISTORY if x['color'] == 'red')
-    blue_wins = sum(1 for x in MATCH_HISTORY if x['color'] == 'blue')
-    red_pct   = int(red_wins  / total_h * 100) if total_h else 0
-    blue_pct  = int(blue_wins / total_h * 100) if total_h else 0
-    stat_row(right, r, "🔴 Red side wins",  f"{red_wins} ({red_pct}%)",  THEME['red_team']);  r += 1
-    stat_row(right, r, "🔵 Blue side wins", f"{blue_wins} ({blue_pct}%)", THEME['blue_team']); r += 1
+    total_h  = stats['red_wins'] + stats['blue_wins']
+    red_pct  = int(stats['red_wins']  / total_h * 100) if total_h else 0
+    blue_pct = int(stats['blue_wins'] / total_h * 100) if total_h else 0
+    stat_row(right, r, "🔴 Red side wins",  f"{stats['red_wins']} ({red_pct}%)",  THEME['red_team']);  r += 1
+    stat_row(right, r, "🔵 Blue side wins", f"{stats['blue_wins']} ({blue_pct}%)", THEME['blue_team']); r += 1
 
     # Longest / shortest
-    if MATCH_DURATIONS and MATCH_HISTORY:
-        paired = list(zip(MATCH_DURATIONS, MATCH_HISTORY))
-        long_dur, long_rec  = max(paired, key=lambda x: x[0])
-        shrt_dur, shrt_rec  = min(paired, key=lambda x: x[0])
-        lw = " & ".join(TEAM_ROSTERS.get(long_rec['winner'], ['?','?']))
-        sw = " & ".join(TEAM_ROSTERS.get(shrt_rec['winner'], ['?','?']))
-        stat_row(right, r, "⏱️ Longest match",  f"{format_seconds(long_dur)}  ({lw})"); r += 1
-        stat_row(right, r, "⚡ Shortest match", f"{format_seconds(shrt_dur)}  ({sw})"); r += 1
+    if 'longest_match' in stats:
+        lm, sm = stats['longest_match'], stats['shortest_match']
+        lw = " & ".join(TEAM_ROSTERS.get(lm['winner'], ['?', '?']))
+        sw = " & ".join(TEAM_ROSTERS.get(sm['winner'], ['?', '?']))
+        stat_row(right, r, "⏱️ Longest match",  f"{format_seconds(lm['duration_s'])}  ({lw})"); r += 1
+        stat_row(right, r, "⚡ Shortest match", f"{format_seconds(sm['duration_s'])}  ({sw})"); r += 1
 
     # Most wins
-    team_wins = {}
-    for rec in MATCH_HISTORY:
-        team_wins[rec['winner']] = team_wins.get(rec['winner'], 0) + 1
-    if team_wins:
-        top_team   = max(team_wins, key=team_wins.get)
-        top_roster = " & ".join(TEAM_ROSTERS.get(top_team, ['?','?']))
+    if 'most_wins' in stats:
+        mw = stats['most_wins']
+        top_roster = " & ".join(TEAM_ROSTERS.get(mw['team'], ['?', '?']))
         stat_row(right, r, "🏅 Most wins",
-                 f"{top_roster} ({team_wins[top_team]})", THEME['accent_gold']); r += 1
+                 f"{top_roster} ({mw['count']})", THEME['accent_gold']); r += 1
 
     # High score in a single match
-    scored_recs = [rec for rec in MATCH_HISTORY if 'red_score' in rec and 'blue_score' in rec]
-    if scored_recs:
-        high_rec   = max(scored_recs, key=lambda x: max(x['red_score'], x['blue_score']))
-        high_score = max(high_rec['red_score'], high_rec['blue_score'])
-        low_score  = min(high_rec['red_score'], high_rec['blue_score'])
-        high_roster = " & ".join(TEAM_ROSTERS.get(high_rec['winner'], ['?','?']))
+    if 'scoring' in stats:
+        sc = stats['scoring']
+        high_roster = " & ".join(TEAM_ROSTERS.get(sc['high_score_winner'], ['?', '?']))
         stat_row(right, r, "🎳 High score",
-                 f"{high_score}-{low_score}  ({high_rec['id']}, {high_roster})"); r += 1
+                 f"{sc['high_score']}-{sc['high_score_low']}  ({sc['high_score_id']}, {high_roster})"); r += 1
 
         # --- Score-based stats (only when score data is available) ---
         section_header(right, "Scoring Stats", r); r += 1
 
-        margins = [abs(rec['red_score'] - rec['blue_score']) for rec in scored_recs]
-        win_scores  = [max(rec['red_score'], rec['blue_score']) for rec in scored_recs]
-        loss_scores = [min(rec['red_score'], rec['blue_score']) for rec in scored_recs]
+        stat_row(right, r, "📐 Avg winning margin", f"{sc['avg_margin']:.1f} pts"); r += 1
+        stat_row(right, r, "📊 Avg final score", f"{sc['avg_win']:.1f} – {sc['avg_loss']:.1f}"); r += 1
 
-        # Average winning margin
-        avg_margin = sum(margins) / len(margins)
-        stat_row(right, r, "📐 Avg winning margin", f"{avg_margin:.1f} pts"); r += 1
-
-        # Average final score  (winner avg - loser avg)
-        avg_win  = sum(win_scores)  / len(win_scores)
-        avg_loss = sum(loss_scores) / len(loss_scores)
-        stat_row(right, r, "📊 Avg final score", f"{avg_win:.1f} – {avg_loss:.1f}"); r += 1
-
-        # Closest match
-        closest_rec = min(scored_recs, key=lambda x: abs(x['red_score'] - x['blue_score']))
-        c_gap  = abs(closest_rec['red_score'] - closest_rec['blue_score'])
-        c_win  = max(closest_rec['red_score'], closest_rec['blue_score'])
-        c_loss = min(closest_rec['red_score'], closest_rec['blue_score'])
-        c_roster = " & ".join(TEAM_ROSTERS.get(closest_rec['winner'], ['?','?']))
+        c = sc['closest']
+        c_gap = c['win'] - c['loss']
+        c_roster = " & ".join(TEAM_ROSTERS.get(c['winner'], ['?', '?']))
         stat_row(right, r, "😰 Closest match",
-                 f"{c_win}-{c_loss} (Δ{c_gap})  {closest_rec['id']}  {c_roster}"); r += 1
+                 f"{c['win']}-{c['loss']} (Δ{c_gap})  {c['id']}  {c_roster}"); r += 1
 
-        # Most lopsided win
-        blowout_rec = max(scored_recs, key=lambda x: abs(x['red_score'] - x['blue_score']))
-        b_gap  = abs(blowout_rec['red_score'] - blowout_rec['blue_score'])
-        b_win  = max(blowout_rec['red_score'], blowout_rec['blue_score'])
-        b_loss = min(blowout_rec['red_score'], blowout_rec['blue_score'])
-        b_roster = " & ".join(TEAM_ROSTERS.get(blowout_rec['winner'], ['?','?']))
+        b = sc['blowout']
+        b_gap = b['win'] - b['loss']
+        b_roster = " & ".join(TEAM_ROSTERS.get(b['winner'], ['?', '?']))
         stat_row(right, r, "💥 Most lopsided",
-                 f"{b_win}-{b_loss} (Δ{b_gap})  {blowout_rec['id']}  {b_roster}"); r += 1
+                 f"{b['win']}-{b['loss']} (Δ{b_gap})  {b['id']}  {b_roster}"); r += 1
 
-        # Team with most total points scored
-        team_pts = {}
-        for rec in scored_recs:
-            r_score = rec['red_score']
-            b_score = rec['blue_score']
-            # Attribute red score to whichever team was on red, blue score to blue team
-            red_team  = current_match_teams.get('red')   # fallback — may not reflect history
-            # Use winner/loser + color to reconstruct which team scored what
-            if rec['color'] == 'red':
-                win_team, win_pts  = rec['winner'], r_score
-                loss_team, loss_pts = rec['loser'],  b_score
-            else:
-                win_team, win_pts  = rec['winner'], b_score
-                loss_team, loss_pts = rec['loser'],  r_score
-            team_pts[win_team]  = team_pts.get(win_team,  0) + win_pts
-            team_pts[loss_team] = team_pts.get(loss_team, 0) + loss_pts
-        if team_pts:
-            top_scorer        = max(team_pts, key=team_pts.get)
-            top_scorer_roster = " & ".join(TEAM_ROSTERS.get(top_scorer, ['?','?']))
+        if 'top_scorer' in sc:
+            ts = sc['top_scorer']
+            ts_roster = " & ".join(TEAM_ROSTERS.get(ts['team'], ['?', '?']))
             stat_row(right, r, "🔥 Most pts scored",
-                     f"{top_scorer_roster} ({team_pts[top_scorer]} pts)",
+                     f"{ts_roster} ({ts['pts']} pts)",
                      THEME['accent_gold']); r += 1
 
     # Most active
-    team_matches = {}
-    for rec in MATCH_HISTORY:
-        for t in [rec['winner'], rec['loser']]:
-            team_matches[t] = team_matches.get(t, 0) + 1
-    if team_matches:
-        busiest     = max(team_matches, key=team_matches.get)
-        busy_roster = " & ".join(TEAM_ROSTERS.get(busiest, ['?','?']))
+    if 'most_active' in stats:
+        ma = stats['most_active']
+        busy_roster = " & ".join(TEAM_ROSTERS.get(ma['team'], ['?', '?']))
         stat_row(right, r, "🎯 Most active",
-                 f"{busy_roster} ({team_matches[busiest]})"); r += 1
+                 f"{busy_roster} ({ma['count']})"); r += 1
 
     # --- Deepest loser bracket run ---
-    # Team with the most wins who came through the LB (lost at least once)
-    lb_runs = {}
-    for rec in MATCH_HISTORY:
-        lb_runs[rec['winner']] = lb_runs.get(rec['winner'], 0) + 1
-    # Only teams that suffered at least one loss
-    lb_contenders = {t: w for t, w in lb_runs.items()
-                     if sum(1 for x in MATCH_HISTORY if x['loser'] == t) > 0}
-    if lb_contenders:
-        grinder      = max(lb_contenders, key=lb_contenders.get)
-        grind_roster = " & ".join(TEAM_ROSTERS.get(grinder, ['?','?']))
-        grind_losses = sum(1 for x in MATCH_HISTORY if x['loser'] == grinder)
+    if 'best_lb_run' in stats:
+        lb = stats['best_lb_run']
+        grind_roster = " & ".join(TEAM_ROSTERS.get(lb['team'], ['?', '?']))
         stat_row(right, r, "💪 Best LB Run",
-                 f"{grind_roster} ({lb_contenders[grinder]}W-{grind_losses}L)"); r += 1
+                 f"{grind_roster} ({lb['wins']}W-{lb['losses']}L)"); r += 1
 
     # --- Quickest exit ---
-    # Team eliminated after playing the fewest total matches
-    all_teams_in_history = set()
-    for rec in MATCH_HISTORY:
-        all_teams_in_history.add(rec['winner'])
-        all_teams_in_history.add(rec['loser'])
-    team_total_matches = {t: sum(1 for x in MATCH_HISTORY
-                                 if x['winner'] == t or x['loser'] == t)
-                          for t in all_teams_in_history}
-    # Only teams that didn't win the tournament
-    eliminated = {t: m for t, m in team_total_matches.items() if t != champion}
-    if eliminated:
-        quickest     = min(eliminated, key=eliminated.get)
-        quick_roster = " & ".join(TEAM_ROSTERS.get(quickest, ['?','?']))
+    if 'quickest_exit' in stats:
+        qe = stats['quickest_exit']
+        quick_roster = " & ".join(TEAM_ROSTERS.get(qe['team'], ['?', '?']))
         stat_row(right, r, "🚪 Quickest Exit",
-                 f"{quick_roster} ({eliminated[quickest]} match{'es' if eliminated[quickest] != 1 else ''})"); r += 1
+                 f"{quick_roster} ({qe['matches']} match{'es' if qe['matches'] != 1 else ''})"); r += 1
 
     # --- GF bracket reset? ---
-    gf_data = TOURNAMENT_STATE.get('GF', {})
-    had_reset = isinstance(gf_data, dict) and gf_data.get('is_reset', False)
     stat_row(right, r, "🔄 Undefeated Teams",
-             "None" if had_reset else champ_roster,
-             THEME['fg_secondary'] if had_reset else THEME['accent_gold']); r += 1
+             "None" if stats['had_gf_reset'] else champ_roster,
+             THEME['fg_secondary'] if stats['had_gf_reset'] else THEME['accent_gold']); r += 1
 
     tk.Frame(P, bg=THEME['accent_gold'], height=2).pack(fill='x', pady=(10, 6))
 
@@ -5362,7 +5410,7 @@ def generate_dynamic_bracket(teams, config=None):
 # --- Logging File Management ---
 def toggle_log_game(log_var):
     """Toggles file logging based on checkbox state and manages the log file."""
-    global LOG_GAME_TO_FILE, LOG_FILE_HANDLE
+    global LOG_GAME_TO_FILE
 
     LOG_GAME_TO_FILE = log_var.get()
 
@@ -5375,17 +5423,15 @@ def toggle_log_game(log_var):
         filename = os.path.join(log_dir, f"shuffleboard_{timestamp}.log")
 
         try:
-            LOG_FILE_HANDLE = open(filename, 'a', buffering=1)
+            _add_file_log_handler(filename)
             log_message(f"File logging enabled: {filename}")
-        except Exception as e:
+        except OSError as e:
             LOG_GAME_TO_FILE = False
-            LOG_FILE_HANDLE = None
             messagebox.showerror("Logging Error", f"Failed to open log file {filename}: {e}")
     else:
-        if LOG_FILE_HANDLE:
-            LOG_FILE_HANDLE.close()
-            LOG_FILE_HANDLE = None
-            print("[Log Manager] File logging stopped.")
+        if _file_log_handler:
+            _remove_file_log_handler()
+            log_message("File logging stopped")
 
 def get_player_setup_dialog(parent):
     """
@@ -5451,6 +5497,15 @@ def get_player_setup_dialog(parent):
     # Right side: Action buttons (will be updated later)
     button_frame = tk.Frame(header, bg=THEME['bg_card'])
     button_frame.pack(side='right', padx=(20, 0))
+
+    # Power-on utility button — turns the physical scoreboard on and resets
+    # it to 0-0 before setup begins. Packed first so it lands furthest from
+    # Continue/Cancel (added later below), and uses the neutral button color
+    # so it doesn't read as a form-flow action.
+    tk.Button(button_frame, text="🔌 Power On Scoreboard",
+             font=scaled_font('Selawik', 9), bg=THEME['btn_default'], fg=THEME['fg_primary'],
+             relief='flat', padx=SF(10), pady=SF(4), cursor='hand2',
+             command=ir_power_on_sequence).pack(side='left', padx=(0, 14))
 
     # These will be created after confirm function is defined
     continue_btn = None
@@ -5648,8 +5703,8 @@ def get_player_setup_dialog(parent):
                     continue_btn.config(state='normal', fg='white')
                 else:
                     continue_btn.config(state='disabled', fg='#666666')
-            except:
-                pass  # Button not created yet, skip
+            except tk.TclError:
+                pass  # widget destroyed mid-callback, skip
 
     def toggle_all_paid():
         """Toggle all players as paid/unpaid with visual feedback"""
@@ -6272,11 +6327,14 @@ def confirm_match_resolution(winner, loser, winning_color, match_id):
 
     append_snapshot_to_file(REPLAY_FILEPATH)
 
-    # If the tournament just ended, append the final stats record once
-    if TOURNAMENT_STATE.get('active_match_id') == 'TOURNAMENT_OVER' and REPLAY_FILEPATH:
-        champion = TOURNAMENT_RANKINGS.get('1ST')
-        if champion:
-            append_final_stats_to_file(REPLAY_FILEPATH, champion)
+    # If the tournament just ended: reset+power the scoreboard off, and
+    # append the final stats record once.
+    if TOURNAMENT_STATE.get('active_match_id') == 'TOURNAMENT_OVER':
+        ir_power_off_sequence()
+        if REPLAY_FILEPATH:
+            champion = TOURNAMENT_RANKINGS.get('1ST')
+            if champion:
+                append_final_stats_to_file(REPLAY_FILEPATH, champion)
 
     reset_game()
 
