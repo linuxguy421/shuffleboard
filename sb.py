@@ -2584,13 +2584,17 @@ def run_replay_mode(path):
     COIN_CALL_COUNTS.clear()
     global LAST_COIN_CALLER
     LAST_COIN_CALLER = None
+    latest_coin_record = (0, None)
     for mid, match_data in TOURNAMENT_STATE.items():
         if not isinstance(match_data, dict):
             continue
         caller = match_data.get('coin_caller')
         if caller:
             COIN_CALL_COUNTS[caller] = COIN_CALL_COUNTS.get(caller, 0) + 1
-            LAST_COIN_CALLER = caller
+            recorded_at = match_data.get('coin_recorded_at') or 0
+            if recorded_at >= latest_coin_record[0]:
+                latest_coin_record = (recorded_at, caller)
+    LAST_COIN_CALLER = latest_coin_record[1]
 
     # Restore active match
     active = snap.get("active_match_id")
