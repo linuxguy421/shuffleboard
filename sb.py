@@ -2202,7 +2202,7 @@ def go_back_to_selection():
 
 
 def _assign_coin_caller(match_id, match_data):
-    """Assign the physical coin caller using the tournament fairness rule."""
+    """Assign an individual player as coin caller using tournament fairness."""
     global COIN_CALL_COUNTS, LAST_COIN_CALLER
 
     existing = match_data.get('coin_caller')
@@ -2213,26 +2213,38 @@ def _assign_coin_caller(match_id, match_data):
     if len(teams) != 2:
         return None
 
-    counts = {team: COIN_CALL_COUNTS.get(team, 0) for team in teams}
-    minimum = min(counts.values())
-    candidates = [team for team in teams if counts[team] == minimum]
+    players = []
+    player_team = {}
+    for team in teams:
+        for player in TEAM_ROSTERS.get(team, []):
+            player = str(player).strip()
+            if not player:
+                continue
+            players.append(player)
+            player_team[player] = team
 
-    # Rotate equal-count ties so the same team does not repeatedly get the
-    # first opportunity simply because it occupies bracket slot 0.
+    players = list(dict.fromkeys(players))
+    if not players:
+        return None
+
+    counts = {player: COIN_CALL_COUNTS.get(player, 0) for player in players}
+    minimum = min(counts.values())
+    candidates = [player for player in players if counts[player] == minimum]
+
     if LAST_COIN_CALLER in candidates and len(candidates) > 1:
-        candidates = [team for team in candidates if team != LAST_COIN_CALLER]
+        candidates = [player for player in candidates if player != LAST_COIN_CALLER]
 
     caller = candidates[0]
     COIN_CALL_COUNTS[caller] = COIN_CALL_COUNTS.get(caller, 0) + 1
     LAST_COIN_CALLER = caller
     match_data['coin_caller'] = caller
+    match_data['coin_caller_team'] = player_team[caller]
     match_data['coin_call_number'] = COIN_CALL_COUNTS[caller]
     log_message(
         f"{match_id}: coin caller assigned to {caller} "
-        f"(call #{COIN_CALL_COUNTS[caller]})"
+        f"({player_team[caller]}) — call #{COIN_CALL_COUNTS[caller]}"
     )
     return caller
-
 
 def _apply_match_opening(match_data):
     """Apply a recorded coin result to the current red/blue UI assignment."""
@@ -2270,6 +2282,11 @@ def _show_match_opening_dialog(match_id, match_data):
     teams = list(match_data.get('teams', [None, None]))
     if len(teams) != 2 or not all(teams):
         return False
+
+    caller_team = match_data.get('coin_caller_team')
+    caller_display = (
+        f"{caller} ({caller_team})" if caller and caller_team else caller
+    )
 
     # A completed opening is never shown twice.
     if match_data.get('coin_winner') and match_data.get('coin_choice'):
@@ -2405,7 +2422,7 @@ def _show_match_opening_dialog(match_id, match_data):
         ).pack(fill='x', pady=SF(5))
 
     instruction_lbl.config(
-        text=f"{caller} calls the physical coin flip.\n\n"
+        text=f"{caller_display} calls the physical coin flip.\n\n"
              "Toss the coin, then record the team that won:"
     )
 
@@ -2566,6 +2583,7 @@ def run_replay_mode(path):
             "blue_score": m.get("blue_score"),
             # Physical coin-opening record (optional for legacy replay files)
             "coin_caller": m.get("coin_caller"),
+            "coin_caller_team": m.get("coin_caller_team"),
             "coin_call_number": m.get("coin_call_number"),
             "coin_winner": m.get("coin_winner"),
             "coin_loser": m.get("coin_loser"),
@@ -4177,7 +4195,8 @@ def serialize_snapshot():
         'is_winnerbracket', 'start_time', 'duration',
         'red_score', 'blue_score',
         # Physical coin-opening record
-        'coin_caller', 'coin_call_number', 'coin_winner', 'coin_loser',
+        'coin_caller', 'coin_caller_team', 'coin_call_number',
+        'coin_winner', 'coin_loser',
         'coin_choice', 'coin_chosen_color', 'hammer_team',
         'first_throw_team', 'first_throw_color',
         'red_team', 'blue_team', 'coin_recorded_at',
