@@ -908,6 +908,7 @@ def add_late_team():
         '_paused_since':    g1_snapshot.get('_paused_since'),
         '_flash_state':     g1_snapshot.get('_flash_state', False),
         'coin_caller':      g1_snapshot.get('coin_caller'),
+        'coin_caller_team': g1_snapshot.get('coin_caller_team'),
         'coin_call_number': g1_snapshot.get('coin_call_number'),
         'coin_winner':      g1_snapshot.get('coin_winner'),
         'coin_loser':       g1_snapshot.get('coin_loser'),
@@ -2068,6 +2069,10 @@ def update_scoreboard_display():
         coin_lbl = ui_references.get('coin_status_lbl')
         if coin_lbl:
             caller = match_data.get('coin_caller')
+            caller_team = match_data.get('coin_caller_team')
+            caller_display = (
+                f"{caller} ({caller_team})" if caller and caller_team else caller
+            )
             flip_winner = match_data.get('coin_winner')
             choice = match_data.get('coin_choice')
             hammer_team = match_data.get('hammer_team')
@@ -2075,13 +2080,13 @@ def update_scoreboard_display():
             if caller and flip_winner and choice:
                 if choice == 'HAMMER':
                     coin_text = (
-                        f"🪙 Caller: {caller} • Winner: {flip_winner} • "
+                        f"🪙 Caller: {caller_display} • Winner: {flip_winner} • "
                         f"Hammer: {hammer_team} • First: {first_team}"
                     )
                 else:
                     chosen_color = match_data.get('coin_chosen_color', '').upper()
                     coin_text = (
-                        f"🪙 Caller: {caller} • Winner: {flip_winner} • "
+                        f"🪙 Caller: {caller_display} • Winner: {flip_winner} • "
                         f"First: {first_team} ({chosen_color})"
                     )
                 coin_lbl.config(text=coin_text)
@@ -4600,6 +4605,7 @@ def handle_match_resolution(winner, loser, winning_color, match_id):
             'loser': loser,
             'color': winning_color,
             'coin_caller': match_data.get('coin_caller'),
+            'coin_caller_team': match_data.get('coin_caller_team'),
             'coin_winner': match_data.get('coin_winner'),
             'coin_choice': match_data.get('coin_choice'),
             'hammer_team': match_data.get('hammer_team'),
