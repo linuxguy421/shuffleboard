@@ -1424,7 +1424,7 @@ def setup_scoreboard(root, team_red_placeholder, team_blue_placeholder):
     # Red Content
     tk.Label(red_card, text="RED TEAM", font=scaled_font('Selawik', 8, 'bold'), fg=THEME['red_team'], bg=THEME['bg_card']).pack(pady=(SF(10),0))
 
-    ui_references['red_name_lbl'] = tk.Label(red_card, text=team_red_placeholder, font=scaled_font('Selawik', 14, 'bold'),
+    ui_references['red_name_lbl'] = tk.Label(red_card, text=_team_player_display(team_red_placeholder, fallback=team_red_placeholder), font=scaled_font('Selawik', 14, 'bold'),
                                              fg=THEME['fg_primary'], bg=THEME['bg_card'], wraplength=SF(180))
     ui_references['red_name_lbl'].pack(pady=(SF(5),0))
 
@@ -1482,7 +1482,7 @@ def setup_scoreboard(root, team_red_placeholder, team_blue_placeholder):
     # Blue Content
     tk.Label(blue_card, text="BLUE TEAM", font=scaled_font('Selawik', 8, 'bold'), fg=THEME['blue_team'], bg=THEME['bg_card']).pack(pady=(SF(10),0))
 
-    ui_references['blue_name_lbl'] = tk.Label(blue_card, text=team_blue_placeholder, font=scaled_font('Selawik', 14, 'bold'),
+    ui_references['blue_name_lbl'] = tk.Label(blue_card, text=_team_player_display(team_blue_placeholder, fallback=team_blue_placeholder), font=scaled_font('Selawik', 14, 'bold'),
                                               fg=THEME['fg_primary'], bg=THEME['bg_card'], wraplength=SF(180))
     ui_references['blue_name_lbl'].pack(pady=(SF(5),0))
 
@@ -5498,7 +5498,7 @@ def update_roster_seeding_display():
         team_container = tk.Frame(teams_inner_frame, bg=THEME['bg_main'], bd=0)
         team_container.pack(side=tk.LEFT, padx=5, pady=2)
 
-        tk.Label(team_container, text=f"{team_name}: {players_str}", font=scaled_font('Consolas', 9),
+        tk.Label(team_container, text=players_str, font=scaled_font('Consolas', 9),
                  bg=THEME['bg_main'], fg=THEME['fg_secondary']).pack(padx=5, pady=2)
 
 def setup_main_gui(root):
