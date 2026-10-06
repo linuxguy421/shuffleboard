@@ -2440,13 +2440,17 @@ def _show_match_opening_dialog(match_id, match_data):
 
     instruction_lbl.config(
         text=f"{caller_display} calls the physical coin flip.\n\n"
-             "Toss the coin, then record the team that won:"
+             "Toss the coin, then record whether the caller won or lost:"
     )
 
+    # The caller's team is the identity of the person who physically flipped.
+    # The operator still records the winning team internally; the buttons simply
+    # express that result from the caller's perspective.
     for team in teams:
+        outcome = "WON" if team == caller_team else "LOST"
         tk.Button(
             button_frame,
-            text=f"🪙  {_team_player_display(team, fallback=team)} WON THE FLIP",
+            text=f"🪙  {caller or 'Player'} {outcome} THE FLIP",
             bg=THEME['btn_default'], fg='white', relief='flat',
             font=scaled_font('Selawik', 11, 'bold'),
             padx=SF(18), pady=SF(12),
