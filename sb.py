@@ -517,6 +517,18 @@ def bind_debounced_canvas_redraw(canvas, redraw_func, delay=150):
 # --- Global & Tournament Variables ---
 TEAMS = []
 TEAM_ROSTERS = {}
+
+def _team_player_display(team, separator=" & ", fallback=None):
+    """Return a team's player names for user-facing UI labels."""
+    if not team:
+        return fallback if fallback is not None else "TBD"
+    roster = TEAM_ROSTERS.get(team)
+    if roster:
+        names = [str(player).strip() for player in roster if str(player).strip()]
+        if names:
+            return separator.join(names)
+    return fallback if fallback is not None else str(team)
+
 TOURNAMENT_RANKINGS = OrderedDict()
 PRIZES = {}  # Current tournament's payout structure: {'1st': int, '2nd': int, '3rd': int}
 
@@ -1416,7 +1428,7 @@ def setup_scoreboard(root, team_red_placeholder, team_blue_placeholder):
                                              fg=THEME['fg_primary'], bg=THEME['bg_card'], wraplength=SF(180))
     ui_references['red_name_lbl'].pack(pady=(SF(5),0))
 
-    ui_references['red_roster_lbl'] = tk.Label(red_card, text="P1 / P2", font=scaled_font('Selawik', 10, 'bold'),
+    ui_references['red_roster_lbl'] = tk.Label(red_card, text="", font=scaled_font('Selawik', 10, 'bold'),
                                                fg=THEME['fg_secondary'], bg=THEME['bg_card'])
     ui_references['red_roster_lbl'].pack(pady=(SF(2), SF(10)))
 
@@ -1477,7 +1489,7 @@ def setup_scoreboard(root, team_red_placeholder, team_blue_placeholder):
     bind_dynamic_wrap(ui_references['red_name_lbl'], red_card)
     bind_dynamic_wrap(ui_references['blue_name_lbl'], blue_card)
 
-    ui_references['blue_roster_lbl'] = tk.Label(blue_card, text="P3 / P4", font=scaled_font('Selawik', 10),
+    ui_references['blue_roster_lbl'] = tk.Label(blue_card, text="", font=scaled_font('Selawik', 10),
                                                 fg=THEME['fg_secondary'], bg=THEME['bg_card'])
     ui_references['blue_roster_lbl'].pack(pady=(SF(2), SF(10)))
 
@@ -2041,19 +2053,19 @@ def update_scoreboard_display():
     team_red = current_match_teams['red']
     team_blue = current_match_teams['blue']
 
-    roster_red = " / ".join(TEAM_ROSTERS.get(team_red, ["P1", "P2"]))
-    roster_blue = " / ".join(TEAM_ROSTERS.get(team_blue, ["P3", "P4"]))
+    roster_red = _team_player_display(team_red, separator=" / ", fallback="P1 / P2")
+    roster_blue = _team_player_display(team_blue, separator=" / ", fallback="P3 / P4")
 
     match_data = TOURNAMENT_STATE[match_id]
     match_config = match_data['config']
 
     # --- Update New UI Elements ---
     if ui_references['red_name_lbl']:
-        ui_references['red_name_lbl'].config(text=team_red)
-        ui_references['red_roster_lbl'].config(text=roster_red)
+        ui_references['red_name_lbl'].config(text=roster_red)
+        ui_references['red_roster_lbl'].config(text="")
 
-        ui_references['blue_name_lbl'].config(text=team_blue)
-        ui_references['blue_roster_lbl'].config(text=roster_blue)
+        ui_references['blue_name_lbl'].config(text=roster_blue)
+        ui_references['blue_roster_lbl'].config(text="")
 
         wins_red, losses_red = get_team_record(team_red)
         wins_blue, losses_blue = get_team_record(team_blue)
@@ -2434,7 +2446,7 @@ def _show_match_opening_dialog(match_id, match_data):
     for team in teams:
         tk.Button(
             button_frame,
-            text=f"🪙  {team} WON THE FLIP",
+            text=f"🪙  {_team_player_display(team, fallback=team)} WON THE FLIP",
             bg=THEME['btn_default'], fg='white', relief='flat',
             font=scaled_font('Selawik', 11, 'bold'),
             padx=SF(18), pady=SF(12),
@@ -3724,7 +3736,9 @@ def draw_match_box_internal(canvas, match_id, match_data, x, y, w, h):
                         or TOURNAMENT_STATE.get(src, {}).get('champion'))
             return (resolved or f'W:{src}'), '', resolved == winner
         roster = TEAM_ROSTERS.get(team_ref, ['?', '?'])
-        return team_ref, f"{roster[0]} & {roster[1]}", team_ref == winner
+        player_names = [str(player).strip() for player in roster if str(player).strip()]
+        display_name = " & ".join(player_names) if player_names else team_ref
+        return display_name, '', team_ref == winner
 
     name_A, roster_A, win_A = _team_display(team_A)
     name_B, roster_B, win_B = _team_display(team_B)
@@ -3750,13 +3764,6 @@ def draw_match_box_internal(canvas, match_id, match_data, x, y, w, h):
                        anchor='w', fill=fg_A,
                        font=scaled_font('Selawik', 10, wt_A),
                        tags=TAGS)
-    if roster_A and name_A != 'TBD':
-        canvas.create_text(name_x, name_a_y + SF(12),
-                           text=roster_A,
-                           anchor='w', fill='#607D8B',
-                           font=scaled_font('Selawik', 7),
-                           tags=TAGS)
-
     # Divider
     canvas.create_line(x + BAR_W + SF(2), mid_y, x + w - SF(4), mid_y,
                        fill='#455A64', width=SF(1), tags=TAGS)
@@ -3770,12 +3777,7 @@ def draw_match_box_internal(canvas, match_id, match_data, x, y, w, h):
                        anchor='w', fill=fg_B,
                        font=scaled_font('Selawik', 10, wt_B),
                        tags=TAGS)
-    if roster_B and name_B != 'TBD':
-        canvas.create_text(name_x, name_b_y + SF(12),
-                           text=roster_B,
-                           anchor='w', fill='#607D8B',
-                           font=scaled_font('Selawik', 7),
-                           tags=TAGS)
+
 
 def on_bracket_click(event):
     """Handle clicks on the bracket to trace a team's path"""
@@ -4793,10 +4795,12 @@ def update_winner_buttons():
 
     team_red = current_match_teams.get('red', 'RED TEAM')
     team_blue = current_match_teams.get('blue', 'BLUE TEAM')
+    display_red = _team_player_display(team_red, fallback=team_red)
+    display_blue = _team_player_display(team_blue, fallback=team_blue)
 
     if btn_red and btn_blue:
-        btn_red.config(text=f"WINNERS: {team_red}")
-        btn_blue.config(text=f"WINNERS: {team_blue}")
+        btn_red.config(text=f"WINNERS: {display_red}")
+        btn_blue.config(text=f"WINNERS: {display_blue}")
     log_message(f"Winner buttons updated — Red: {team_red}, Blue: {team_blue}", "DEBUG")
 
 def swap_teams():
