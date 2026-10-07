@@ -1053,6 +1053,14 @@ def _set_first_throw_indicator(color):
     or on a tie with no prior determination to flip).
     """
     ui_references['_first_throw_color'] = color
+
+    # Persist a valid current-frame first-throw assignment so a manual
+    # first/hammer swap survives replay snapshots. Do not persist None:
+    # reset_game() intentionally clears the UI indicator between matches.
+    if color in ('red', 'blue'):
+        active_match_id = TOURNAMENT_STATE.get('active_match_id')
+        if active_match_id and isinstance(TOURNAMENT_STATE.get(active_match_id), dict):
+            TOURNAMENT_STATE[active_match_id]['current_first_throw_color'] = color
     for c in ('red', 'blue'):
         card = ui_references.get(f'{c}_card_frame')
         if not card:
@@ -1065,6 +1073,63 @@ def _set_first_throw_indicator(color):
                 card.config(highlightthickness=0)
         except tk.TclError:
             pass
+
+def _swap_first_hammer_if_zero_zero(event=None):
+    """
+    Swap who throws first and who has hammer, but only before any points
+    have been scored in the current frame.
+
+    The current frame is measured from the round baselines, not the
+    cumulative match score, so this remains useful at the start of every
+    frame. F9 is intentionally a no-op once either team has scored.
+    """
+    if REPLAY_VIEW_ONLY:
+        log_message("F9 first/hammer swap ignored in view-only replay", "DEBUG")
+        return "break"
+
+    red_val = ui_references.get('red_counter_var')
+    blue_val = ui_references.get('blue_counter_var')
+    if not red_val or not blue_val:
+        return "break"
+
+    red_delta = red_val.get() - ui_references.get('red_round_baseline', 0)
+    blue_delta = blue_val.get() - ui_references.get('blue_round_baseline', 0)
+    if red_delta != 0 or blue_delta != 0:
+        log_message(
+            f"F9 first/hammer swap rejected — current frame is {red_delta}-{blue_delta}",
+            "DEBUG"
+        )
+        return "break"
+
+    current_first = ui_references.get('_first_throw_color')
+    if current_first not in ('red', 'blue'):
+        match_id = TOURNAMENT_STATE.get('active_match_id')
+        match_data = TOURNAMENT_STATE.get(match_id, {})
+        current_first = match_data.get('current_first_throw_color') or match_data.get('first_throw_color')
+
+    if current_first not in ('red', 'blue'):
+        log_message("F9 first/hammer swap unavailable — first throw is not determined", "WARN")
+        return "break"
+
+    new_first = 'blue' if current_first == 'red' else 'red'
+    _set_first_throw_indicator(new_first)
+
+    # Record the correction on the active match and immediately persist it.
+    match_id = TOURNAMENT_STATE.get('active_match_id')
+    match_data = TOURNAMENT_STATE.get(match_id)
+    if isinstance(match_data, dict):
+        match_data['current_first_throw_color'] = new_first
+
+    log_message(
+        f"First/hammer manually swapped — {new_first.upper()} throws first, "
+        f"{current_first.upper()} has hammer"
+    )
+
+    if REPLAY_FILEPATH:
+        append_snapshot_to_file(REPLAY_FILEPATH)
+
+    return "break"
+
 
 def _process_round_settle():
     """
@@ -2278,7 +2343,10 @@ def _apply_match_opening(match_data):
         current_match_teams['red'] = team_a
         current_match_teams['blue'] = team_b
 
-    first_throw_color = match_data.get('first_throw_color')
+    first_throw_color = (
+        match_data.get('current_first_throw_color')
+        or match_data.get('first_throw_color')
+    )
     if first_throw_color in ('red', 'blue'):
         _set_first_throw_indicator(first_throw_color)
     else:
@@ -2613,6 +2681,7 @@ def run_replay_mode(path):
             "hammer_team": m.get("hammer_team"),
             "first_throw_team": m.get("first_throw_team"),
             "first_throw_color": m.get("first_throw_color"),
+            "current_first_throw_color": m.get("current_first_throw_color"),
             "red_team": m.get("red_team"),
             "blue_team": m.get("blue_team"),
             "coin_recorded_at": m.get("coin_recorded_at"),
@@ -4209,7 +4278,7 @@ def serialize_snapshot():
         'coin_caller', 'coin_caller_team', 'coin_call_number',
         'coin_winner', 'coin_loser',
         'coin_choice', 'coin_chosen_color', 'hammer_team',
-        'first_throw_team', 'first_throw_color',
+        'first_throw_team', 'first_throw_color', 'current_first_throw_color',
         'red_team', 'blue_team', 'coin_recorded_at',
     )
 
@@ -5531,6 +5600,9 @@ def setup_main_gui(root):
 
     # F8 → send IR blue-up command to scoreboard (manual nudge, +1)
     root.bind('<F8>', lambda e: ir_send('blue_up'))
+
+    # F9 → swap first throw / hammer, but only while the current frame is 0-0
+    root.bind('<F9>', _swap_first_hammer_if_zero_zero)
 
     # F11 → send IR reset command to scoreboard
     root.bind('<F11>', lambda e: ir_send('reset'))
