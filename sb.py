@@ -5945,6 +5945,10 @@ def get_player_setup_dialog(parent):
     all_paid_var = tk.BooleanVar(value=False)
     current_player_count = MIN_PLAYERS
     player_entries = []
+    # Prevent row-status callbacks from recursively rebuilding the same widget
+    # set while render_inputs() is in the middle of destroying/recreating rows.
+    is_rendering_inputs = False
+    manual_draw_toggle_pending = False
     status_banner_refs = None
     header_frame_ref = None
     btn_add = None
@@ -6099,9 +6103,11 @@ def get_player_setup_dialog(parent):
     # ========================================================================
 
     def update_visuals(event=None):
-        """Update visual state of all player entries and button state"""
-        # Skip if we're in the middle of rebuilding rows
-        if not player_entries:
+        """Update visual state of all player entries and button state."""
+        # A row callback can fire while render_inputs() is replacing the
+        # Entry widgets. Never inspect player_entries during that window:
+        # doing so can dereference a widget that has just been destroyed.
+        if is_rendering_inputs or not player_entries:
             return
 
         from collections import Counter
@@ -6360,6 +6366,10 @@ def get_player_setup_dialog(parent):
             chk.config(bg=new_bg, selectcolor=new_bg, activebackground=new_bg)
             status_label.config(bg=new_bg, text=status_text, fg=status_color)
 
+            # Do not let an individual row callback trigger a second
+            # render while the current render_inputs() is rebuilding rows.
+            if is_rendering_inputs:
+                return
             update_visuals()
             _update_manual_draw_state()
 
@@ -6381,34 +6391,42 @@ def get_player_setup_dialog(parent):
         return (name_entry, paid_var, draw_entry, status_label)
 
     def render_inputs():
-        """Render/refresh all player input rows"""
-        saved_data = []
-        for w in player_entries:
-            saved_data.append({
-                'name': w[0].get(),
-                'paid': w[1].get(),
-                'draw': w[2].get() if w[2] else ""
-            })
+        """Render/refresh all player input rows without recursive widget churn."""
+        nonlocal is_rendering_inputs
+        is_rendering_inputs = True
+        try:
+            saved_data = []
+            for w in player_entries:
+                saved_data.append({
+                    'name': w[0].get(),
+                    'paid': w[1].get(),
+                    'draw': w[2].get() if w[2] else ""
+                })
 
-        # Clear only the rows, not the headers
-        for widget in input_container.winfo_children():
-            # Skip the header frame (it's the first child)
-            if widget == header_frame_ref:
-                continue
-            widget.destroy()
-        player_entries.clear()
+            # Clear only the rows, not the headers
+            for widget in input_container.winfo_children():
+                # Skip the header frame (it's the first child)
+                if widget == header_frame_ref:
+                    continue
+                widget.destroy()
+            player_entries.clear()
 
-        for i in range(current_player_count):
-            existing = saved_data[i] if i < len(saved_data) else None
+            for i in range(current_player_count):
+                existing = saved_data[i] if i < len(saved_data) else None
 
-            # For new rows, inherit the all_paid_var state
-            if existing is None and all_paid_var.get():
-                existing = {'name': '', 'paid': True, 'draw': ''}
+                # For new rows, inherit the all_paid_var state
+                if existing is None and all_paid_var.get():
+                    existing = {'name': '', 'paid': True, 'draw': ''}
 
-            full_widgets = create_player_row(input_container, i, existing)
-            player_entries.append(full_widgets)  # Keep all 4 values (name, paid, draw, status_label)
+                full_widgets = create_player_row(input_container, i, existing)
+                player_entries.append(full_widgets)
 
-        update_visuals()  # Call once after all rows are created
+            # Row callbacks are suppressed above; do one coherent state update
+            # after the complete replacement has been built.
+            update_visuals()
+            _update_manual_draw_state()
+        finally:
+            is_rendering_inputs = False
 
     # ========================================================================
     # CREATE STATUS BANNER (call it now)
@@ -6461,6 +6479,7 @@ def get_player_setup_dialog(parent):
 
     def _update_manual_draw_state():
         """Enable manual draw only when all players are paid and have non-default names."""
+        nonlocal manual_draw_toggle_pending
         if not player_entries:
             manual_chk.config(state='disabled')
             manual_draw_hint.config(text="(add players first)")
@@ -6485,7 +6504,20 @@ def get_player_setup_dialog(parent):
             # Uncheck if it was on and we're now disabling
             if is_manual_draw.get():
                 is_manual_draw.set(False)
-                toggle_manual_draw()
+                # During row replacement, defer the second render until Tk has
+                # returned to the event loop. This avoids destroying Entries
+                # that the outer render_inputs() still owns.
+                if is_rendering_inputs:
+                    if not manual_draw_toggle_pending:
+                        manual_draw_toggle_pending = True
+                        def _finish_manual_draw_disable():
+                            nonlocal manual_draw_toggle_pending
+                            manual_draw_toggle_pending = False
+                            if dialog.winfo_exists():
+                                toggle_manual_draw()
+                        dialog.after_idle(_finish_manual_draw_disable)
+                else:
+                    toggle_manual_draw()
 
     # Log Game
     log_frame = tk.Frame(settings_col, bg=THEME['bg_card'])
