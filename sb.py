@@ -6421,12 +6421,14 @@ def get_player_setup_dialog(parent):
                 full_widgets = create_player_row(input_container, i, existing)
                 player_entries.append(full_widgets)
 
-            # Row callbacks are suppressed above; do one coherent state update
-            # after the complete replacement has been built.
-            update_visuals()
-            _update_manual_draw_state()
+            # Row callbacks are suppressed above while the widget set is
+            # being rebuilt. The coherent state update happens after the
+            # rendering guard is lifted.
         finally:
             is_rendering_inputs = False
+
+        update_visuals()
+        _update_manual_draw_state()
 
     # ========================================================================
     # CREATE STATUS BANNER (call it now)
