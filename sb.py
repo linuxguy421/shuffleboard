@@ -517,8 +517,26 @@ def bind_debounced_canvas_redraw(canvas, redraw_func, delay=150):
 # --- Global & Tournament Variables ---
 TEAMS = []
 TEAM_ROSTERS = {}
+
+def _team_player_display(team, separator=" & ", fallback=None):
+    """Return a team's player names for user-facing UI labels."""
+    if not team:
+        return fallback if fallback is not None else "TBD"
+    roster = TEAM_ROSTERS.get(team)
+    if roster:
+        names = [str(player).strip() for player in roster if str(player).strip()]
+        if names:
+            return separator.join(names)
+    return fallback if fallback is not None else str(team)
+
 TOURNAMENT_RANKINGS = OrderedDict()
 PRIZES = {}  # Current tournament's payout structure: {'1st': int, '2nd': int, '3rd': int}
+
+# Physical coin-flip assignment state.  The application balances who gets
+# to call the physical toss; the actual toss result is always entered by
+# the operator.
+COIN_CALL_COUNTS = {}
+LAST_COIN_CALLER = None
 ENTRY_FEE_PER_PERSON = 5
 MIN_PLAYERS = 6
 MAX_PLAYERS = 20
@@ -734,6 +752,7 @@ ui_references = {
     'blue_stats_lbl': None,
     'info_lbl': None,
     'vs_label': None,
+    'coin_status_lbl': None,
     # Win animation state
     '_win_flash_job': None,     # pending after() id for flash loop
     '_win_glow_job': None,      # pending after() id for glow cancel
@@ -900,6 +919,19 @@ def add_late_team():
         'elapsed_at_pause': g1_snapshot.get('elapsed_at_pause', 0),
         '_paused_since':    g1_snapshot.get('_paused_since'),
         '_flash_state':     g1_snapshot.get('_flash_state', False),
+        'coin_caller':      g1_snapshot.get('coin_caller'),
+        'coin_caller_team': g1_snapshot.get('coin_caller_team'),
+        'coin_call_number': g1_snapshot.get('coin_call_number'),
+        'coin_winner':      g1_snapshot.get('coin_winner'),
+        'coin_loser':       g1_snapshot.get('coin_loser'),
+        'coin_choice':      g1_snapshot.get('coin_choice'),
+        'coin_chosen_color': g1_snapshot.get('coin_chosen_color'),
+        'hammer_team':      g1_snapshot.get('hammer_team'),
+        'first_throw_team': g1_snapshot.get('first_throw_team'),
+        'first_throw_color': g1_snapshot.get('first_throw_color'),
+        'red_team':         g1_snapshot.get('red_team'),
+        'blue_team':        g1_snapshot.get('blue_team'),
+        'coin_recorded_at': g1_snapshot.get('coin_recorded_at'),
         'config':           new_g1_config,
     })
     TOURNAMENT_STATE['active_match_id'] = 'G1'
@@ -1021,6 +1053,14 @@ def _set_first_throw_indicator(color):
     or on a tie with no prior determination to flip).
     """
     ui_references['_first_throw_color'] = color
+
+    # Persist a valid current-frame first-throw assignment so a manual
+    # first/hammer swap survives replay snapshots. Do not persist None:
+    # reset_game() intentionally clears the UI indicator between matches.
+    if color in ('red', 'blue'):
+        active_match_id = TOURNAMENT_STATE.get('active_match_id')
+        if active_match_id and isinstance(TOURNAMENT_STATE.get(active_match_id), dict):
+            TOURNAMENT_STATE[active_match_id]['current_first_throw_color'] = color
     for c in ('red', 'blue'):
         card = ui_references.get(f'{c}_card_frame')
         if not card:
@@ -1033,6 +1073,63 @@ def _set_first_throw_indicator(color):
                 card.config(highlightthickness=0)
         except tk.TclError:
             pass
+
+def _swap_first_hammer_if_zero_zero(event=None):
+    """
+    Swap who throws first and who has hammer, but only before any points
+    have been scored in the current frame.
+
+    The current frame is measured from the round baselines, not the
+    cumulative match score, so this remains useful at the start of every
+    frame. F9 is intentionally a no-op once either team has scored.
+    """
+    if REPLAY_VIEW_ONLY:
+        log_message("F9 first/hammer swap ignored in view-only replay", "DEBUG")
+        return "break"
+
+    red_val = ui_references.get('red_counter_var')
+    blue_val = ui_references.get('blue_counter_var')
+    if not red_val or not blue_val:
+        return "break"
+
+    red_delta = red_val.get() - ui_references.get('red_round_baseline', 0)
+    blue_delta = blue_val.get() - ui_references.get('blue_round_baseline', 0)
+    if red_delta != 0 or blue_delta != 0:
+        log_message(
+            f"F9 first/hammer swap rejected — current frame is {red_delta}-{blue_delta}",
+            "DEBUG"
+        )
+        return "break"
+
+    current_first = ui_references.get('_first_throw_color')
+    if current_first not in ('red', 'blue'):
+        match_id = TOURNAMENT_STATE.get('active_match_id')
+        match_data = TOURNAMENT_STATE.get(match_id, {})
+        current_first = match_data.get('current_first_throw_color') or match_data.get('first_throw_color')
+
+    if current_first not in ('red', 'blue'):
+        log_message("F9 first/hammer swap unavailable — first throw is not determined", "WARN")
+        return "break"
+
+    new_first = 'blue' if current_first == 'red' else 'red'
+    _set_first_throw_indicator(new_first)
+
+    # Record the correction on the active match and immediately persist it.
+    match_id = TOURNAMENT_STATE.get('active_match_id')
+    match_data = TOURNAMENT_STATE.get(match_id)
+    if isinstance(match_data, dict):
+        match_data['current_first_throw_color'] = new_first
+
+    log_message(
+        f"First/hammer manually swapped — {new_first.upper()} throws first, "
+        f"{current_first.upper()} has hammer"
+    )
+
+    if REPLAY_FILEPATH:
+        append_snapshot_to_file(REPLAY_FILEPATH)
+
+    return "break"
+
 
 def _process_round_settle():
     """
@@ -1359,6 +1456,13 @@ def setup_scoreboard(root, team_red_placeholder, team_blue_placeholder):
     game_routing_label.pack()
     ui_references['info_lbl'] = game_routing_label
 
+    ui_references['coin_status_lbl'] = tk.Label(
+        info_frame, text="Coin flip pending",
+        font=scaled_font('Selawik', 8, 'bold'),
+        fg=THEME['accent_gold'], bg=THEME['bg_main']
+    )
+    ui_references['coin_status_lbl'].pack(pady=(SF(2), 0))
+
     # + Late Entry button — top right of arena, only visible on first match before any result
     ui_references['late_entry_btn'] = tk.Button(
         info_frame, text="Add Late Entry", font=scaled_font('Selawik', 8, 'bold'),
@@ -1385,11 +1489,11 @@ def setup_scoreboard(root, team_red_placeholder, team_blue_placeholder):
     # Red Content
     tk.Label(red_card, text="RED TEAM", font=scaled_font('Selawik', 8, 'bold'), fg=THEME['red_team'], bg=THEME['bg_card']).pack(pady=(SF(10),0))
 
-    ui_references['red_name_lbl'] = tk.Label(red_card, text=team_red_placeholder, font=scaled_font('Selawik', 14, 'bold'),
+    ui_references['red_name_lbl'] = tk.Label(red_card, text=_team_player_display(team_red_placeholder, fallback=team_red_placeholder), font=scaled_font('Selawik', 14, 'bold'),
                                              fg=THEME['fg_primary'], bg=THEME['bg_card'], wraplength=SF(180))
     ui_references['red_name_lbl'].pack(pady=(SF(5),0))
 
-    ui_references['red_roster_lbl'] = tk.Label(red_card, text="P1 / P2", font=scaled_font('Selawik', 10, 'bold'),
+    ui_references['red_roster_lbl'] = tk.Label(red_card, text="", font=scaled_font('Selawik', 10, 'bold'),
                                                fg=THEME['fg_secondary'], bg=THEME['bg_card'])
     ui_references['red_roster_lbl'].pack(pady=(SF(2), SF(10)))
 
@@ -1443,14 +1547,14 @@ def setup_scoreboard(root, team_red_placeholder, team_blue_placeholder):
     # Blue Content
     tk.Label(blue_card, text="BLUE TEAM", font=scaled_font('Selawik', 8, 'bold'), fg=THEME['blue_team'], bg=THEME['bg_card']).pack(pady=(SF(10),0))
 
-    ui_references['blue_name_lbl'] = tk.Label(blue_card, text=team_blue_placeholder, font=scaled_font('Selawik', 14, 'bold'),
+    ui_references['blue_name_lbl'] = tk.Label(blue_card, text=_team_player_display(team_blue_placeholder, fallback=team_blue_placeholder), font=scaled_font('Selawik', 14, 'bold'),
                                               fg=THEME['fg_primary'], bg=THEME['bg_card'], wraplength=SF(180))
     ui_references['blue_name_lbl'].pack(pady=(SF(5),0))
 
     bind_dynamic_wrap(ui_references['red_name_lbl'], red_card)
     bind_dynamic_wrap(ui_references['blue_name_lbl'], blue_card)
 
-    ui_references['blue_roster_lbl'] = tk.Label(blue_card, text="P3 / P4", font=scaled_font('Selawik', 10),
+    ui_references['blue_roster_lbl'] = tk.Label(blue_card, text="", font=scaled_font('Selawik', 10),
                                                 fg=THEME['fg_secondary'], bg=THEME['bg_card'])
     ui_references['blue_roster_lbl'].pack(pady=(SF(2), SF(10)))
 
@@ -2014,19 +2118,19 @@ def update_scoreboard_display():
     team_red = current_match_teams['red']
     team_blue = current_match_teams['blue']
 
-    roster_red = " / ".join(TEAM_ROSTERS.get(team_red, ["P1", "P2"]))
-    roster_blue = " / ".join(TEAM_ROSTERS.get(team_blue, ["P3", "P4"]))
+    roster_red = _team_player_display(team_red, separator=" / ", fallback="P1 / P2")
+    roster_blue = _team_player_display(team_blue, separator=" / ", fallback="P3 / P4")
 
     match_data = TOURNAMENT_STATE[match_id]
     match_config = match_data['config']
 
     # --- Update New UI Elements ---
     if ui_references['red_name_lbl']:
-        ui_references['red_name_lbl'].config(text=team_red)
-        ui_references['red_roster_lbl'].config(text=roster_red)
+        ui_references['red_name_lbl'].config(text=roster_red)
+        ui_references['red_roster_lbl'].config(text="")
 
-        ui_references['blue_name_lbl'].config(text=team_blue)
-        ui_references['blue_roster_lbl'].config(text=roster_blue)
+        ui_references['blue_name_lbl'].config(text=roster_blue)
+        ui_references['blue_roster_lbl'].config(text="")
 
         wins_red, losses_red = get_team_record(team_red)
         wins_blue, losses_blue = get_team_record(team_blue)
@@ -2038,6 +2142,55 @@ def update_scoreboard_display():
         l_next = format_destination(match_config.get('L_next'))
 
         ui_references['info_lbl'].config(text=f"Match {match_id} • Winner: {w_next} • Loser: {l_next}")
+
+        coin_lbl = ui_references.get('coin_status_lbl')
+        if coin_lbl:
+            caller = match_data.get('coin_caller')
+            caller_team = match_data.get('coin_caller_team')
+            caller_display = (
+                f"{caller} ({caller_team})" if caller and caller_team else caller
+            )
+            flip_winner = match_data.get('coin_winner')
+            choice = match_data.get('coin_choice')
+            hammer_team = match_data.get('hammer_team')
+            first_team = match_data.get('first_throw_team')
+            current_first_color = (
+                match_data.get('current_first_throw_color')
+                or match_data.get('first_throw_color')
+            )
+            current_first_team = (
+                current_match_teams.get(current_first_color)
+                if current_first_color in ('red', 'blue')
+                else first_team
+            )
+            red_var = ui_references.get('red_counter_var')
+            blue_var = ui_references.get('blue_counter_var')
+            red_delta = (
+                red_var.get() - ui_references.get('red_round_baseline', 0)
+                if red_var else 0
+            )
+            blue_delta = (
+                blue_var.get() - ui_references.get('blue_round_baseline', 0)
+                if blue_var else 0
+            )
+            frame_is_zero_zero = red_delta == 0 and blue_delta == 0
+            if caller and flip_winner and choice:
+                if choice == 'HAMMER':
+                    coin_text = (
+                        f"🪙 Caller: {caller_display} • Winner: {flip_winner} • "
+                        f"Hammer: {hammer_team} • First: {current_first_team}"
+                    )
+                else:
+                    chosen_color = match_data.get('coin_chosen_color', '').upper()
+                    coin_text = (
+                        f"🪙 Caller: {caller_display} • Winner: {flip_winner} • "
+                        f"First: {current_first_team} ({chosen_color})"
+                    )
+                if frame_is_zero_zero and not REPLAY_VIEW_ONLY:
+                    coin_text += " • F9: Swap first/hammer"
+                coin_lbl.config(text=coin_text)
+            else:
+                coin_lbl.config(text=f"🪙 Caller: {caller or 'pending'} • Flip pending")
 
     # Update Status Header
     status_label.config(text=f"ACTIVE MATCH: {match_id}", fg=THEME['accent_gold'])
@@ -2151,6 +2304,285 @@ def go_back_to_selection():
     # Ensure button text is up to date
     update_winner_buttons()
 
+
+def _assign_coin_caller(match_id, match_data):
+    """Assign an individual player as coin caller using tournament fairness."""
+    global COIN_CALL_COUNTS, LAST_COIN_CALLER
+
+    existing = match_data.get('coin_caller')
+    if existing:
+        return existing
+
+    teams = [t for t in match_data.get('teams', [None, None]) if t]
+    if len(teams) != 2:
+        return None
+
+    players = []
+    player_team = {}
+    for team in teams:
+        for player in TEAM_ROSTERS.get(team, []):
+            player = str(player).strip()
+            if not player:
+                continue
+            players.append(player)
+            player_team[player] = team
+
+    players = list(dict.fromkeys(players))
+    if not players:
+        return None
+
+    counts = {player: COIN_CALL_COUNTS.get(player, 0) for player in players}
+    minimum = min(counts.values())
+    candidates = [player for player in players if counts[player] == minimum]
+
+    if LAST_COIN_CALLER in candidates and len(candidates) > 1:
+        candidates = [player for player in candidates if player != LAST_COIN_CALLER]
+
+    caller = candidates[0]
+    COIN_CALL_COUNTS[caller] = COIN_CALL_COUNTS.get(caller, 0) + 1
+    LAST_COIN_CALLER = caller
+    match_data['coin_caller'] = caller
+    match_data['coin_caller_team'] = player_team[caller]
+    match_data['coin_call_number'] = COIN_CALL_COUNTS[caller]
+    log_message(
+        f"{match_id}: coin caller assigned to {caller} "
+        f"({player_team[caller]}) — call #{COIN_CALL_COUNTS[caller]}"
+    )
+    return caller
+
+def _apply_match_opening(match_data):
+    """Apply a recorded coin result to the current red/blue UI assignment."""
+    global current_match_teams
+
+    team_a, team_b = match_data.get('teams', [None, None])
+    red_team = match_data.get('red_team')
+    blue_team = match_data.get('blue_team')
+
+    if red_team and blue_team:
+        current_match_teams['red'] = red_team
+        current_match_teams['blue'] = blue_team
+    else:
+        current_match_teams['red'] = team_a
+        current_match_teams['blue'] = team_b
+
+    first_throw_color = (
+        match_data.get('current_first_throw_color')
+        or match_data.get('first_throw_color')
+    )
+    if first_throw_color in ('red', 'blue'):
+        _set_first_throw_indicator(first_throw_color)
+    else:
+        _set_first_throw_indicator(None)
+
+
+def _show_match_opening_dialog(match_id, match_data):
+    """
+    Run the physical coin-toss opening sequence for a live match.
+
+    Sequence:
+      1. Application assigns the caller.
+      2. Operator records which team won the physical toss.
+      3. Toss winner chooses first+color or hammer.
+      4. Application records and applies the resulting opening state.
+    """
+    caller = _assign_coin_caller(match_id, match_data)
+    teams = list(match_data.get('teams', [None, None]))
+    if len(teams) != 2 or not all(teams):
+        return False
+
+    caller_team = match_data.get('coin_caller_team')
+    caller_display = (
+        f"{caller} ({caller_team})" if caller and caller_team else caller
+    )
+
+    # A completed opening is never shown twice.
+    if match_data.get('coin_winner') and match_data.get('coin_choice'):
+        _apply_match_opening(match_data)
+        return True
+
+    # Legacy replay files pre-date coin tracking. Do not block them with a
+    # new interactive dialog; preserve their original red/blue assignment.
+    if REPLAY_MODE:
+        log_message(
+            f"{match_id}: legacy replay has no coin-flip record; "
+            "preserving original team/color assignment",
+            "WARN"
+        )
+        _apply_match_opening(match_data)
+        return True
+
+    result = {'done': False}
+    dialog = tk.Toplevel(main_root)
+    dialog.title(f"Match {match_id} — Coin Flip")
+    dialog.configure(bg=THEME['bg_main'])
+    dialog.resizable(False, False)
+    dialog.transient(main_root)
+    dialog.grab_set()
+    dialog.geometry(scaled_geo(500, 490))
+
+    title_lbl = tk.Label(
+        dialog, text=f"🪙 Match {match_id} Opening",
+        font=THEME['font_title'], bg=THEME['bg_main'], fg=THEME['accent_gold']
+    )
+    title_lbl.pack(pady=(SF(18), SF(8)))
+
+    # Keep the matchup visible while the modal is blocking the arena.
+    matchup_frame = tk.Frame(dialog, bg=THEME['bg_panel'], bd=1, relief='solid')
+    matchup_frame.pack(fill='x', padx=SF(25), pady=(0, SF(12)))
+
+    team_a_display = _team_player_display(teams[0], fallback=str(teams[0]))
+    team_b_display = _team_player_display(teams[1], fallback=str(teams[1]))
+
+    tk.Label(
+        matchup_frame, text="MATCHUP",
+        font=scaled_font('Selawik', 8, 'bold'),
+        bg=THEME['bg_panel'], fg=THEME['fg_secondary']
+    ).pack(pady=(SF(7), SF(2)))
+
+    tk.Label(
+        matchup_frame, text=team_a_display,
+        font=scaled_font('Selawik', 13, 'bold'),
+        bg=THEME['bg_panel'], fg=THEME['red_team']
+    ).pack(pady=(0, SF(1)))
+
+    tk.Label(
+        matchup_frame, text="VS",
+        font=scaled_font('Selawik', 8, 'bold'),
+        bg=THEME['bg_panel'], fg=THEME['fg_secondary']
+    ).pack()
+
+    tk.Label(
+        matchup_frame, text=team_b_display,
+        font=scaled_font('Selawik', 13, 'bold'),
+        bg=THEME['bg_panel'], fg=THEME['blue_team']
+    ).pack(pady=(SF(1), SF(7)))
+
+    instruction_lbl = tk.Label(
+        dialog, text="", font=THEME['font_header'],
+        bg=THEME['bg_main'], fg=THEME['fg_primary'],
+        wraplength=SF(440), justify='center'
+    )
+    instruction_lbl.pack(pady=(0, SF(16)))
+
+    button_frame = tk.Frame(dialog, bg=THEME['bg_main'])
+    button_frame.pack(fill='x', padx=SF(25), pady=SF(8))
+
+    def clear_buttons():
+        for widget in button_frame.winfo_children():
+            widget.destroy()
+
+    def finish():
+        result['done'] = True
+        try:
+            dialog.grab_release()
+        except tk.TclError:
+            pass
+        dialog.destroy()
+
+    def choose_color(winner, loser, color):
+        match_data['coin_choice'] = 'FIRST_AND_COLOR'
+        match_data['coin_chosen_color'] = color
+        match_data['first_throw_team'] = winner
+        match_data['hammer_team'] = loser
+        match_data['first_throw_color'] = color
+        match_data['red_team'] = winner if color == 'red' else loser
+        match_data['blue_team'] = winner if color == 'blue' else loser
+        match_data['coin_recorded_at'] = time.time()
+        _apply_match_opening(match_data)
+        log_message(
+            f"{match_id}: {winner} won the flip and chose "
+            f"first throw + {color.upper()}"
+        )
+        finish()
+
+    def choose_option(winner, loser, option):
+        if option == 'HAMMER':
+            match_data['coin_choice'] = 'HAMMER'
+            match_data['hammer_team'] = winner
+            match_data['first_throw_team'] = loser
+            match_data['red_team'] = teams[0]
+            match_data['blue_team'] = teams[1]
+            match_data['first_throw_color'] = (
+                'red' if loser == teams[0] else 'blue'
+            )
+            match_data['coin_recorded_at'] = time.time()
+            _apply_match_opening(match_data)
+            log_message(
+                f"{match_id}: {winner} won the flip and chose HAMMER; "
+                f"{loser} throws first"
+            )
+            finish()
+            return
+
+        clear_buttons()
+        instruction_lbl.config(
+            text=f"{winner} won the flip.\n\n"
+                 "Choose the color to go first:"
+        )
+
+        for color, fg in (('red', THEME['red_team']),
+                          ('blue', THEME['blue_team'])):
+            tk.Button(
+                button_frame,
+                text=f"{color.upper()} — Go First",
+                bg=fg, fg='white', relief='flat',
+                font=scaled_font('Selawik', 11, 'bold'),
+                padx=SF(18), pady=SF(12),
+                command=lambda c=color: choose_color(winner, loser, c)
+            ).pack(fill='x', pady=SF(5))
+
+    def choose_flip_winner(winner):
+        loser = teams[1] if winner == teams[0] else teams[0]
+        match_data['coin_winner'] = winner
+        match_data['coin_loser'] = loser
+        clear_buttons()
+        instruction_lbl.config(
+            text=f"{winner} won the physical coin flip.\n\n"
+                 "What does the winner choose?"
+        )
+
+        tk.Button(
+            button_frame,
+            text="▶  GO FIRST + CHOOSE COLOR",
+            bg=THEME['btn_confirm'], fg='white', relief='flat',
+            font=scaled_font('Selawik', 11, 'bold'),
+            padx=SF(18), pady=SF(12),
+            command=lambda: choose_option(winner, loser, 'FIRST_AND_COLOR')
+        ).pack(fill='x', pady=SF(5))
+
+        tk.Button(
+            button_frame,
+            text="🔨  TAKE HAMMER",
+            bg=THEME['btn_default'], fg='white', relief='flat',
+            font=scaled_font('Selawik', 11, 'bold'),
+            padx=SF(18), pady=SF(12),
+            command=lambda: choose_option(winner, loser, 'HAMMER')
+        ).pack(fill='x', pady=SF(5))
+
+    instruction_lbl.config(
+        text=f"{caller_display} calls the physical coin flip.\n\n"
+             "Toss the coin, then record whether the caller won or lost:"
+    )
+
+    # The caller's team is the identity of the person who physically flipped.
+    # The operator still records the winning team internally; the buttons simply
+    # express that result from the caller's perspective.
+    for team in teams:
+        outcome = "WON" if team == caller_team else "LOST"
+        tk.Button(
+            button_frame,
+            text=f"🪙  {caller or 'Player'} {outcome} THE FLIP",
+            bg=THEME['btn_default'], fg='white', relief='flat',
+            font=scaled_font('Selawik', 11, 'bold'),
+            padx=SF(18), pady=SF(12),
+            command=lambda t=team: choose_flip_winner(t)
+        ).pack(fill='x', pady=SF(5))
+
+    dialog.protocol("WM_DELETE_WINDOW", lambda: None)
+    main_root.wait_window(dialog)
+    return result['done']
+
+
 def load_match_data_and_teams():
     """Updated to handle the new notebook structure."""
     global TOURNAMENT_STATE, current_match_teams, last_assigned_match_id
@@ -2195,6 +2627,19 @@ def load_match_data_and_teams():
         current_match_teams['red'] = team_A
         current_match_teams['blue'] = team_B
         last_assigned_match_id = match_id
+
+        # Refresh the arena context before the modal opens. The opening dialog
+        # remains authoritative, but the matchup/bracket are already populated
+        # underneath it when the operator begins the coin toss.
+        update_scoreboard_display()
+        if bracket_info_canvas_ref:
+            draw_small_bracket_view(bracket_info_canvas_ref, TOURNAMENT_STATE)
+
+        # Establish the physical coin opening before the match can be played.
+        # The modal blocks scoring until the opening state is recorded.
+        if not _show_match_opening_dialog(match_id, match_data):
+            log_message(f"{match_id}: opening sequence did not complete", "WARN")
+            return
 
         match_data['timer_paused'] = True
         match_data['elapsed_at_pause'] = 0
@@ -2285,8 +2730,39 @@ def run_replay_mode(path):
             "start_time": m.get("start_time"),
             "red_score": m.get("red_score"),    # restored for bracket score display
             "blue_score": m.get("blue_score"),
+            # Physical coin-opening record (optional for legacy replay files)
+            "coin_caller": m.get("coin_caller"),
+            "coin_caller_team": m.get("coin_caller_team"),
+            "coin_call_number": m.get("coin_call_number"),
+            "coin_winner": m.get("coin_winner"),
+            "coin_loser": m.get("coin_loser"),
+            "coin_choice": m.get("coin_choice"),
+            "coin_chosen_color": m.get("coin_chosen_color"),
+            "hammer_team": m.get("hammer_team"),
+            "first_throw_team": m.get("first_throw_team"),
+            "first_throw_color": m.get("first_throw_color"),
+            "current_first_throw_color": m.get("current_first_throw_color"),
+            "red_team": m.get("red_team"),
+            "blue_team": m.get("blue_team"),
+            "coin_recorded_at": m.get("coin_recorded_at"),
             "config": config,
         }
+
+    # Rebuild coin-caller fairness counters from the persisted match records.
+    COIN_CALL_COUNTS.clear()
+    global LAST_COIN_CALLER
+    LAST_COIN_CALLER = None
+    latest_coin_record = (0, None)
+    for mid, match_data in TOURNAMENT_STATE.items():
+        if not isinstance(match_data, dict):
+            continue
+        caller = match_data.get('coin_caller')
+        if caller:
+            COIN_CALL_COUNTS[caller] = COIN_CALL_COUNTS.get(caller, 0) + 1
+            recorded_at = match_data.get('coin_recorded_at') or 0
+            if recorded_at >= latest_coin_record[0]:
+                latest_coin_record = (recorded_at, caller)
+    LAST_COIN_CALLER = latest_coin_record[1]
 
     # Restore active match
     active = snap.get("active_match_id")
@@ -3393,7 +3869,9 @@ def draw_match_box_internal(canvas, match_id, match_data, x, y, w, h):
                         or TOURNAMENT_STATE.get(src, {}).get('champion'))
             return (resolved or f'W:{src}'), '', resolved == winner
         roster = TEAM_ROSTERS.get(team_ref, ['?', '?'])
-        return team_ref, f"{roster[0]} & {roster[1]}", team_ref == winner
+        player_names = [str(player).strip() for player in roster if str(player).strip()]
+        display_name = " & ".join(player_names) if player_names else team_ref
+        return display_name, '', team_ref == winner
 
     name_A, roster_A, win_A = _team_display(team_A)
     name_B, roster_B, win_B = _team_display(team_B)
@@ -3419,13 +3897,6 @@ def draw_match_box_internal(canvas, match_id, match_data, x, y, w, h):
                        anchor='w', fill=fg_A,
                        font=scaled_font('Selawik', 10, wt_A),
                        tags=TAGS)
-    if roster_A and name_A != 'TBD':
-        canvas.create_text(name_x, name_a_y + SF(12),
-                           text=roster_A,
-                           anchor='w', fill='#607D8B',
-                           font=scaled_font('Selawik', 7),
-                           tags=TAGS)
-
     # Divider
     canvas.create_line(x + BAR_W + SF(2), mid_y, x + w - SF(4), mid_y,
                        fill='#455A64', width=SF(1), tags=TAGS)
@@ -3439,12 +3910,7 @@ def draw_match_box_internal(canvas, match_id, match_data, x, y, w, h):
                        anchor='w', fill=fg_B,
                        font=scaled_font('Selawik', 10, wt_B),
                        tags=TAGS)
-    if roster_B and name_B != 'TBD':
-        canvas.create_text(name_x, name_b_y + SF(12),
-                           text=roster_B,
-                           anchor='w', fill='#607D8B',
-                           font=scaled_font('Selawik', 7),
-                           tags=TAGS)
+
 
 def on_bracket_click(event):
     """Handle clicks on the bracket to trace a team's path"""
@@ -3864,9 +4330,17 @@ def serialize_snapshot():
     }
 
     # Only save persistent match fields — ephemeral UI/timer fields are deliberately excluded.
-    _MATCH_SAVE_KEYS = ('teams', 'winner', 'winner_color', 'is_reset', 'champion',
-                        'is_winnerbracket', 'start_time', 'duration',
-                        'red_score', 'blue_score')
+    _MATCH_SAVE_KEYS = (
+        'teams', 'winner', 'winner_color', 'is_reset', 'champion',
+        'is_winnerbracket', 'start_time', 'duration',
+        'red_score', 'blue_score',
+        # Physical coin-opening record
+        'coin_caller', 'coin_caller_team', 'coin_call_number',
+        'coin_winner', 'coin_loser',
+        'coin_choice', 'coin_chosen_color', 'hammer_team',
+        'first_throw_team', 'first_throw_color', 'current_first_throw_color',
+        'red_team', 'blue_team', 'coin_recorded_at',
+    )
 
     for mid, match_data in TOURNAMENT_STATE.items():
         if isinstance(match_data, dict):
@@ -4264,7 +4738,14 @@ def handle_match_resolution(winner, loser, winning_color, match_id):
             'id': match_id,
             'winner': winner,
             'loser': loser,
-            'color': winning_color
+            'color': winning_color,
+            'coin_caller': match_data.get('coin_caller'),
+            'coin_caller_team': match_data.get('coin_caller_team'),
+            'coin_winner': match_data.get('coin_winner'),
+            'coin_choice': match_data.get('coin_choice'),
+            'hammer_team': match_data.get('hammer_team'),
+            'first_throw_team': match_data.get('first_throw_team'),
+            'first_throw_color': match_data.get('first_throw_color'),
         })
 
     # 4. Find the next actively playable match
@@ -4447,10 +4928,12 @@ def update_winner_buttons():
 
     team_red = current_match_teams.get('red', 'RED TEAM')
     team_blue = current_match_teams.get('blue', 'BLUE TEAM')
+    display_red = _team_player_display(team_red, fallback=team_red)
+    display_blue = _team_player_display(team_blue, fallback=team_blue)
 
     if btn_red and btn_blue:
-        btn_red.config(text=f"WINNERS: {team_red}")
-        btn_blue.config(text=f"WINNERS: {team_blue}")
+        btn_red.config(text=f"WINNERS: {display_red}")
+        btn_blue.config(text=f"WINNERS: {display_blue}")
     log_message(f"Winner buttons updated — Red: {team_red}, Blue: {team_blue}", "DEBUG")
 
 def swap_teams():
@@ -5148,7 +5631,7 @@ def update_roster_seeding_display():
         team_container = tk.Frame(teams_inner_frame, bg=THEME['bg_main'], bd=0)
         team_container.pack(side=tk.LEFT, padx=5, pady=2)
 
-        tk.Label(team_container, text=f"{team_name}: {players_str}", font=scaled_font('Consolas', 9),
+        tk.Label(team_container, text=players_str, font=scaled_font('Consolas', 9),
                  bg=THEME['bg_main'], fg=THEME['fg_secondary']).pack(padx=5, pady=2)
 
 def setup_main_gui(root):
@@ -5177,6 +5660,9 @@ def setup_main_gui(root):
 
     # F8 → send IR blue-up command to scoreboard (manual nudge, +1)
     root.bind('<F8>', lambda e: ir_send('blue_up'))
+
+    # F9 → swap first throw / hammer, but only while the current frame is 0-0
+    root.bind('<F9>', _swap_first_hammer_if_zero_zero)
 
     # F11 → send IR reset command to scoreboard
     root.bind('<F11>', lambda e: ir_send('reset'))
@@ -5459,6 +5945,10 @@ def get_player_setup_dialog(parent):
     all_paid_var = tk.BooleanVar(value=False)
     current_player_count = MIN_PLAYERS
     player_entries = []
+    # Prevent row-status callbacks from recursively rebuilding the same widget
+    # set while render_inputs() is in the middle of destroying/recreating rows.
+    is_rendering_inputs = False
+    manual_draw_toggle_pending = False
     status_banner_refs = None
     header_frame_ref = None
     btn_add = None
@@ -5613,9 +6103,11 @@ def get_player_setup_dialog(parent):
     # ========================================================================
 
     def update_visuals(event=None):
-        """Update visual state of all player entries and button state"""
-        # Skip if we're in the middle of rebuilding rows
-        if not player_entries:
+        """Update visual state of all player entries and button state."""
+        # A row callback can fire while render_inputs() is replacing the
+        # Entry widgets. Never inspect player_entries during that window:
+        # doing so can dereference a widget that has just been destroyed.
+        if is_rendering_inputs or not player_entries:
             return
 
         from collections import Counter
@@ -5874,6 +6366,10 @@ def get_player_setup_dialog(parent):
             chk.config(bg=new_bg, selectcolor=new_bg, activebackground=new_bg)
             status_label.config(bg=new_bg, text=status_text, fg=status_color)
 
+            # Do not let an individual row callback trigger a second
+            # render while the current render_inputs() is rebuilding rows.
+            if is_rendering_inputs:
+                return
             update_visuals()
             _update_manual_draw_state()
 
@@ -5895,34 +6391,44 @@ def get_player_setup_dialog(parent):
         return (name_entry, paid_var, draw_entry, status_label)
 
     def render_inputs():
-        """Render/refresh all player input rows"""
-        saved_data = []
-        for w in player_entries:
-            saved_data.append({
-                'name': w[0].get(),
-                'paid': w[1].get(),
-                'draw': w[2].get() if w[2] else ""
-            })
+        """Render/refresh all player input rows without recursive widget churn."""
+        nonlocal is_rendering_inputs
+        is_rendering_inputs = True
+        try:
+            saved_data = []
+            for w in player_entries:
+                saved_data.append({
+                    'name': w[0].get(),
+                    'paid': w[1].get(),
+                    'draw': w[2].get() if w[2] else ""
+                })
 
-        # Clear only the rows, not the headers
-        for widget in input_container.winfo_children():
-            # Skip the header frame (it's the first child)
-            if widget == header_frame_ref:
-                continue
-            widget.destroy()
-        player_entries.clear()
+            # Clear only the rows, not the headers
+            for widget in input_container.winfo_children():
+                # Skip the header frame (it's the first child)
+                if widget == header_frame_ref:
+                    continue
+                widget.destroy()
+            player_entries.clear()
 
-        for i in range(current_player_count):
-            existing = saved_data[i] if i < len(saved_data) else None
+            for i in range(current_player_count):
+                existing = saved_data[i] if i < len(saved_data) else None
 
-            # For new rows, inherit the all_paid_var state
-            if existing is None and all_paid_var.get():
-                existing = {'name': '', 'paid': True, 'draw': ''}
+                # For new rows, inherit the all_paid_var state
+                if existing is None and all_paid_var.get():
+                    existing = {'name': '', 'paid': True, 'draw': ''}
 
-            full_widgets = create_player_row(input_container, i, existing)
-            player_entries.append(full_widgets)  # Keep all 4 values (name, paid, draw, status_label)
+                full_widgets = create_player_row(input_container, i, existing)
+                player_entries.append(full_widgets)
 
-        update_visuals()  # Call once after all rows are created
+            # Row callbacks are suppressed above while the widget set is
+            # being rebuilt. The coherent state update happens after the
+            # rendering guard is lifted.
+        finally:
+            is_rendering_inputs = False
+
+        update_visuals()
+        _update_manual_draw_state()
 
     # ========================================================================
     # CREATE STATUS BANNER (call it now)
@@ -5975,6 +6481,7 @@ def get_player_setup_dialog(parent):
 
     def _update_manual_draw_state():
         """Enable manual draw only when all players are paid and have non-default names."""
+        nonlocal manual_draw_toggle_pending
         if not player_entries:
             manual_chk.config(state='disabled')
             manual_draw_hint.config(text="(add players first)")
@@ -5999,7 +6506,20 @@ def get_player_setup_dialog(parent):
             # Uncheck if it was on and we're now disabling
             if is_manual_draw.get():
                 is_manual_draw.set(False)
-                toggle_manual_draw()
+                # During row replacement, defer the second render until Tk has
+                # returned to the event loop. This avoids destroying Entries
+                # that the outer render_inputs() still owns.
+                if is_rendering_inputs:
+                    if not manual_draw_toggle_pending:
+                        manual_draw_toggle_pending = True
+                        def _finish_manual_draw_disable():
+                            nonlocal manual_draw_toggle_pending
+                            manual_draw_toggle_pending = False
+                            if dialog.winfo_exists():
+                                toggle_manual_draw()
+                        dialog.after_idle(_finish_manual_draw_disable)
+                else:
+                    toggle_manual_draw()
 
     # Log Game
     log_frame = tk.Frame(settings_col, bg=THEME['bg_card'])
@@ -6180,6 +6700,7 @@ def reset_global_state():
     global TEAMS, TEAM_ROSTERS, TOURNAMENT_STATE, TOURNAMENT_RANKINGS
     global MATCH_HISTORY, MATCH_DURATIONS, REPLAY_FILEPATH
     global last_assigned_match_id, TOURNAMENT_START_TIME, PRIZES
+    global COIN_CALL_COUNTS, LAST_COIN_CALLER
 
     TEAMS.clear()
     TEAM_ROSTERS.clear()
@@ -6188,6 +6709,8 @@ def reset_global_state():
     MATCH_HISTORY.clear()
     MATCH_DURATIONS.clear()
     PRIZES.clear()
+    COIN_CALL_COUNTS.clear()
+    LAST_COIN_CALLER = None
     REPLAY_FILEPATH = None
     last_assigned_match_id = None
     TOURNAMENT_START_TIME = None
