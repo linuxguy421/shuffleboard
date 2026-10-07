@@ -2418,13 +2418,44 @@ def _show_match_opening_dialog(match_id, match_data):
     dialog.resizable(False, False)
     dialog.transient(main_root)
     dialog.grab_set()
-    dialog.geometry(scaled_geo(500, 390))
+    dialog.geometry(scaled_geo(500, 490))
 
     title_lbl = tk.Label(
         dialog, text=f"🪙 Match {match_id} Opening",
         font=THEME['font_title'], bg=THEME['bg_main'], fg=THEME['accent_gold']
     )
     title_lbl.pack(pady=(SF(18), SF(8)))
+
+    # Keep the matchup visible while the modal is blocking the arena.
+    matchup_frame = tk.Frame(dialog, bg=THEME['bg_panel'], bd=1, relief='solid')
+    matchup_frame.pack(fill='x', padx=SF(25), pady=(0, SF(12)))
+
+    team_a_display = _team_player_display(teams[0], fallback=str(teams[0]))
+    team_b_display = _team_player_display(teams[1], fallback=str(teams[1]))
+
+    tk.Label(
+        matchup_frame, text="MATCHUP",
+        font=scaled_font('Selawik', 8, 'bold'),
+        bg=THEME['bg_panel'], fg=THEME['fg_secondary']
+    ).pack(pady=(SF(7), SF(2)))
+
+    tk.Label(
+        matchup_frame, text=team_a_display,
+        font=scaled_font('Selawik', 13, 'bold'),
+        bg=THEME['bg_panel'], fg=THEME['red_team']
+    ).pack(pady=(0, SF(1)))
+
+    tk.Label(
+        matchup_frame, text="VS",
+        font=scaled_font('Selawik', 8, 'bold'),
+        bg=THEME['bg_panel'], fg=THEME['fg_secondary']
+    ).pack()
+
+    tk.Label(
+        matchup_frame, text=team_b_display,
+        font=scaled_font('Selawik', 13, 'bold'),
+        bg=THEME['bg_panel'], fg=THEME['blue_team']
+    ).pack(pady=(SF(1), SF(7)))
 
     instruction_lbl = tk.Label(
         dialog, text="", font=THEME['font_header'],
@@ -2596,6 +2627,13 @@ def load_match_data_and_teams():
         current_match_teams['red'] = team_A
         current_match_teams['blue'] = team_B
         last_assigned_match_id = match_id
+
+        # Refresh the arena context before the modal opens. The opening dialog
+        # remains authoritative, but the matchup/bracket are already populated
+        # underneath it when the operator begins the coin toss.
+        update_scoreboard_display()
+        if bracket_info_canvas_ref:
+            draw_small_bracket_view(bracket_info_canvas_ref, TOURNAMENT_STATE)
 
         # Establish the physical coin opening before the match can be played.
         # The modal blocks scoring until the opening state is recorded.
