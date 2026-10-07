@@ -2427,7 +2427,7 @@ def _show_match_opening_dialog(match_id, match_data):
     title_lbl.pack(pady=(SF(18), SF(8)))
 
     # Keep the matchup visible while the modal is blocking the arena.
-    matchup_frame = tk.Frame(dialog, bg=THEME['bg_panel'], bd=1, relief='solid')
+    matchup_frame = tk.Frame(dialog, bg=THEME['bg_card'], bd=1, relief='solid')
     matchup_frame.pack(fill='x', padx=SF(25), pady=(0, SF(12)))
 
     team_a_display = _team_player_display(teams[0], fallback=str(teams[0]))
@@ -2436,25 +2436,25 @@ def _show_match_opening_dialog(match_id, match_data):
     tk.Label(
         matchup_frame, text="MATCHUP",
         font=scaled_font('Selawik', 8, 'bold'),
-        bg=THEME['bg_panel'], fg=THEME['fg_secondary']
+        bg=THEME['bg_card'], fg=THEME['fg_secondary']
     ).pack(pady=(SF(7), SF(2)))
 
     tk.Label(
         matchup_frame, text=team_a_display,
         font=scaled_font('Selawik', 13, 'bold'),
-        bg=THEME['bg_panel'], fg=THEME['red_team']
+        bg=THEME['bg_card'], fg=THEME['red_team']
     ).pack(pady=(0, SF(1)))
 
     tk.Label(
         matchup_frame, text="VS",
         font=scaled_font('Selawik', 8, 'bold'),
-        bg=THEME['bg_panel'], fg=THEME['fg_secondary']
+        bg=THEME['bg_card'], fg=THEME['fg_secondary']
     ).pack()
 
     tk.Label(
         matchup_frame, text=team_b_display,
         font=scaled_font('Selawik', 13, 'bold'),
-        bg=THEME['bg_panel'], fg=THEME['blue_team']
+        bg=THEME['bg_card'], fg=THEME['blue_team']
     ).pack(pady=(SF(1), SF(7)))
 
     instruction_lbl = tk.Label(
