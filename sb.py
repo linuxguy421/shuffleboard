@@ -53,7 +53,7 @@ except ImportError:
     REPORTLAB_AVAILABLE = False
 
 # --- Version ---
-SHUF_VERSION = "1.77B"
+SHUF_VERSION = "1.98A"
 
 # =============================================================================
 # --- Flipper Zero IR Module ---
