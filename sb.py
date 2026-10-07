@@ -2154,18 +2154,40 @@ def update_scoreboard_display():
             choice = match_data.get('coin_choice')
             hammer_team = match_data.get('hammer_team')
             first_team = match_data.get('first_throw_team')
+            current_first_color = (
+                match_data.get('current_first_throw_color')
+                or match_data.get('first_throw_color')
+            )
+            current_first_team = (
+                current_match_teams.get(current_first_color)
+                if current_first_color in ('red', 'blue')
+                else first_team
+            )
+            red_var = ui_references.get('red_counter_var')
+            blue_var = ui_references.get('blue_counter_var')
+            red_delta = (
+                red_var.get() - ui_references.get('red_round_baseline', 0)
+                if red_var else 0
+            )
+            blue_delta = (
+                blue_var.get() - ui_references.get('blue_round_baseline', 0)
+                if blue_var else 0
+            )
+            frame_is_zero_zero = red_delta == 0 and blue_delta == 0
             if caller and flip_winner and choice:
                 if choice == 'HAMMER':
                     coin_text = (
                         f"🪙 Caller: {caller_display} • Winner: {flip_winner} • "
-                        f"Hammer: {hammer_team} • First: {first_team}"
+                        f"Hammer: {hammer_team} • First: {current_first_team}"
                     )
                 else:
                     chosen_color = match_data.get('coin_chosen_color', '').upper()
                     coin_text = (
                         f"🪙 Caller: {caller_display} • Winner: {flip_winner} • "
-                        f"First: {first_team} ({chosen_color})"
+                        f"First: {current_first_team} ({chosen_color})"
                     )
+                if frame_is_zero_zero and not REPLAY_VIEW_ONLY:
+                    coin_text += " • F9: Swap first/hammer"
                 coin_lbl.config(text=coin_text)
             else:
                 coin_lbl.config(text=f"🪙 Caller: {caller or 'pending'} • Flip pending")
