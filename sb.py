@@ -2201,6 +2201,17 @@ def update_scoreboard_display():
     match_data = TOURNAMENT_STATE[match_id]
     match_config = match_data['config']
 
+    # Rehydrate the role badges whenever the scoreboard refreshes. This is
+    # needed when reopening the app or restoring an existing match, where the
+    # match-opening dialog may not run again to initialize the badge widgets.
+    first_throw_color = (
+        match_data.get('current_first_throw_color')
+        or match_data.get('first_throw_color')
+    )
+    _set_first_throw_indicator(
+        first_throw_color if first_throw_color in ('red', 'blue') else None
+    )
+
     # --- Update New UI Elements ---
     if ui_references['red_name_lbl']:
         ui_references['red_name_lbl'].config(text=roster_red)
