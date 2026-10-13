@@ -267,7 +267,10 @@ def _queue_ir_command(item):
                 daemon=True,
             )
             _ir_worker_thread.start()
-    _ir_command_queue.put(item)
+        # Put while holding the same lock used to initialize the worker. This
+        # preserves producer enqueue order even if calls arrive from multiple
+        # threads at nearly the same time.
+        _ir_command_queue.put(item)
 
 
 def ir_send(action, repeat=1):
