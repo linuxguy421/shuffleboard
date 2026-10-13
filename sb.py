@@ -1587,15 +1587,14 @@ def setup_scoreboard(root, team_red_placeholder, team_blue_placeholder):
         bg=THEME['bg_card'], fg=THEME['fg_primary'],
         padx=SF(10), pady=SF(4), relief='flat', anchor='center'
     )
-    ui_references['red_role_badge'].pack(
-        side='bottom', fill='x', padx=SF(18), pady=(0, SF(6))
-    )
-    ui_references['red_stats_lbl'].pack(side='bottom', pady=5)
-
     btn_red = tk.Button(red_card, text="🏆 RED WINS", command=lambda: declare_winner('red'),
                         bg=THEME['red_team'], fg='white', font=scaled_font('Selawik', 11, 'bold'),
                         relief='flat', activebackground='#C62828', cursor='hand2')
     btn_red.pack(side='bottom', fill='x', padx=SF(10), pady=SF(10))
+    ui_references['red_role_badge'].pack(
+        side='bottom', fill='x', padx=SF(18), pady=(0, SF(6))
+    )
+    ui_references['red_stats_lbl'].pack(side='bottom', pady=5)
 
     # -- VS Center --
     vs_frame = tk.Frame(match_input_frame, bg=THEME['bg_main'], width=SF(36))
@@ -1665,15 +1664,14 @@ def setup_scoreboard(root, team_red_placeholder, team_blue_placeholder):
         bg=THEME['bg_card'], fg=THEME['fg_primary'],
         padx=SF(10), pady=SF(4), relief='flat', anchor='center'
     )
-    ui_references['blue_role_badge'].pack(
-        side='bottom', fill='x', padx=SF(18), pady=(0, SF(6))
-    )
-    ui_references['blue_stats_lbl'].pack(side='bottom', pady=5)
-
     btn_blue = tk.Button(blue_card, text="🏆 BLUE WINS", command=lambda: declare_winner('blue'),
                          bg=THEME['blue_team'], fg='white', font=scaled_font('Selawik', 11, 'bold'),
                          relief='flat', activebackground='#1565C0', cursor='hand2')
     btn_blue.pack(side='bottom', fill='x', padx=SF(10), pady=SF(10))
+    ui_references['blue_role_badge'].pack(
+        side='bottom', fill='x', padx=SF(18), pady=(0, SF(6))
+    )
+    ui_references['blue_stats_lbl'].pack(side='bottom', pady=5)
 
     # -- Controls (Bottom of Arena) --
     ctrl_frame = tk.Frame(tab_match, bg=THEME['bg_main'], pady=5)
