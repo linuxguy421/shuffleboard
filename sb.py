@@ -244,7 +244,7 @@ def _ir_command_worker():
                 for action in actions:
                     _send_ir_blocking(action)
             elif operation == 'blink':
-                _, cycles, interval = item
+                _, cycles, interval, completion_event = item
                 _run_ir_blink_blocking(cycles, interval)
             else:
                 log_message(f"Unknown IR queue operation: {operation!r}", "WARN")
@@ -253,6 +253,8 @@ def _ir_command_worker():
             # future scoreboard commands in the queue.
             log_message(f"Unhandled IR queue operation failure: {e}", "ERROR")
         finally:
+            if item[0] == 'blink' and len(item) > 3:
+                item[3].set()
             _ir_command_queue.task_done()
 
 
@@ -297,9 +299,12 @@ def ir_correct(color, current_val, target_val):
 def ir_blink(cycles=5, interval=0.5):
     """
     Queue a win-celebration blink sequence without blocking the UI.
+    Returns an Event that is set when the queued sequence completes.
     The complete sequence runs atomically relative to other queued IR work.
     """
-    _queue_ir_command(('blink', cycles, interval))
+    completion_event = threading.Event()
+    _queue_ir_command(('blink', cycles, interval, completion_event))
+    return completion_event
 
 
 def ir_power_on_sequence():
@@ -1273,13 +1278,13 @@ def _evaluate_win():
     # previously let a stray button click during the ~2.5s blink window fire
     # its own callback nested inside this one (risking a double-processed
     # match resolution mid-blink).
-    blink_thread = ir_blink(cycles=5, interval=0.5)
-    _poll_blink_thread(blink_thread)
+    blink_done = ir_blink(cycles=5, interval=0.5)
+    _poll_blink_thread(blink_done)
 
-def _poll_blink_thread(thread):
-    """Non-blocking check for the IR win-blink thread finishing."""
-    if thread.is_alive():
-        main_root.after(100, lambda: _poll_blink_thread(thread))
+def _poll_blink_thread(completion_event):
+    """Non-blocking check for the queued IR win-blink sequence finishing."""
+    if not completion_event.is_set():
+        main_root.after(100, lambda: _poll_blink_thread(completion_event))
     else:
         log_message("IR win-blink sequence complete", "DEBUG")
 
