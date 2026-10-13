@@ -1096,16 +1096,33 @@ def _set_first_throw_indicator(color):
         active_match_id = TOURNAMENT_STATE.get('active_match_id')
         if active_match_id and isinstance(TOURNAMENT_STATE.get(active_match_id), dict):
             TOURNAMENT_STATE[active_match_id]['current_first_throw_color'] = color
+    # Role badges make both sides of the opening assignment explicit.
+    # Clear them until first throw has been determined; otherwise show one
+    # gold FIRST THROW badge and one blue HAMMER badge. F9 uses this same
+    # function, so both labels swap together.
+    role_styles = {
+        'first': {'text': 'FIRST THROW', 'bg': '#D9AD48', 'fg': '#18232D'},
+        'hammer': {'text': 'HAMMER', 'bg': '#55B8F2', 'fg': '#102432'},
+    }
     for c in ('red', 'blue'):
         card = ui_references.get(f'{c}_card_frame')
-        if not card:
+        if card:
+            try:
+                # Role is communicated by badges rather than a card outline.
+                card.config(highlightthickness=0)
+            except tk.TclError:
+                pass
+
+        badge = ui_references.get(f'{c}_role_badge')
+        if not badge:
             continue
         try:
-            if c == color:
-                card.config(highlightthickness=_FIRST_THROW_BORDER_WIDTH,
-                            highlightbackground=THEME['accent_gold'])
+            if color not in ('red', 'blue'):
+                badge.config(text='', bg=THEME['bg_card'], fg=THEME['fg_primary'])
+            elif c == color:
+                badge.config(**role_styles['first'])
             else:
-                card.config(highlightthickness=0)
+                badge.config(**role_styles['hammer'])
         except tk.TclError:
             pass
 
@@ -1524,9 +1541,23 @@ def setup_scoreboard(root, team_red_placeholder, team_blue_placeholder):
     # Red Content
     tk.Label(red_card, text="RED TEAM", font=scaled_font('Selawik', 8, 'bold'), fg=THEME['red_team'], bg=THEME['bg_card']).pack(pady=(SF(10),0))
 
-    ui_references['red_name_lbl'] = tk.Label(red_card, text=_team_player_display(team_red_placeholder, fallback=team_red_placeholder), font=scaled_font('Selawik', 14, 'bold'),
-                                             fg=THEME['fg_primary'], bg=THEME['bg_card'], wraplength=SF(180))
-    ui_references['red_name_lbl'].pack(pady=(SF(5),0))
+    red_name_row = tk.Frame(red_card, bg=THEME['bg_card'])
+    red_name_row.pack(fill='x', padx=SF(8), pady=(SF(5), 0))
+    red_name_row.grid_columnconfigure(0, weight=1)
+    ui_references['red_name_lbl'] = tk.Label(
+        red_name_row,
+        text=_team_player_display(team_red_placeholder, fallback=team_red_placeholder),
+        font=scaled_font('Selawik', 14, 'bold'),
+        fg=THEME['fg_primary'], bg=THEME['bg_card'],
+        wraplength=SF(180), anchor='center', justify='center'
+    )
+    ui_references['red_name_lbl'].grid(row=0, column=0, sticky='ew')
+    ui_references['red_role_badge'] = tk.Label(
+        red_name_row, text='', font=scaled_font('Selawik', 7, 'bold'),
+        bg=THEME['bg_card'], fg=THEME['fg_primary'],
+        padx=SF(5), pady=SF(2), relief='flat'
+    )
+    ui_references['red_role_badge'].grid(row=0, column=1, sticky='e', padx=(SF(4), 0))
 
     ui_references['red_roster_lbl'] = tk.Label(red_card, text="", font=scaled_font('Selawik', 10, 'bold'),
                                                fg=THEME['fg_secondary'], bg=THEME['bg_card'])
@@ -1582,9 +1613,23 @@ def setup_scoreboard(root, team_red_placeholder, team_blue_placeholder):
     # Blue Content
     tk.Label(blue_card, text="BLUE TEAM", font=scaled_font('Selawik', 8, 'bold'), fg=THEME['blue_team'], bg=THEME['bg_card']).pack(pady=(SF(10),0))
 
-    ui_references['blue_name_lbl'] = tk.Label(blue_card, text=_team_player_display(team_blue_placeholder, fallback=team_blue_placeholder), font=scaled_font('Selawik', 14, 'bold'),
-                                              fg=THEME['fg_primary'], bg=THEME['bg_card'], wraplength=SF(180))
-    ui_references['blue_name_lbl'].pack(pady=(SF(5),0))
+    blue_name_row = tk.Frame(blue_card, bg=THEME['bg_card'])
+    blue_name_row.pack(fill='x', padx=SF(8), pady=(SF(5), 0))
+    blue_name_row.grid_columnconfigure(0, weight=1)
+    ui_references['blue_name_lbl'] = tk.Label(
+        blue_name_row,
+        text=_team_player_display(team_blue_placeholder, fallback=team_blue_placeholder),
+        font=scaled_font('Selawik', 14, 'bold'),
+        fg=THEME['fg_primary'], bg=THEME['bg_card'],
+        wraplength=SF(180), anchor='center', justify='center'
+    )
+    ui_references['blue_name_lbl'].grid(row=0, column=0, sticky='ew')
+    ui_references['blue_role_badge'] = tk.Label(
+        blue_name_row, text='', font=scaled_font('Selawik', 7, 'bold'),
+        bg=THEME['bg_card'], fg=THEME['fg_primary'],
+        padx=SF(5), pady=SF(2), relief='flat'
+    )
+    ui_references['blue_role_badge'].grid(row=0, column=1, sticky='e', padx=(SF(4), 0))
 
     bind_dynamic_wrap(ui_references['red_name_lbl'], red_card)
     bind_dynamic_wrap(ui_references['blue_name_lbl'], blue_card)
