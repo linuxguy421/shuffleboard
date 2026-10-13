@@ -1548,12 +1548,6 @@ def setup_scoreboard(root, team_red_placeholder, team_blue_placeholder):
         wraplength=SF(180), anchor='center', justify='center'
     )
     ui_references['red_name_lbl'].grid(row=0, column=0, sticky='ew')
-    ui_references['red_role_badge'] = tk.Label(
-        red_name_row, text='', font=scaled_font('Selawik', 7, 'bold'),
-        bg=THEME['bg_card'], fg=THEME['fg_primary'],
-        padx=SF(5), pady=SF(2), relief='flat'
-    )
-    ui_references['red_role_badge'].grid(row=0, column=1, sticky='e', padx=(SF(4), 0))
 
     ui_references['red_roster_lbl'] = tk.Label(red_card, text="", font=scaled_font('Selawik', 10, 'bold'),
                                                fg=THEME['fg_secondary'], bg=THEME['bg_card'])
@@ -1587,6 +1581,15 @@ def setup_scoreboard(root, team_red_placeholder, team_blue_placeholder):
     ui_references['red_fix_btn'].pack(pady=(0, 4))
 
     ui_references['red_stats_lbl'] = tk.Label(red_card, text="0-0", font=scaled_font('Consolas', 9), fg=THEME['fg_secondary'], bg=THEME['bg_card'])
+
+    ui_references['red_role_badge'] = tk.Label(
+        red_card, text='', font=scaled_font('Selawik', 9, 'bold'),
+        bg=THEME['bg_card'], fg=THEME['fg_primary'],
+        padx=SF(10), pady=SF(4), relief='flat', anchor='center'
+    )
+    ui_references['red_role_badge'].pack(
+        side='bottom', fill='x', padx=SF(18), pady=(0, SF(6))
+    )
     ui_references['red_stats_lbl'].pack(side='bottom', pady=5)
 
     btn_red = tk.Button(red_card, text="🏆 RED WINS", command=lambda: declare_winner('red'),
@@ -1620,16 +1623,9 @@ def setup_scoreboard(root, team_red_placeholder, team_blue_placeholder):
         wraplength=SF(180), anchor='center', justify='center'
     )
     ui_references['blue_name_lbl'].grid(row=0, column=0, sticky='ew')
-    ui_references['blue_role_badge'] = tk.Label(
-        blue_name_row, text='', font=scaled_font('Selawik', 7, 'bold'),
-        bg=THEME['bg_card'], fg=THEME['fg_primary'],
-        padx=SF(5), pady=SF(2), relief='flat'
-    )
-    ui_references['blue_role_badge'].grid(row=0, column=1, sticky='e', padx=(SF(4), 0))
 
-    # Reserve room for the role badge when wrapping long player names.
-    bind_dynamic_wrap(ui_references['red_name_lbl'], red_name_row, margin=100)
-    bind_dynamic_wrap(ui_references['blue_name_lbl'], blue_name_row, margin=100)
+    bind_dynamic_wrap(ui_references['red_name_lbl'], red_name_row, margin=0)
+    bind_dynamic_wrap(ui_references['blue_name_lbl'], blue_name_row, margin=0)
 
     ui_references['blue_roster_lbl'] = tk.Label(blue_card, text="", font=scaled_font('Selawik', 10),
                                                 fg=THEME['fg_secondary'], bg=THEME['bg_card'])
@@ -1663,6 +1659,15 @@ def setup_scoreboard(root, team_red_placeholder, team_blue_placeholder):
     ui_references['blue_fix_btn'].pack(pady=(0, 4))
 
     ui_references['blue_stats_lbl'] = tk.Label(blue_card, text="0-0", font=scaled_font('Consolas', 9), fg=THEME['fg_secondary'], bg=THEME['bg_card'])
+
+    ui_references['blue_role_badge'] = tk.Label(
+        blue_card, text='', font=scaled_font('Selawik', 9, 'bold'),
+        bg=THEME['bg_card'], fg=THEME['fg_primary'],
+        padx=SF(10), pady=SF(4), relief='flat', anchor='center'
+    )
+    ui_references['blue_role_badge'].pack(
+        side='bottom', fill='x', padx=SF(18), pady=(0, SF(6))
+    )
     ui_references['blue_stats_lbl'].pack(side='bottom', pady=5)
 
     btn_blue = tk.Button(blue_card, text="🏆 BLUE WINS", command=lambda: declare_winner('blue'),
