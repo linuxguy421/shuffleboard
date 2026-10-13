@@ -5033,6 +5033,21 @@ def swap_teams():
 
     log_message(f"Teams swapped — Red: {current_match_teams['red']}, Blue: {current_match_teams['blue']}")
 
+    # The first-throw/hammer assignment belongs to the teams, not the
+    # physical red/blue sides. When the teams swap puck colors, flip the
+    # stored color so the badges continue to follow the same teams.
+    match_id = TOURNAMENT_STATE.get('active_match_id')
+    match_data = TOURNAMENT_STATE.get(match_id, {})
+    first_throw_color = (
+        ui_references.get('_first_throw_color')
+        or match_data.get('current_first_throw_color')
+        or match_data.get('first_throw_color')
+    )
+    if first_throw_color in ('red', 'blue'):
+        new_first_throw_color = 'blue' if first_throw_color == 'red' else 'red'
+        match_data['current_first_throw_color'] = new_first_throw_color
+        _set_first_throw_indicator(new_first_throw_color)
+
     temp = current_match_teams['red']
     current_match_teams['red'] = current_match_teams['blue']
     current_match_teams['blue'] = temp
