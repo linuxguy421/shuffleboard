@@ -1077,15 +1077,11 @@ def _start_win_animation(winner_color):
 
 WIN_SETTLE_DELAY = 5000  # ms to wait after last button press before checking win
 
-_FIRST_THROW_BORDER_WIDTH = 4  # px thickness of the "throws first" glow border
-
 def _set_first_throw_indicator(color):
     """
-    Highlights the given team's card with a gold border glow to indicate
-    they throw first next round (house rule: higher round score goes
-    first; on a tie, hammer flips to whoever didn't have it). Pass None
-    to clear the indicator on both cards (e.g. when a new match starts,
-    or on a tie with no prior determination to flip).
+    Update the first-throw and hammer badges for the current frame.
+    On a tie, hammer flips to whoever did not have it. Pass None to hide
+    both badges until the opening assignment has been determined.
     """
     ui_references['_first_throw_color'] = color
 
@@ -1631,8 +1627,9 @@ def setup_scoreboard(root, team_red_placeholder, team_blue_placeholder):
     )
     ui_references['blue_role_badge'].grid(row=0, column=1, sticky='e', padx=(SF(4), 0))
 
-    bind_dynamic_wrap(ui_references['red_name_lbl'], red_card)
-    bind_dynamic_wrap(ui_references['blue_name_lbl'], blue_card)
+    # Reserve room for the role badge when wrapping long player names.
+    bind_dynamic_wrap(ui_references['red_name_lbl'], red_name_row, margin=100)
+    bind_dynamic_wrap(ui_references['blue_name_lbl'], blue_name_row, margin=100)
 
     ui_references['blue_roster_lbl'] = tk.Label(blue_card, text="", font=scaled_font('Selawik', 10),
                                                 fg=THEME['fg_secondary'], bg=THEME['bg_card'])
