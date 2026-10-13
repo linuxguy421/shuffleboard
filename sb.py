@@ -31,6 +31,7 @@ import json
 import threading
 import traceback
 import logging
+import queue
 
 try:
     import serial
@@ -210,13 +211,69 @@ def _notify_flipper_disconnected():
         except Exception as e:
             log_message(f"Failed to notify UI of Flipper disconnect: {e}", "WARN")
 
+def _run_ir_blink_blocking(cycles, interval):
+    """Run a complete blink sequence without allowing other IR actions to interleave."""
+    log_message(f"IR win blink started — {cycles} cycles, {interval}s interval")
+    for i in range(cycles * 2):
+        _send_ir_blocking('power')
+        if i < cycles * 2 - 1:  # no trailing sleep after the last toggle
+            time.sleep(interval)
+    log_message("IR win blink complete")
+
+
+# All IR writes are handled by one worker. Queue items may represent a single
+# action, a repeated action, an ordered multi-action sequence, or a blink. A
+# sequence/blink remains one queue item so score changes cannot interleave with
+# a reset/power sequence or the win animation.
+_ir_command_queue = queue.Queue()
+_ir_worker_lock = threading.Lock()
+_ir_worker_thread = None
+
+
+def _ir_command_worker():
+    """Consume IR work serially for the lifetime of the application."""
+    while True:
+        item = _ir_command_queue.get()
+        try:
+            operation = item[0]
+            if operation == 'action':
+                _, action, repeat = item
+                _send_ir_blocking(action, repeat=repeat)
+            elif operation == 'sequence':
+                _, actions = item
+                for action in actions:
+                    _send_ir_blocking(action)
+            elif operation == 'blink':
+                _, cycles, interval = item
+                _run_ir_blink_blocking(cycles, interval)
+            else:
+                log_message(f"Unknown IR queue operation: {operation!r}", "WARN")
+        except Exception as e:
+            # One unexpected failure must not kill the worker and strand all
+            # future scoreboard commands in the queue.
+            log_message(f"Unhandled IR queue operation failure: {e}", "ERROR")
+        finally:
+            _ir_command_queue.task_done()
+
+
+def _queue_ir_command(item):
+    """Start the single worker if needed, then enqueue an IR operation."""
+    global _ir_worker_thread
+    with _ir_worker_lock:
+        if _ir_worker_thread is None or not _ir_worker_thread.is_alive():
+            _ir_worker_thread = threading.Thread(
+                target=_ir_command_worker,
+                name="ShuffleboardIRWorker",
+                daemon=True,
+            )
+            _ir_worker_thread.start()
+    _ir_command_queue.put(item)
+
+
 def ir_send(action, repeat=1):
-    """
-    Public: fire-and-forget IR send. Optional repeat for correction sends.
-    Dispatches to a daemon thread so it never blocks the Tkinter UI.
-    """
-    t = threading.Thread(target=_send_ir_blocking, args=(action, repeat), daemon=True)
-    t.start()
+    """Queue an IR action without blocking the Tkinter UI."""
+    _queue_ir_command(('action', action, repeat))
+
 
 def ir_correct(color, current_val, target_val):
     """
@@ -233,61 +290,31 @@ def ir_correct(color, current_val, target_val):
     ir_send(action, repeat=abs(diff))
     log_message(f"IR correction: {color} {current_val} -> {target_val} ({abs(diff)}x {action})")
 
-def _blink_blocking(cycles, interval):
-    """
-    Internal: sends 'power' IR 2*cycles times (off, on per cycle) with
-    `interval` seconds between each toggle. Runs on a background thread.
-    The scoreboard must start in the ON state for the sequence to end ON.
-    """
-    log_message(f"IR win blink started — {cycles} cycles, {interval}s interval")
-    for i in range(cycles * 2):
-        _send_ir_blocking('power')
-        if i < cycles * 2 - 1:   # no trailing sleep after the last toggle
-            time.sleep(interval)
-    log_message("IR win blink complete")
 
 def ir_blink(cycles=5, interval=0.5):
     """
-    Public: fire a win-celebration blink sequence on the scoreboard.
-    Sends 'power' 2*cycles times so the board ends back ON.
-    Returns the Thread so the caller can .join() it if needed.
+    Queue a win-celebration blink sequence without blocking the UI.
+    The complete sequence runs atomically relative to other queued IR work.
     """
-    t = threading.Thread(target=_blink_blocking, args=(cycles, interval), daemon=True)
-    t.start()
-    return t
+    _queue_ir_command(('blink', cycles, interval))
 
-def _send_ir_sequence_blocking(actions):
-    """
-    Internal: sends multiple IR actions in strict order on one thread.
-    _send_ir_blocking() already enforces IR_SEND_DELAY between sends based
-    on a shared last-sent timestamp, so running the whole sequence on a
-    single thread (rather than one ir_send() thread per action) guarantees
-    both correct ordering and correct spacing — two independent threads
-    could otherwise race each other to the Flipper connection.
-    """
-    for action in actions:
-        _send_ir_blocking(action)
 
 def ir_power_on_sequence():
     """
-    Public: turns the physical scoreboard on and resets it to 0-0, ready
-    for the first match. Fire-and-forget, runs on a background thread.
+    Queue the physical scoreboard power-on/reset sequence in order.
+    It cannot interleave with score updates or other IR actions.
     """
-    log_message("IR: sending power-on sequence (power, reset)")
-    t = threading.Thread(target=_send_ir_sequence_blocking, args=(['power', 'reset'],), daemon=True)
-    t.start()
-    return t
+    log_message("IR: queueing power-on sequence (power, reset)")
+    _queue_ir_command(('sequence', ['power', 'reset']))
+
 
 def ir_power_off_sequence():
     """
-    Public: resets the physical scoreboard to 0-0 and turns it off.
-    Fire-and-forget, runs on a background thread. Called once when a
-    tournament completes (see confirm_match_resolution).
+    Queue the physical scoreboard reset/power-off sequence in order.
+    It cannot interleave with score updates or other IR actions.
     """
-    log_message("IR: sending power-off sequence (reset, power)")
-    t = threading.Thread(target=_send_ir_sequence_blocking, args=(['reset', 'power'],), daemon=True)
-    t.start()
-    return t
+    log_message("IR: queueing power-off sequence (reset, power)")
+    _queue_ir_command(('sequence', ['reset', 'power']))
 
 # How often the watchdog checks the Flipper connection (seconds)
 FLIPPER_WATCHDOG_INTERVAL = 30
