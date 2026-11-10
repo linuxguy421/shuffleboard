@@ -1907,6 +1907,61 @@ def update_schedule_tab():
             tk.Label(f, text=history_text, font=THEME['font_main'],
                      fg=color_hex, bg=THEME['bg_main']).pack(side='left')
 
+def edit_team_roster(team):
+    """Edit the two player names assigned to an existing team."""
+    roster = TEAM_ROSTERS.get(team, ['', ''])
+    if not isinstance(roster, (list, tuple)) or len(roster) < 2:
+        roster = ['', '']
+
+    dialog = tk.Toplevel(main_root)
+    dialog.title(f"Edit Players — {team}")
+    dialog.configure(bg=THEME['bg_main'])
+    dialog.transient(main_root)
+    dialog.grab_set()
+    dialog.resizable(False, False)
+
+    body = tk.Frame(dialog, bg=THEME['bg_main'], padx=18, pady=16)
+    body.pack(fill='both', expand=True)
+    tk.Label(body, text=f"Edit players for {team}",
+             font=scaled_font('Selawik', 11, 'bold'),
+             bg=THEME['bg_main'], fg=THEME['fg_primary']).pack(anchor='w', pady=(0, 12))
+
+    entries = []
+    for index, label_text in enumerate(("Player 1", "Player 2")):
+        tk.Label(body, text=label_text, font=scaled_font('Selawik', 9, 'bold'),
+                 bg=THEME['bg_main'], fg=THEME['fg_secondary']).pack(anchor='w')
+        entry = tk.Entry(body, font=scaled_font('Selawik', 11), width=30)
+        entry.insert(0, str(roster[index] or ''))
+        entry.pack(fill='x', pady=(3, 10))
+        entries.append(entry)
+
+    def save_changes():
+        names = [entry.get().strip() for entry in entries]
+        if not all(names):
+            messagebox.showwarning("Missing Player Name",
+                                   "Both player names are required.", parent=dialog)
+            return
+        TEAM_ROSTERS[team] = names
+        update_roster_seeding_vertical()
+        update_schedule_tab()
+        if TOURNAMENT_STATE.get('active_match_id') not in (None, 'TOURNAMENT_OVER'):
+            update_scoreboard_display()
+        dialog.destroy()
+
+    buttons = tk.Frame(body, bg=THEME['bg_main'])
+    buttons.pack(fill='x', pady=(4, 0))
+    tk.Button(buttons, text="Cancel", command=dialog.destroy,
+              bg=THEME['btn_default'], fg=THEME['fg_primary'],
+              relief='flat', padx=12, pady=5).pack(side='right', padx=(6, 0))
+    tk.Button(buttons, text="Save", command=save_changes,
+              bg=THEME['btn_confirm'], fg='white',
+              relief='flat', padx=12, pady=5).pack(side='right')
+
+    entries[0].focus_set()
+    dialog.bind('<Return>', lambda event: save_changes())
+    dialog.bind('<Escape>', lambda event: dialog.destroy())
+
+
 def update_roster_seeding_vertical():
     """Aligned roster table using grid for consistent column layout."""
     global roster_seeding_frame_ref, TEAMS, TEAM_ROSTERS
@@ -1926,9 +1981,10 @@ def update_roster_seeding_vertical():
     table.grid_columnconfigure(1, weight=3)  # Team / Players
     table.grid_columnconfigure(2, weight=0)  # W-L
     table.grid_columnconfigure(3, weight=0)  # Win %
+    table.grid_columnconfigure(4, weight=0)  # Edit
 
     # ---- Header Row ----
-    headers = ["Status", "Team / Players", "W-L", "Win%"]
+    headers = ["Status", "Team / Players", "W-L", "Win%", ""]
     for col, text in enumerate(headers):
         tk.Label(
             table,
@@ -1941,7 +1997,7 @@ def update_roster_seeding_vertical():
 
     # Divider
     tk.Frame(table, bg=THEME['bg_main'], height=2)\
-        .grid(row=1, column=0, columnspan=4, sticky='ew', pady=(0, 6))
+        .grid(row=1, column=0, columnspan=5, sticky='ew', pady=(0, 6))
 
     # ---- Team Rows ----
     row_index = 2
@@ -2001,7 +2057,15 @@ def update_roster_seeding_vertical():
             font=scaled_font('Consolas', 10),
             bg=bg_col, fg=fg_primary,
             anchor='e'
-        ).grid(row=row_index, column=3, sticky='e', padx=35, pady=7)
+        ).grid(row=row_index, column=3, sticky='e', padx=20, pady=7)
+
+        tk.Button(
+            table, text="✎ Edit",
+            command=lambda t=team: edit_team_roster(t),
+            font=scaled_font('Selawik', 8, 'bold'),
+            bg=THEME['btn_default'], fg=THEME['fg_primary'],
+            relief='flat', cursor='hand2', padx=8, pady=3
+        ).grid(row=row_index, column=4, sticky='e', padx=12, pady=5)
 
         row_index += 1
 
