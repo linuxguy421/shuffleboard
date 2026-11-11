@@ -7,7 +7,10 @@ text = path.read_text(encoding="utf-8")
 
 # 1) Tournament display name constant
 old_ver = 'SHUF_VERSION = "1.98A"'
-new_ver = 'SHUF_VERSION = "1.98A"\n\n# Display name used on PDF exports and formal summaries\nTOURNAMENT_DISPLAY_NAME = "Ms. Ethel\'s Shuffleboard Tournament"'
+new_ver = '''SHUF_VERSION = "1.98A"
+
+# Display name used on PDF exports and formal summaries
+TOURNAMENT_DISPLAY_NAME = "Ms. Ethel's Shuffleboard Tournament"'''
 if "TOURNAMENT_DISPLAY_NAME" not in text:
     if old_ver not in text:
         raise SystemExit("Could not find SHUF_VERSION line to update")
@@ -21,6 +24,22 @@ if start_token not in text:
 if end_token not in text:
     raise SystemExit("Could not find display_final_rankings")
 
-print("NOTE: Full section is in artifacts/apply_pdf_share_ready.py on the project machine.")
-print("Copy that file over this placeholder, then re-run.")
-raise SystemExit(1)
+# Embedded section loaded from project artifacts — see repo note if this is a stub.
+# Prefer: copy artifacts/apply_pdf_share_ready.py from the Grok project folder,
+# or copy artifacts/sb_pdf_share_ready.py over sb.py directly.
+
+import urllib.request
+import sys
+
+def _fail_with_help():
+    print("This copy of apply_pdf_share_ready.py on GitHub is incomplete.")
+    print()
+    print("Quickest fix — use the full sb.py from the project folder:")
+    print("  cp /path/to/artifacts/sb_pdf_share_ready.py ./sb.py")
+    print("  git add sb.py && git commit -m 'Restyle PDF export to share-ready layout'")
+    print()
+    print("Or copy the full apply script from the Grok project artifacts folder")
+    print("over this file, then re-run: python3 apply_pdf_share_ready.py")
+    sys.exit(1)
+
+_fail_with_help()
