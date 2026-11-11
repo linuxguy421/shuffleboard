@@ -56,6 +56,9 @@ except ImportError:
 # --- Version ---
 SHUF_VERSION = "1.98A"
 
+# Display name used on PDF exports and formal summaries
+TOURNAMENT_DISPLAY_NAME = "Ms. Ethel's Shuffleboard Tournament"
+
 # =============================================================================
 # --- Flipper Zero IR Module ---
 # Sends IR commands to a digital scoreboard via Flipper Zero over USB serial.
@@ -5120,320 +5123,403 @@ def swap_teams():
 
 def _build_pdf_styles():
     """
-    Builds the ReportLab colour palette and paragraph/table styles used
-    throughout the tournament results PDF (mirrors the app's dark THEME).
-    Centralizing this means every PDF section helper draws from the same
-    palette instead of redefining it.
+    Print-friendly colour palette and paragraph styles for the tournament PDF.
+    White background, dark text, navy/gold accents — designed for paper output.
     """
-    C_BG        = colors.HexColor('#263238')
-    C_CARD      = colors.HexColor('#37474F')
-    C_GOLD      = colors.HexColor('#FFD700')
-    C_FG        = colors.HexColor('#ECEFF1')
-    C_FG2       = colors.HexColor('#B0BEC5')
-    C_RED       = colors.HexColor('#E53935')
-    C_BLUE      = colors.HexColor('#1E88E5')
+    C_BG        = colors.white
+    C_CARD      = colors.HexColor('#F5F7FA')
+    C_NAVY      = colors.HexColor('#0D2137')
+    C_NAVY2     = colors.HexColor('#152A45')
+    C_GOLD      = colors.HexColor('#B8860B')  # darker gold for print legibility
+    C_FG        = colors.HexColor('#1A1A1A')
+    C_FG2       = colors.HexColor('#555555')
+    C_RED       = colors.HexColor('#C62828')
+    C_BLUE      = colors.HexColor('#1565C0')
     C_WHITE     = colors.white
+    C_ROW_ALT   = colors.HexColor('#EEF1F5')
+    C_RULE      = colors.HexColor('#CCCCCC')
 
     base = ParagraphStyle('base', fontName='Helvetica',
-                          fontSize=10, textColor=C_FG,
-                          backColor=C_BG, leading=14)
+                          fontSize=10, textColor=C_FG, leading=13)
     title_style = ParagraphStyle('title', parent=base,
                                  fontName='Helvetica-Bold',
-                                 fontSize=18, textColor=C_GOLD,
-                                 alignment=TA_CENTER, spaceAfter=4)
+                                 fontSize=16, textColor=C_WHITE,
+                                 alignment=TA_CENTER, spaceAfter=2)
+    subtitle_style = ParagraphStyle('subtitle', parent=base,
+                                    fontSize=9, textColor=colors.HexColor('#D0D8E0'),
+                                    alignment=TA_CENTER, spaceAfter=8)
+    champ_label = ParagraphStyle('champLabel', parent=base,
+                                 fontName='Helvetica-Bold',
+                                 fontSize=9, textColor=C_GOLD,
+                                 alignment=TA_CENTER)
     champ_name  = ParagraphStyle('champName', parent=base,
                                  fontName='Helvetica-Bold',
-                                 fontSize=15, textColor=C_FG,
-                                 alignment=TA_CENTER)
+                                 fontSize=18, textColor=C_FG,
+                                 alignment=TA_CENTER, leading=22)
     champ_sub   = ParagraphStyle('champSub', parent=base,
-                                 fontSize=10, textColor=C_FG2,
-                                 alignment=TA_CENTER, spaceAfter=8)
+                                 fontSize=9, textColor=C_FG2,
+                                 alignment=TA_CENTER, spaceAfter=4)
+    metric_num  = ParagraphStyle('metricNum', parent=base,
+                                 fontName='Helvetica-Bold',
+                                 fontSize=14, textColor=C_FG,
+                                 alignment=TA_CENTER, leading=16)
+    metric_lbl  = ParagraphStyle('metricLbl', parent=base,
+                                 fontSize=7, textColor=C_FG2,
+                                 alignment=TA_CENTER, leading=9)
     sec_hdr     = ParagraphStyle('secHdr', parent=base,
                                  fontName='Helvetica-Bold',
-                                 fontSize=10, textColor=C_GOLD,
-                                 spaceBefore=10, spaceAfter=4)
+                                 fontSize=9, textColor=C_NAVY,
+                                 spaceBefore=2, spaceAfter=3)
+    body_style  = ParagraphStyle('body', parent=base,
+                                 fontSize=8, textColor=C_FG, leading=11)
+    body_muted  = ParagraphStyle('bodyMuted', parent=base,
+                                 fontSize=8, textColor=C_FG2, leading=11)
     footer_style= ParagraphStyle('footer', parent=base,
                                  fontSize=8, textColor=C_FG2,
                                  alignment=TA_CENTER)
-    label_style = ParagraphStyle('lbl', parent=base,
-                                 fontSize=9, textColor=C_FG2)
-    value_style = ParagraphStyle('val', parent=base,
-                                 fontName='Helvetica-Bold',
-                                 fontSize=9, textColor=C_FG)
+    note_style  = ParagraphStyle('note', parent=base,
+                                 fontSize=7, textColor=C_FG2,
+                                 alignment=TA_LEFT)
 
     return {
-        'bg': C_BG, 'card': C_CARD, 'gold': C_GOLD, 'fg': C_FG, 'fg2': C_FG2,
-        'red': C_RED, 'blue': C_BLUE, 'white': C_WHITE,
-        'base': base, 'title': title_style, 'champ_name': champ_name,
-        'champ_sub': champ_sub, 'sec_hdr': sec_hdr, 'footer': footer_style,
-        'label_style': label_style, 'value_style': value_style,
+        'bg': C_BG, 'card': C_CARD, 'navy': C_NAVY, 'navy2': C_NAVY2,
+        'gold': C_GOLD, 'fg': C_FG, 'fg2': C_FG2,
+        'red': C_RED, 'blue': C_BLUE, 'white': C_WHITE, 'row_alt': C_ROW_ALT,
+        'rule': C_RULE,
+        'base': base, 'title': title_style, 'subtitle': subtitle_style,
+        'champ_label': champ_label, 'champ_name': champ_name, 'champ_sub': champ_sub,
+        'metric_num': metric_num, 'metric_lbl': metric_lbl,
+        'sec_hdr': sec_hdr, 'body': body_style, 'body_muted': body_muted,
+        'footer': footer_style, 'note': note_style,
     }
 
 
-def _pdf_lbl(styles, text):
-    return Paragraph(text, styles['label_style'])
+def _pdf_hr(styles, color=None):
+    return HRFlowable(width="100%", thickness=0.75,
+                      color=color or styles['rule'], spaceAfter=6, spaceBefore=4)
 
 
-def _pdf_val(styles, text, color=None):
-    s = ParagraphStyle('v', parent=styles['value_style'],
-                       textColor=color or styles['fg'])
-    return Paragraph(text, s)
-
-
-def _pdf_section(styles, text):
-    return Paragraph(text, styles['sec_hdr'])
-
-
-def _pdf_hr(styles):
-    return HRFlowable(width="100%", thickness=1,
-                      color=styles['gold'], spaceAfter=6, spaceBefore=2)
-
-
-def _pdf_stat_table_style(styles):
-    return TableStyle([
-        ('BACKGROUND',  (0, 0), (-1, -1), styles['card']),
-        ('TEXTCOLOR',   (0, 0), (-1, -1), styles['fg']),
-        ('ROWBACKGROUNDS', (0, 0), (-1, -1), [styles['card'], colors.HexColor('#2E3C43')]),
-        ('LEFTPADDING',  (0, 0), (-1, -1), 8),
-        ('RIGHTPADDING', (0, 0), (-1, -1), 8),
-        ('TOPPADDING',   (0, 0), (-1, -1), 4),
-        ('BOTTOMPADDING',(0, 0), (-1, -1), 4),
-    ])
-
-
-def _pdf_champion_table(styles, champion, width):
-    """Builds the 'CHAMPIONS' banner table shown at the top of the PDF."""
-    champ_roster = " / ".join(TEAM_ROSTERS.get(champion, ['?', '?']))
-    champ_table = Table(
-        [[Paragraph("CHAMPIONS", ParagraphStyle('ct', parent=styles['base'],
-                     fontName='Helvetica-Bold', fontSize=10,
-                     textColor=styles['gold'], alignment=TA_CENTER)),],
-         [Paragraph(champ_roster, styles['champ_name'])],
-        ],
-        colWidths=[width]
+def _pdf_header_block(styles, width, summary_date):
+    """Full-width navy title bar + official summary subtitle (print-safe)."""
+    name = globals().get('TOURNAMENT_DISPLAY_NAME', "Ms. Ethel's Shuffleboard Tournament")
+    title_tbl = Table(
+        [[Paragraph(name, styles['title'])],
+         [Paragraph(f"OFFICIAL TOURNAMENT SUMMARY  •  {summary_date}", styles['subtitle'])]],
+        colWidths=[width],
     )
-    champ_table.setStyle(TableStyle([
-        ('BACKGROUND',   (0, 0), (-1, -1), colors.HexColor('#455A64')),
-        ('ALIGN',        (0, 0), (-1, -1), 'CENTER'),
-        ('TOPPADDING',   (0, 0), (-1, -1), 6),
-        ('BOTTOMPADDING',(0, 0), (-1, -1), 6),
+    title_tbl.setStyle(TableStyle([
+        ('BACKGROUND',    (0, 0), (-1, -1), styles['navy']),
+        ('ALIGN',         (0, 0), (-1, -1), 'CENTER'),
+        ('TOPPADDING',    (0, 0), (0, 0), 12),
+        ('BOTTOMPADDING', (0, 0), (0, 0), 2),
+        ('TOPPADDING',    (0, 1), (0, 1), 2),
+        ('BOTTOMPADDING', (0, 1), (0, 1), 10),
+        ('LEFTPADDING',   (0, 0), (-1, -1), 8),
+        ('RIGHTPADDING',  (0, 0), (-1, -1), 8),
     ]))
-    return champ_table
+    return title_tbl
 
 
-def _pdf_left_column_rows(styles, champion, stats):
+def _pdf_champion_table(styles, champion, width, stats):
+    """Centered champions card with place / W-L / win-rate subtitle."""
+    champ_roster = " / ".join(TEAM_ROSTERS.get(champion, ['?', '?']))
+    wins = stats.get('champion_wins', 0)
+    losses = stats.get('champion_losses', 0)
+    played = wins + losses
+    pct = int(wins / played * 100) if played else 0
+    sub = f"1ST PLACE  •  {wins} WINS  •  {losses} LOSSES  •  {pct}% WIN RATE"
+
+    tbl = Table(
+        [[Paragraph("CHAMPIONS", styles['champ_label'])],
+         [Paragraph(champ_roster, styles['champ_name'])],
+         [Paragraph(sub, styles['champ_sub'])]],
+        colWidths=[width * 0.72],
+    )
+    tbl.setStyle(TableStyle([
+        ('BACKGROUND',    (0, 0), (-1, -1), styles['card']),
+        ('BOX',           (0, 0), (-1, -1), 1.5, styles['gold']),
+        ('ALIGN',         (0, 0), (-1, -1), 'CENTER'),
+        ('TOPPADDING',    (0, 0), (0, 0), 8),
+        ('BOTTOMPADDING', (0, 0), (0, 0), 2),
+        ('TOPPADDING',    (0, 1), (0, 1), 2),
+        ('BOTTOMPADDING', (0, 1), (0, 1), 2),
+        ('TOPPADDING',    (0, 2), (0, 2), 2),
+        ('BOTTOMPADDING', (0, 2), (0, 2), 8),
+    ]))
+    wrapper = Table([[tbl]], colWidths=[width])
+    wrapper.setStyle(TableStyle([
+        ('ALIGN',         (0, 0), (-1, -1), 'CENTER'),
+        ('VALIGN',        (0, 0), (-1, -1), 'MIDDLE'),
+        ('TOPPADDING',    (0, 0), (-1, -1), 8),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
+    ]))
+    return wrapper
+
+
+def _pdf_metrics_strip(styles, width, stats):
+    """Five-column headline metrics bar (teams / players / matches / time / avg)."""
+    cells = [
+        (str(stats.get('total_teams', 0)), "TEAMS"),
+        (str(stats.get('total_players', 0)), "PLAYERS"),
+        (str(stats.get('total_matches', 0)), "MATCHES PLAYED"),
+        (format_seconds(stats.get('total_time_s', 0)), "TOTAL PLAY TIME"),
+        (format_seconds(stats.get('avg_time_s', 0)), "AVG. MATCH TIME"),
+    ]
+    col_w = width / 5
+    row_nums = []
+    row_lbls = []
+    for num, lbl in cells:
+        row_nums.append(Paragraph(num, styles['metric_num']))
+        row_lbls.append(Paragraph(lbl, styles['metric_lbl']))
+    tbl = Table([row_nums, row_lbls], colWidths=[col_w] * 5)
+    tbl.setStyle(TableStyle([
+        ('BACKGROUND',    (0, 0), (-1, -1), styles['card']),
+        ('ALIGN',         (0, 0), (-1, -1), 'CENTER'),
+        ('VALIGN',        (0, 0), (-1, -1), 'MIDDLE'),
+        ('TOPPADDING',    (0, 0), (-1, 0), 8),
+        ('BOTTOMPADDING', (0, 0), (-1, 0), 1),
+        ('TOPPADDING',    (0, 1), (-1, 1), 1),
+        ('BOTTOMPADDING', (0, 1), (-1, 1), 8),
+        ('BOX',           (0, 0), (-1, -1), 0.75, styles['rule']),
+        ('INNERGRID',     (0, 0), (-1, -1), 0.4, styles['rule']),
+    ]))
+    return tbl
+
+
+def _pdf_section_card(styles, title, lines, width):
     """
-    Builds the left-column stat rows for the results PDF: Final Standings
-    and Tournament Stats. Pure rendering over the stats dict computed by
-    _compute_final_stats() — no computation happens here, so this always
-    agrees with the on-screen display and the replay-file snapshot, which
-    render the same dict.
+    One titled card used in the two-column body.
+    lines: list of Paragraph flowables (or plain strings converted to body text).
     """
-    lbl = lambda text: _pdf_lbl(styles, text)
-    val = lambda text, color=None: _pdf_val(styles, text, color)
-    section = lambda text: _pdf_section(styles, text)
+    data = [[Paragraph(title, styles['sec_hdr'])]]
+    for line in lines:
+        if isinstance(line, str):
+            data.append([Paragraph(line, styles['body'])])
+        else:
+            data.append([line])
+    tbl = Table(data, colWidths=[width])
+    tbl.setStyle(TableStyle([
+        ('BACKGROUND',    (0, 0), (-1, -1), styles['card']),
+        ('TOPPADDING',    (0, 0), (0, 0), 6),
+        ('BOTTOMPADDING', (0, 0), (0, 0), 3),
+        ('TOPPADDING',    (0, 1), (-1, -1), 2),
+        ('BOTTOMPADDING', (0, 1), (-1, -1), 2),
+        ('LEFTPADDING',   (0, 0), (-1, -1), 8),
+        ('RIGHTPADDING',  (0, 0), (-1, -1), 8),
+        ('BOX',           (0, 0), (-1, -1), 0.75, styles['rule']),
+        ('VALIGN',        (0, 0), (-1, -1), 'TOP'),
+    ]))
+    return tbl
 
-    left_rows = []
 
-    # LEFT — Final Standings
-    left_rows.append([section("Final Standings"), ""])
-    place_labels = {'1ST': '1st Place', '2ND': '2nd Place', '3RD': '3rd Place'}
-    place_colors = {'1ST': styles['gold'], '2ND': styles['fg'], '3RD': styles['fg2']}
-    for entry in stats['standings']:
+def _pdf_body_columns(styles, champion, stats, width):
+    """
+    Two stacked two-column rows:
+      Final Standings | Match Breakdown
+      Scoring & Performance | Tournament Notes
+    """
+    gap = 0.12 * inch
+    col_w = (width - gap) / 2
+
+    # --- Final Standings ---
+    standings_lines = []
+    place_map = {'1ST': '1st', '2ND': '2nd', '3RD': '3rd'}
+    for entry in stats.get('standings', []):
+        rank = place_map.get(entry['rank'], entry['rank'])
         roster = " / ".join(entry['roster'])
-        left_rows.append([lbl(f"{place_labels[entry['rank']]}  (W/L {entry['wins']}/{entry['losses']})"),
-                           val(roster, place_colors[entry['rank']])])
+        standings_lines.append(
+            Paragraph(
+                f"<b>{rank}</b>  {roster}  "
+                f"<font color='#555555'>({entry['wins']}–{entry['losses']})</font>",
+                styles['body'],
+            )
+        )
+    if not standings_lines:
+        standings_lines = [Paragraph("—", styles['body_muted'])]
 
-    # LEFT — Tournament Stats
-    left_rows.append([section("Tournament Stats"), ""])
-    left_rows.append([lbl("Teams"),          val(str(stats['total_teams']))])
-    left_rows.append([lbl("Players"),        val(str(stats['total_players']))])
-    left_rows.append([lbl("Matches played"), val(str(stats['total_matches']))])
-    left_rows.append([lbl("Total time"),     val(format_seconds(stats['total_time_s']))])
-    left_rows.append([lbl("Avg match time"), val(format_seconds(stats['avg_time_s']))])
-
-    if 'longest_streak' in stats:
-        ls = stats['longest_streak']
-        streak_roster = " & ".join(TEAM_ROSTERS.get(ls['team'], ['?', '?']))
-        left_rows.append([lbl("Longest win streak"),
-                           val(f"{streak_roster}  ({ls['count']})")])
-
-    # Champion win rate
-    champ_played = stats['champion_wins'] + stats['champion_losses']
-    champ_pct = int(stats['champion_wins'] / champ_played * 100) if champ_played else 0
-    left_rows.append([lbl("Champion win rate"),
-                       val(f"{stats['champion_wins']}W-{stats['champion_losses']}L  ({champ_pct}%)", styles['gold'])])
-
-    # WB vs LB match split
-    if stats['wb_played'] or stats['lb_played'] or stats['fin_played']:
-        parts = []
-        if stats['wb_played']:  parts.append(f"{stats['wb_played']} WB")
-        if stats['lb_played']:  parts.append(f"{stats['lb_played']} LB")
-        if stats['fin_played']: parts.append(f"{stats['fin_played']} Finals")
-        left_rows.append([lbl("Match breakdown"), val("  /  ".join(parts))])
-
-    return left_rows
-
-
-def _pdf_right_column_rows(styles, champion, stats):
-    """
-    Builds the right-column stat rows for the results PDF: Match
-    Breakdown and Scoring Stats. Pure rendering over the stats dict
-    computed by _compute_final_stats() — no computation happens here, so
-    this always agrees with the on-screen display and the replay-file
-    snapshot, which render the same dict.
-    """
-    lbl = lambda text: _pdf_lbl(styles, text)
-    val = lambda text, color=None: _pdf_val(styles, text, color)
-    section = lambda text: _pdf_section(styles, text)
-
-    right_rows = []
-
-    # RIGHT — Match Breakdown
-    right_rows.append([section("Match Breakdown"), ""])
-    total_h  = stats['red_wins'] + stats['blue_wins']
-    red_pct  = int(stats['red_wins']  / total_h * 100) if total_h else 0
-    blue_pct = int(stats['blue_wins'] / total_h * 100) if total_h else 0
-    right_rows.append([lbl("Red side wins"),  val(f"{stats['red_wins']} ({red_pct}%)", styles['red'])])
-    right_rows.append([lbl("Blue side wins"), val(f"{stats['blue_wins']} ({blue_pct}%)", styles['blue'])])
-
+    # --- Match Breakdown ---
+    breakdown = []
+    red_w = stats.get('red_wins', 0)
+    blue_w = stats.get('blue_wins', 0)
+    side_total = red_w + blue_w
+    if side_total:
+        breakdown.append(Paragraph(
+            f"Red side wins {red_w} ({int(red_w/side_total*100)}%)", styles['body']))
+        breakdown.append(Paragraph(
+            f"Blue side wins {blue_w} ({int(blue_w/side_total*100)}%)", styles['body']))
     if 'longest_match' in stats:
-        lm, sm = stats['longest_match'], stats['shortest_match']
-        lw = " & ".join(TEAM_ROSTERS.get(lm['winner'], ['?', '?']))
-        sw = " & ".join(TEAM_ROSTERS.get(sm['winner'], ['?', '?']))
-        right_rows.append([lbl("Longest match"),  val(f"{format_seconds(lm['duration_s'])}  ({lw})")])
-        right_rows.append([lbl("Shortest match"), val(f"{format_seconds(sm['duration_s'])}  ({sw})")])
-
+        lm = stats['longest_match']
+        roster = " & ".join(TEAM_ROSTERS.get(lm.get('winner', ''), [])) or lm.get('label', '')
+        breakdown.append(Paragraph(
+            f"Longest match {format_seconds(lm.get('duration_s', lm.get('seconds', 0)))}"
+            + (f" ({roster})" if roster else ""), styles['body']))
+    if 'shortest_match' in stats:
+        sm = stats['shortest_match']
+        roster = " & ".join(TEAM_ROSTERS.get(sm.get('winner', ''), [])) or sm.get('label', '')
+        breakdown.append(Paragraph(
+            f"Shortest match {format_seconds(sm.get('duration_s', sm.get('seconds', 0)))}"
+            + (f" ({roster})" if roster else ""), styles['body']))
     if 'most_wins' in stats:
         mw = stats['most_wins']
-        top_roster = " & ".join(TEAM_ROSTERS.get(mw['team'], ['?', '?']))
-        right_rows.append([lbl("Most wins"),
-                            val(f"{top_roster} ({mw['count']})", styles['gold'])])
+        roster = " & ".join(TEAM_ROSTERS.get(mw['team'], ['?', '?']))
+        breakdown.append(Paragraph(f"Most wins {roster} ({mw['count']})", styles['body']))
+    sc = stats.get('scoring') or {}
+    if sc.get('high_score') is not None:
+        high_roster = " & ".join(TEAM_ROSTERS.get(sc.get('high_score_winner', ''), ['?', '?']))
+        breakdown.append(Paragraph(
+            f"High score {sc['high_score']}–{sc.get('high_score_low', '?')} "
+            f"({sc.get('high_score_id', '?')}, {high_roster})", styles['body']))
+    if not breakdown:
+        breakdown = [Paragraph("—", styles['body_muted'])]
 
-    # RIGHT — Scoring Stats (only when score data present)
-    if 'scoring' in stats:
-        sc = stats['scoring']
-        high_roster = " & ".join(TEAM_ROSTERS.get(sc['high_score_winner'], ['?', '?']))
-        right_rows.append([lbl("High score"),
-                            val(f"{sc['high_score']}-{sc['high_score_low']}  ({sc['high_score_id']}, {high_roster})")])
+    # --- Scoring & Performance ---
+    scoring_lines = []
+    if sc:
+        if 'avg_margin' in sc:
+            scoring_lines.append(Paragraph(
+                f"Avg. winning margin {sc['avg_margin']:.1f} pts", styles['body']))
+        if 'avg_win' in sc and 'avg_loss' in sc:
+            scoring_lines.append(Paragraph(
+                f"Avg. final score {sc['avg_win']:.1f} – {sc['avg_loss']:.1f}", styles['body']))
+        if 'closest' in sc:
+            c = sc['closest']
+            c_gap = c['win'] - c['loss']
+            c_roster = " & ".join(TEAM_ROSTERS.get(c['winner'], ['?', '?']))
+            scoring_lines.append(Paragraph(
+                f"Closest match {c['win']}–{c['loss']} (delta {c_gap}), "
+                f"{c['id']} — {c_roster}", styles['body']))
+        if 'blowout' in sc:
+            b = sc['blowout']
+            b_gap = b['win'] - b['loss']
+            b_roster = " & ".join(TEAM_ROSTERS.get(b['winner'], ['?', '?']))
+            scoring_lines.append(Paragraph(
+                f"Most lopsided {b['win']}–{b['loss']} (delta {b_gap}), "
+                f"{b['id']} — {b_roster}", styles['body']))
+    if not scoring_lines:
+        scoring_lines = [Paragraph("—", styles['body_muted'])]
 
-        right_rows.append([section("Scoring Stats"), ""])
-        right_rows.append([lbl("Avg winning margin"), val(f"{sc['avg_margin']:.1f} pts")])
-        right_rows.append([lbl("Avg final score"),    val(f"{sc['avg_win']:.1f} - {sc['avg_loss']:.1f}")])
-
-        c = sc['closest']
-        c_gap = c['win'] - c['loss']
-        c_roster = " & ".join(TEAM_ROSTERS.get(c['winner'], ['?', '?']))
-        right_rows.append([lbl("Closest match"),
-                            val(f"{c['win']}-{c['loss']} (delta {c_gap})  {c['id']}  {c_roster}")])
-
-        b = sc['blowout']
-        b_gap = b['win'] - b['loss']
-        b_roster = " & ".join(TEAM_ROSTERS.get(b['winner'], ['?', '?']))
-        right_rows.append([lbl("Most lopsided"),
-                            val(f"{b['win']}-{b['loss']} (delta {b_gap})  {b['id']}  {b_roster}")])
-
-        if 'top_scorer' in sc:
-            ts = sc['top_scorer']
-            ts_roster = " & ".join(TEAM_ROSTERS.get(ts['team'], ['?', '?']))
-            right_rows.append([lbl("Most pts scored"),
-                                val(f"{ts_roster} ({ts['pts']} pts)", styles['gold'])])
-
-    # Most active
-    if 'most_active' in stats:
-        ma = stats['most_active']
-        busy_roster = " & ".join(TEAM_ROSTERS.get(ma['team'], ['?', '?']))
-        right_rows.append([lbl("Most active"),
-                            val(f"{busy_roster} ({ma['count']})")])
-
-    # Best LB run
+    # --- Tournament Notes ---
+    notes = []
+    champ_roster = " / ".join(TEAM_ROSTERS.get(champion, ['?', '?']))
+    if stats.get('had_gf_reset'):
+        notes.append(Paragraph("Undefeated team — none (GF reset)", styles['body']))
+    else:
+        notes.append(Paragraph(f"Undefeated team {champ_roster}", styles['body']))
     if 'best_lb_run' in stats:
         lb = stats['best_lb_run']
-        grind_roster = " & ".join(TEAM_ROSTERS.get(lb['team'], ['?', '?']))
-        right_rows.append([lbl("Best LB Run"),
-                            val(f"{grind_roster} ({lb['wins']}W-{lb['losses']}L)")])
-
-    # Quickest exit
+        roster = " & ".join(TEAM_ROSTERS.get(lb['team'], ['?', '?']))
+        notes.append(Paragraph(
+            f"Best LB Run {roster} ({lb['wins']}W–{lb['losses']}L)", styles['body']))
+    if 'most_active' in stats:
+        ma = stats['most_active']
+        roster = " & ".join(TEAM_ROSTERS.get(ma['team'], ['?', '?']))
+        notes.append(Paragraph(f"Most active {roster} ({ma['count']})", styles['body']))
+    if sc.get('top_scorer'):
+        ts = sc['top_scorer']
+        roster = " & ".join(TEAM_ROSTERS.get(ts['team'], ['?', '?']))
+        notes.append(Paragraph(f"Most points scored {roster} ({ts['pts']})", styles['body']))
     if 'quickest_exit' in stats:
         qe = stats['quickest_exit']
-        quick_roster = " & ".join(TEAM_ROSTERS.get(qe['team'], ['?', '?']))
-        right_rows.append([lbl("Quickest Exit"),
-                            val(f"{quick_roster} ({qe['matches']} match{'es' if qe['matches'] != 1 else ''})")])
+        roster = " & ".join(TEAM_ROSTERS.get(qe['team'], ['?', '?']))
+        n = qe['matches']
+        notes.append(Paragraph(
+            f"Quickest exit {roster} ({n} match{'es' if n != 1 else ''})", styles['body']))
+    if not notes:
+        notes = [Paragraph("—", styles['body_muted'])]
 
-    # GF reset?
-    champ_roster_str = " / ".join(TEAM_ROSTERS.get(champion, ['?', '?']))
-    right_rows.append([lbl("Undefeated Teams"),
-                        val("None" if stats['had_gf_reset'] else champ_roster_str,
-                            styles['fg2'] if stats['had_gf_reset'] else styles['gold'])])
+    row1 = Table(
+        [[_pdf_section_card(styles, "FINAL STANDINGS", standings_lines, col_w),
+          _pdf_section_card(styles, "MATCH BREAKDOWN", breakdown, col_w)]],
+        colWidths=[col_w, col_w],
+        hAlign='LEFT',
+    )
+    row1.setStyle(TableStyle([
+        ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+        ('LEFTPADDING', (0, 0), (-1, -1), 0),
+        ('RIGHTPADDING', (0, 0), (-1, -1), 0),
+    ]))
 
-    return right_rows
+    row2 = Table(
+        [[_pdf_section_card(styles, "SCORING & PERFORMANCE", scoring_lines, col_w),
+          _pdf_section_card(styles, "TOURNAMENT NOTES", notes, col_w)]],
+        colWidths=[col_w, col_w],
+        hAlign='LEFT',
+    )
+    row2.setStyle(TableStyle([
+        ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+        ('LEFTPADDING', (0, 0), (-1, -1), 0),
+        ('RIGHTPADDING', (0, 0), (-1, -1), 0),
+    ]))
+
+    stack = Table([[row1], [Spacer(1, 8)], [row2]], colWidths=[width])
+    stack.setStyle(TableStyle([
+        ('LEFTPADDING', (0, 0), (-1, -1), 0),
+        ('RIGHTPADDING', (0, 0), (-1, -1), 0),
+        ('TOPPADDING', (0, 0), (-1, -1), 0),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 0),
+    ]))
+    return stack
 
 
 def _pdf_match_history_table(styles, width):
-    """
-    Builds the match-history table flowable, or None if there's no match
-    history yet (mirrors the original 'if MATCH_HISTORY:' guard).
-    """
+    """Match history with navy header row; returns None if empty."""
     if not MATCH_HISTORY:
         return None
 
     hdr_style = ParagraphStyle('mhHdr', parent=styles['base'],
                                fontName='Helvetica-Bold',
-                               fontSize=8, textColor=styles['gold'])
+                               fontSize=8, textColor=styles['white'],
+                               alignment=TA_CENTER)
     cell_style = ParagraphStyle('mhCell', parent=styles['base'],
                                 fontSize=8, textColor=styles['fg'])
+    cell_center = ParagraphStyle('mhCellC', parent=cell_style, alignment=TA_CENTER)
 
-    def mhdr(t): return Paragraph(t, hdr_style)
-    def mcell(t, color=None):
-        s = ParagraphStyle('mc', parent=cell_style,
-                           textColor=color or styles['fg'])
-        return Paragraph(t, s)
+    def mhdr(t):
+        return Paragraph(t, hdr_style)
 
-    history_data = [[mhdr("Match"), mhdr("Winner"), mhdr("Loser"),
-                      mhdr("Score"), mhdr("Duration")]]
-    for rec in MATCH_HISTORY:
+    def mcell(t, color=None, center=False):
+        base = cell_center if center else cell_style
+        s = ParagraphStyle('mc', parent=base, textColor=color or styles['fg'])
+        return Paragraph(str(t), s)
+
+    history_data = [[mhdr("MATCH"), mhdr("WINNER"), mhdr("LOSER"),
+                     mhdr("SCORE"), mhdr("DURATION")]]
+    for idx, rec in enumerate(MATCH_HISTORY):
         w_roster = " & ".join(TEAM_ROSTERS.get(rec['winner'], ['?', '?']))
-        l_roster = " & ".join(TEAM_ROSTERS.get(rec['loser'],  ['?', '?']))
+        l_roster = " & ".join(TEAM_ROSTERS.get(rec['loser'], ['?', '?']))
         score_str = ""
         if 'red_score' in rec and 'blue_score' in rec:
-            score_str = f"{rec['red_score']}-{rec['blue_score']}"
-        idx = MATCH_HISTORY.index(rec)
-        dur_str = format_seconds(MATCH_DURATIONS[idx]) if idx < len(MATCH_DURATIONS) else "-"
+            score_str = f"{rec['red_score']}–{rec['blue_score']}"
+        dur_str = format_seconds(MATCH_DURATIONS[idx]) if idx < len(MATCH_DURATIONS) else "—"
         w_color = styles['red'] if rec.get('color') == 'red' else styles['blue']
         history_data.append([
-            mcell(rec.get('id', '-')),
+            mcell(rec.get('id', '—'), center=True),
             mcell(w_roster, w_color),
             mcell(l_roster),
-            mcell(score_str),
-            mcell(dur_str),
+            mcell(score_str, center=True),
+            mcell(dur_str, center=True),
         ])
 
-    col_w = width / 5
-    hist_table = Table(history_data, colWidths=[col_w]*5)
+    col_ws = [width * 0.10, width * 0.28, width * 0.28, width * 0.17, width * 0.17]
+    hist_table = Table(history_data, colWidths=col_ws)
     hist_table.setStyle(TableStyle([
-        ('BACKGROUND',    (0, 0), (-1, 0),  styles['card']),
-        ('ROWBACKGROUNDS',(0, 1), (-1, -1), [styles['card'], colors.HexColor('#2E3C43')]),
-        ('LINEBELOW',     (0, 0), (-1, 0),  1, styles['gold']),
-        ('LEFTPADDING',   (0, 0), (-1, -1), 6),
-        ('RIGHTPADDING',  (0, 0), (-1, -1), 6),
-        ('TOPPADDING',    (0, 0), (-1, -1), 3),
-        ('BOTTOMPADDING', (0, 0), (-1, -1), 3),
+        ('BACKGROUND',     (0, 0), (-1, 0), styles['navy']),
+        ('ROWBACKGROUNDS', (0, 1), (-1, -1), [styles['white'], styles['row_alt']]),
+        ('ALIGN',          (0, 0), (-1, 0), 'CENTER'),
+        ('LEFTPADDING',    (0, 0), (-1, -1), 6),
+        ('RIGHTPADDING',   (0, 0), (-1, -1), 6),
+        ('TOPPADDING',     (0, 0), (-1, -1), 4),
+        ('BOTTOMPADDING',  (0, 0), (-1, -1), 4),
+        ('BOX',            (0, 0), (-1, -1), 0.75, styles['rule']),
+        ('LINEBELOW',      (0, 0), (-1, 0), 0.5, styles['navy']),
     ]))
     return hist_table
 
 
 def export_results_pdf(champion):
     """
-    Exports the tournament final screen stats to a PDF file using ReportLab.
-    Mirrors the data logic of display_final_rankings().
-
-    The heavy lifting is split across a handful of focused helpers so this
-    function reads as a linear "assemble the document" recipe:
-      _build_pdf_styles         — colour palette + paragraph/table styles
-      _pdf_champion_table       — the "CHAMPIONS" banner
-      _pdf_left_column_rows     — Final Standings + Tournament Stats
-      _pdf_right_column_rows    — Match Breakdown + Scoring Stats
-      _pdf_match_history_table  — the per-match results table
+    Export the official share-ready tournament summary PDF (print-friendly).
+    White page, dark text, navy header accents.
     """
     if not REPORTLAB_AVAILABLE:
         messagebox.showerror(
@@ -5449,83 +5535,75 @@ def export_results_pdf(champion):
         title="Save Tournament Results PDF"
     )
     if not filepath:
-        return  # User cancelled
+        return
 
     try:
         S = _build_pdf_styles()
+        stats = _compute_final_stats(champion)
 
         doc = SimpleDocTemplate(
             filepath,
             pagesize=letter,
-            leftMargin=0.6*inch, rightMargin=0.6*inch,
-            topMargin=0.6*inch,  bottomMargin=0.6*inch,
+            leftMargin=0.5 * inch, rightMargin=0.5 * inch,
+            topMargin=0.45 * inch, bottomMargin=0.5 * inch,
         )
-
-        W = letter[0] - 1.2*inch   # usable width
-        COL_W = (W - 0.15*inch) / 2  # two equal columns
-
+        W = letter[0] - 1.0 * inch
         story = []
 
-        # ── Header ───────────────────────────────────────────────────────────
-        story.append(Paragraph("TOURNAMENT COMPLETE", S['title']))
-        story.append(_pdf_hr(S))
+        summary_date = datetime.datetime.now().strftime("%B %d, %Y").upper()
 
-        # ── Champion block ───────────────────────────────────────────────────
-        story.append(_pdf_champion_table(S, champion, W))
-        story.append(_pdf_hr(S))
+        # Header
+        story.append(_pdf_header_block(S, W, summary_date))
+        story.append(Spacer(1, 10))
 
-        # ── Two stat columns ─────────────────────────────────────────────────
-        stats = _compute_final_stats(champion)
-        left_rows = _pdf_left_column_rows(S, champion, stats)
-        right_rows = _pdf_right_column_rows(S, champion, stats)
+        # Champions card
+        story.append(_pdf_champion_table(S, champion, W, stats))
+        story.append(Spacer(1, 8))
 
-        INNER_L = COL_W * 0.45  # label sub-column
-        INNER_V = COL_W * 0.55  # value sub-column
+        # Metrics strip
+        story.append(_pdf_metrics_strip(S, W, stats))
+        story.append(Spacer(1, 10))
 
-        left_table  = Table(left_rows,  colWidths=[INNER_L, INNER_V])
-        right_table = Table(right_rows, colWidths=[INNER_L, INNER_V])
-        left_table.setStyle(_pdf_stat_table_style(S))
-        right_table.setStyle(_pdf_stat_table_style(S))
+        # Body columns
+        story.append(_pdf_body_columns(S, champion, stats, W))
+        story.append(Spacer(1, 12))
 
-        two_col = Table(
-            [[left_table, right_table]],
-            colWidths=[COL_W, COL_W],
-            hAlign='LEFT',
-        )
-        two_col.setStyle(TableStyle([
-            ('VALIGN',       (0, 0), (-1, -1), 'TOP'),
-            ('LEFTPADDING',  (0, 0), (-1, -1), 0),
-            ('RIGHTPADDING', (0, 0), (-1, -1), 0),
-            ('TOPPADDING',   (0, 0), (-1, -1), 0),
-            ('BOTTOMPADDING',(0, 0), (-1, -1), 0),
-            ('COLPADDING',   (0, 0), (-1, -1), 6),
-        ]))
-        story.append(two_col)
-        story.append(_pdf_hr(S))
-
-        # ── Match History table ──────────────────────────────────────────────
+        # Match history
         hist_table = _pdf_match_history_table(S, W)
         if hist_table is not None:
-            story.append(_pdf_section(S, "Match History"))
+            story.append(Paragraph("MATCH HISTORY", S['sec_hdr']))
+            story.append(Spacer(1, 3))
             story.append(hist_table)
+
+            hist_n = len(MATCH_HISTORY)
+            reported_n = stats.get('total_matches', hist_n)
+            if hist_n != reported_n:
+                story.append(Spacer(1, 4))
+                story.append(Paragraph(
+                    f"{hist_n} match records are shown; "
+                    f"the tournament summary reports {reported_n} matches played.",
+                    S['note'],
+                ))
 
         story.append(Spacer(1, 14))
 
-        # ── Footer ───────────────────────────────────────────────────────────
-        ts = datetime.datetime.now().strftime("%B %d, %Y  %I:%M %p")
+        # Footer
+        _now = datetime.datetime.now()
+        ts = _now.strftime("%B %d, %Y at ") + _now.strftime("%I:%M %p").lstrip("0")
+        _name = globals().get('TOURNAMENT_DISPLAY_NAME', "Ms. Ethel's Shuffleboard Tournament")
         story.append(Paragraph(
-            f"Moose Lodge Shuffleboard  •  Generated {ts}  •  v{SHUF_VERSION}",
-            S['footer']
+            f"{_name}  ·  Generated {ts}  ·  v{SHUF_VERSION}",
+            S['footer'],
         ))
 
-        # ── Page background colour via onPage callback ────────────────────────
-        def dark_background(canvas_obj, doc_obj):
+        # White page background (print-friendly — no dark fill)
+        def light_background(canvas_obj, doc_obj):
             canvas_obj.saveState()
             canvas_obj.setFillColor(S['bg'])
             canvas_obj.rect(0, 0, letter[0], letter[1], fill=1, stroke=0)
             canvas_obj.restoreState()
 
-        doc.build(story, onFirstPage=dark_background, onLaterPages=dark_background)
+        doc.build(story, onFirstPage=light_background, onLaterPages=light_background)
 
         log_message(f"PDF exported: {filepath}")
         messagebox.showinfo("Export Successful",
@@ -5535,6 +5613,7 @@ def export_results_pdf(champion):
         log_message(f"PDF export failed: {e}", "ERROR")
         messagebox.showerror("Export Failed",
                              f"Could not create PDF:\n{e}")
+
 
 
 def display_final_rankings(champion):
