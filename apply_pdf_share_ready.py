@@ -1,22 +1,22 @@
 #!/usr/bin/env python3
-"""Apply share-ready PDF layout to sb.py (run from repo root on feature/pdf-share-ready)."""
+"""Apply share-ready PDF layout to sb.py (run from repo root)."""
 from pathlib import Path
+import textwrap
 
 path = Path("sb.py")
 text = path.read_text(encoding="utf-8")
 
-# 1) Tournament display name constant
 old_ver = 'SHUF_VERSION = "1.98A"'
-new_ver = '''SHUF_VERSION = "1.98A"
-
-# Display name used on PDF exports and formal summaries
-TOURNAMENT_DISPLAY_NAME = "Ms. Ethel's Shuffleboard Tournament"'''
+new_ver = (
+    'SHUF_VERSION = "1.98A"\n\n'
+    '# Display name used on PDF exports and formal summaries\n'
+    'TOURNAMENT_DISPLAY_NAME = "Ms. Ethel\'s Shuffleboard Tournament"'
+)
 if "TOURNAMENT_DISPLAY_NAME" not in text:
     if old_ver not in text:
         raise SystemExit("Could not find SHUF_VERSION line to update")
     text = text.replace(old_ver, new_ver, 1)
 
-# 2) Replace PDF generation section
 start_token = "def _build_pdf_styles():"
 end_token = "\ndef display_final_rankings(champion):"
 if start_token not in text:
@@ -24,22 +24,21 @@ if start_token not in text:
 if end_token not in text:
     raise SystemExit("Could not find display_final_rankings")
 
-# Embedded section loaded from project artifacts — see repo note if this is a stub.
-# Prefer: copy artifacts/apply_pdf_share_ready.py from the Grok project folder,
-# or copy artifacts/sb_pdf_share_ready.py over sb.py directly.
+# Download the full section from the committed sb_pdf blob is not available.
+# Instead embed via companion file pdf_export_section.py if present.
+section_path = Path(__file__).with_name("pdf_export_section.py")
+if not section_path.exists():
+    raise SystemExit(
+        "Missing pdf_export_section.py next to this script.\n"
+        "Pull the latest feature/pdf-share-ready branch after it is updated."
+    )
+new_section = section_path.read_text(encoding="utf-8")
+if not new_section.startswith("def _build_pdf_styles"):
+    raise SystemExit("pdf_export_section.py does not look like the PDF section")
 
-import urllib.request
-import sys
-
-def _fail_with_help():
-    print("This copy of apply_pdf_share_ready.py on GitHub is incomplete.")
-    print()
-    print("Quickest fix — use the full sb.py from the project folder:")
-    print("  cp /path/to/artifacts/sb_pdf_share_ready.py ./sb.py")
-    print("  git add sb.py && git commit -m 'Restyle PDF export to share-ready layout'")
-    print()
-    print("Or copy the full apply script from the Grok project artifacts folder")
-    print("over this file, then re-run: python3 apply_pdf_share_ready.py")
-    sys.exit(1)
-
-_fail_with_help()
+start = text.index(start_token)
+end = text.index(end_token)
+text = text[:start] + new_section + text[end:]
+path.write_text(text, encoding="utf-8")
+print("Applied share-ready PDF layout to sb.py")
+print("Export PDF from a completed tournament to verify.")
